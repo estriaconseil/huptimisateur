@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Dispatch terrain",
-  description: "Planification des interventions par équipe",
+  title: "Huptimisateur",
+  description: "Planification des interventions — Huppé Réfrigération",
 };
 
 export default function RootLayout({

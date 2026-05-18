@@ -1,8 +1,8 @@
 import type { EstimatedDurationHours, ScheduleSlot } from "@/types/domain";
 
 /**
- * Une job bloque la journée entière si sa durée >= seuil paramétré (défaut 6 h).
- * En MVP métier fixe : durées 6 h et 8 h → alignez le seuil à 6 dans app_settings.
+ * Une job bloque la journée entière si sa durée >= seuil paramétré (défaut 8 h).
+ * MVP : 4 h → demi-journée (AM ou PM), 8 h → journée complète (AM + PM bloqués).
  */
 export function jobBlocksFullDay(
   estimatedHours: number,

@@ -1,26 +1,40 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DispatchBoard } from "@/features/dispatch/dispatch-board";
+import { loadDispatchPageData } from "@/features/dispatch/load-dispatch-data";
 
-export default function DispatchPage() {
+export default async function DispatchPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ week?: string; jobId?: string; suggest?: string }>;
+}) {
+  const sp = await searchParams;
+  const data = await loadDispatchPageData(sp.week);
+
+  const errLine = [data.errors.teams, data.errors.schedules, data.errors.jobs]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="mx-auto max-w-6xl space-y-4">
+    <div className="mx-auto max-w-[1400px] space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Calendrier / dispatch</h1>
-        <p className="text-muted-foreground text-sm">
-          Vue semaine par équipe (AM / PM). Prochaine étape : grille interactive et affectation manuelle.
-        </p>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>À venir (priorité 1)</CardTitle>
-          <CardDescription>
-            Navigation semaine, filtre équipe, états libre / réservé / bloqué / équipe inactive.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="text-muted-foreground text-sm">
-          Les données proviendront de Supabase (<code className="text-foreground">teams</code>,{" "}
-          <code className="text-foreground">schedules</code>, <code className="text-foreground">jobs</code>).
-        </CardContent>
-      </Card>
+
+      {errLine ? (
+        <p className="text-destructive text-sm" role="alert">
+          {errLine}
+        </p>
+      ) : null}
+
+      <DispatchBoard
+        weekDates={data.weekDates}
+        weekStartLabel={data.weekStartLabel}
+        teams={data.teams}
+        schedules={data.schedules}
+        jobsForPicker={data.jobsForPicker}
+        settings={data.settings}
+        initialSuggestJobId={typeof sp.jobId === "string" ? sp.jobId : null}
+        initialSuggestFlag={sp.suggest === "1"}
+      />
     </div>
   );
 }

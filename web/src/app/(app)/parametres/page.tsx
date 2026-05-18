@@ -1,24 +1,42 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { SettingsForm } from "@/features/settings/settings-form";
+import { getCurrentProfile } from "@/lib/supabase/profile";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { AppSettings } from "@/types/domain";
 
-export default function ParametresPage() {
+export default async function ParametresPage() {
+  const supabase = await createServerSupabaseClient();
+  const profile = await getCurrentProfile();
+
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("*")
+    .limit(1)
+    .maybeSingle();
+
+  const settings = data as AppSettings | null;
+
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Paramètres</h1>
         <p className="text-muted-foreground text-sm">
-          Bureau, horaires AM/PM, seuil journée complète (<code className="text-foreground">app_settings</code>
-          ).
+          Adresse du bureau, horaires AM/PM et seuil de blocage journée complète.
         </p>
       </div>
-      <Card>
-        <CardHeader>
-          <CardTitle>À brancher</CardTitle>
-          <CardDescription>Lecture / mise à jour Supabase (admin uniquement pour l’écriture).</CardDescription>
-        </CardHeader>
-        <CardContent className="text-muted-foreground text-sm">
-          Valeurs par défaut : AM 8h–12h, PM 13h–17h, seuil 6 h.
-        </CardContent>
-      </Card>
+
+      {error && (
+        <p className="text-destructive text-sm" role="alert">
+          Erreur : {error.message}
+        </p>
+      )}
+
+      {profile ? (
+        <SettingsForm settings={settings} role={profile.role} />
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          Profil introuvable. Déconnecte-toi et reconnecte-toi.
+        </p>
+      )}
     </div>
   );
 }

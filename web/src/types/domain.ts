@@ -1,4 +1,4 @@
-/** Aligné sur les enums PostgreSQL (public.*) */
+/** Aligne sur les enums PostgreSQL (public.*) */
 
 export type UserRole = "admin" | "secretary";
 
@@ -13,7 +13,7 @@ export type ScheduleSlot = "am" | "pm" | "full_day";
 
 export type ScheduleRowStatus = "planned" | "cancelled";
 
-export type EstimatedDurationHours = 4 | 6 | 8;
+export type EstimatedDurationHours = 4 | 8;
 
 export interface Profile {
   id: string;
@@ -30,6 +30,21 @@ export interface Team {
   color: string | null;
   notes: string | null;
   created_at: string;
+}
+
+export interface Technician {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string | null;
+  phone: string | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface TeamTechnician {
+  team_id: string;
+  technician_id: string;
 }
 
 export interface Client {
@@ -83,7 +98,7 @@ export interface AppSettings {
   updated_at: string;
 }
 
-/** Suggestion de créneau (pas d’affectation auto) */
+/** Suggestion de creneau (pas d'affectation auto) */
 export interface ScheduleSuggestion {
   teamId: string;
   teamName: string;
