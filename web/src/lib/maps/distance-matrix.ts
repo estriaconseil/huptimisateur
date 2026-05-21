@@ -1,5 +1,7 @@
 /** Distance Matrix (classic) — utilisé côté serveur pour classer les suggestions. */
 
+const BATCH_SIZE = 25;
+
 type Element = {
   status: string;
   distance?: { value: number };
@@ -10,13 +12,13 @@ type Row = {
   elements: Element[];
 };
 
-export async function fetchDrivingMetricsBatch(
+type Metric = { meters: number | null; seconds: number | null; error?: string };
+
+async function fetchBatch(
   apiKey: string,
   origins: Array<{ lat: number; lng: number }>,
   destination: { lat: number; lng: number }
-): Promise<Array<{ meters: number | null; seconds: number | null; error?: string }>> {
-  if (origins.length === 0) return [];
-
+): Promise<Metric[]> {
   const format = (p: { lat: number; lng: number }) => `${p.lat},${p.lng}`;
   const originParam = origins.map(format).join("|");
   const destParam = format(destination);
@@ -35,21 +37,34 @@ export async function fetchDrivingMetricsBatch(
 
   if (data.status !== "OK" || !data.rows?.length) {
     const msg = data.error_message ?? data.status ?? "Distance Matrix erreur";
+    console.error("[Distance Matrix] API error:", data.status, data.error_message ?? "");
     return origins.map(() => ({ meters: null, seconds: null, error: msg }));
   }
 
   return origins.map((_, i) => {
     const el = data.rows?.[i]?.elements?.[0];
     if (!el || el.status !== "OK") {
-      return {
-        meters: null,
-        seconds: null,
-        error: el?.status ?? "NO_ROUTE",
-      };
+      return { meters: null, seconds: null, error: el?.status ?? "NO_ROUTE" };
     }
     return {
       meters: el.distance?.value ?? null,
       seconds: el.duration?.value ?? null,
     };
   });
+}
+
+export async function fetchDrivingMetricsBatch(
+  apiKey: string,
+  origins: Array<{ lat: number; lng: number }>,
+  destination: { lat: number; lng: number }
+): Promise<Metric[]> {
+  if (origins.length === 0) return [];
+
+  const results: Metric[] = [];
+  for (let i = 0; i < origins.length; i += BATCH_SIZE) {
+    const chunk = origins.slice(i, i + BATCH_SIZE);
+    const chunkResults = await fetchBatch(apiKey, chunk, destination);
+    results.push(...chunkResults);
+  }
+  return results;
 }

@@ -15,6 +15,7 @@ export type CandidateSlot = {
 
 /**
  * Créneaux libres compatibles avec la durée, pour la semaine (dates ISO jour).
+ * Seules les dates à partir d'aujourd'hui sont proposées.
  */
 export function buildAssignmentCandidates(
   weekDates: string[],
@@ -27,11 +28,15 @@ export function buildAssignmentCandidates(
   const slotTypes = slotsForNewAssignment(estimatedHours, fullDayThresholdHours);
   const needFullDay = slotTypes.length === 1 && slotTypes[0] === "full_day";
 
+  /* Date d'aujourd'hui en ISO (YYYY-MM-DD) — comparaison de chaînes suffisante */
+  const todayIso = new Date().toISOString().slice(0, 10);
+
   const activeTeams = teams.filter((t) => t.active);
   const candidates: CandidateSlot[] = [];
 
   for (const team of activeTeams) {
     for (const date of weekDates) {
+      if (date < todayIso) continue;
       const state = getDayState(stateMap, team.id, date);
 
       if (needFullDay) {

@@ -4,7 +4,7 @@ import React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
-import { Pencil } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Search, X } from "lucide-react";
 import { useCallback, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
@@ -55,6 +55,15 @@ export type ClientRow = {
     internal_notes: string | null;
   }[];
 };
+
+const JOB_STATUSES = [
+  { value: "all",         label: "Tous les statuts" },
+  { value: "draft",       label: "À placer" },
+  { value: "scheduled",   label: "Planifiée" },
+  { value: "in_progress", label: "En cours" },
+  { value: "completed",   label: "Terminée" },
+  { value: "cancelled",   label: "Annulée" },
+] as const;
 
 /* ─── Dialog : édition client ─── */
 function EditClientDialog({ client }: { client: ClientRow }) {
@@ -127,14 +136,12 @@ function EditClientDialog({ client }: { client: ClientRow }) {
         </DialogHeader>
 
         <form onSubmit={(e) => { e.preventDefault(); void handleSubmit(submit)(); }} className="space-y-4 py-2">
-          {/* Nom */}
           <div className="space-y-1.5">
             <Label htmlFor={`name-${client.id}`}>Nom <span className="text-destructive">*</span></Label>
             <Input id={`name-${client.id}`} {...register("name")} />
             {formState.errors.name && <p className="text-destructive text-xs">{formState.errors.name.message}</p>}
           </div>
 
-          {/* Courriel + téléphone */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor={`email-${client.id}`}>Courriel</Label>
@@ -147,7 +154,6 @@ function EditClientDialog({ client }: { client: ClientRow }) {
             </div>
           </div>
 
-          {/* Adresse */}
           <div className="space-y-1.5">
             <Label>Adresse</Label>
             <AddressAutocomplete
@@ -163,7 +169,6 @@ function EditClientDialog({ client }: { client: ClientRow }) {
             }
           </div>
 
-          {/* Ville + code postal */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor={`city-${client.id}`}>Ville</Label>
@@ -230,12 +235,11 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
         </DialogHeader>
 
         <form onSubmit={(e) => { e.preventDefault(); void handleSubmit(submit)(); }} className="space-y-4 py-2">
-          {/* Statut + durée */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor={`status-${job.id}`}>Statut</Label>
               <select id={`status-${job.id}`} className={selectClass} {...register("status")}>
-                <option value="draft">Brouillon</option>
+                <option value="draft">À placer</option>
                 <option value="scheduled">Planifiée</option>
                 <option value="in_progress">En cours</option>
                 <option value="completed">Terminée</option>
@@ -255,7 +259,6 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
             </div>
           </div>
 
-          {/* Date souhaitée */}
           <div className="space-y-1.5">
             <Label htmlFor={`date-${job.id}`}>Date souhaitée (optionnel)</Label>
             <Input id={`date-${job.id}`} type="date" {...register("preferred_date")} />
@@ -264,13 +267,11 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
             )}
           </div>
 
-          {/* Info installation */}
           <div className="space-y-1.5">
             <Label htmlFor={`info-${job.id}`}>Information sur l&apos;installation</Label>
             <Textarea id={`info-${job.id}`} rows={3} {...register("installation_info")} />
           </div>
 
-          {/* Notes internes */}
           <div className="space-y-1.5">
             <Label htmlFor={`notes-${job.id}`}>Notes internes</Label>
             <Textarea id={`notes-${job.id}`} rows={2} {...register("internal_notes")} />
@@ -288,8 +289,40 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
   );
 }
 
-/* ─── Liste principale ─── */
+/* ─── Liste principale avec recherche + accordéon ─── */
 export function ClientsList({ clients }: { clients: ClientRow[] }) {
+  const [search, setSearch] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState("all");
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const filtered = React.useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return clients.filter((c) => {
+      /* Recherche : nom, ville, téléphone, courriel */
+      if (q) {
+        const haystack = [c.name, c.city, c.phone, c.email]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      /* Filtre statut : garder le client si AU MOINS une de ses jobs correspond */
+      if (statusFilter !== "all") {
+        if (!c.jobs.some((j) => j.status === statusFilter)) return false;
+      }
+      return true;
+    });
+  }, [clients, search, statusFilter]);
+
   if (clients.length === 0) {
     return (
       <Card>
@@ -301,70 +334,159 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
   }
 
   return (
-    <div className="space-y-3">
-      {clients.map((client) => (
-        <Card key={client.id}>
-          <CardContent className="p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              {/* Infos client */}
-              <div className="space-y-0.5">
-                <p className="font-semibold">{client.name}</p>
-                <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                  {client.phone && <span>{client.phone}</span>}
-                  {client.email && <span>{client.email}</span>}
-                  {client.city && <span>📍 {client.city}</span>}
-                  {client.lat != null && (
-                    <span className="text-emerald-600 text-xs">✓ GPS</span>
-                  )}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Créé le {format(parseISO(client.created_at), "d MMM yyyy", { locale: fr })}
-                </p>
-              </div>
+    <div className="space-y-4">
+      {/* Barre de recherche + filtre */}
+      <div className="flex flex-wrap gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Rechercher un client, ville, téléphone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-8 text-sm"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className={selectClass + " w-auto flex-none"}
+        >
+          {JOB_STATUSES.map((s) => (
+            <option key={s.value} value={s.value}>{s.label}</option>
+          ))}
+        </select>
+      </div>
 
-              {/* Actions */}
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Badge variant="secondary">
-                  {client.jobs.length} job{client.jobs.length > 1 ? "s" : ""}
-                </Badge>
-                <EditClientDialog client={client} />
-              </div>
-            </div>
+      {/* Résumé */}
+      <p className="text-xs text-muted-foreground">
+        {filtered.length === clients.length
+          ? `${clients.length} client${clients.length > 1 ? "s" : ""}`
+          : `${filtered.length} résultat${filtered.length > 1 ? "s" : ""} sur ${clients.length}`}
+      </p>
 
-            {/* Liste des jobs */}
-            {client.jobs.length > 0 && (
-              <div className="mt-3 space-y-1.5 border-t pt-3">
-                {client.jobs.map((job) => (
-                  <div
-                    key={job.id}
-                    className="flex flex-wrap items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5"
-                  >
-                    <Badge variant={statusVariant(job.status)} className="text-[10px]">
-                      {statusLabel(job.status)}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{job.estimated_duration_hours} h</span>
-                    {job.preferred_date && (
-                      <span className="text-xs text-muted-foreground">
-                        Souhaitée : {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
-                      </span>
-                    )}
-                    {job.installation_info && (
-                      <span className="truncate text-xs text-muted-foreground max-w-xs">
-                        {job.installation_info.slice(0, 80)}
-                        {job.installation_info.length > 80 ? "…" : ""}
-                      </span>
-                    )}
-                    {/* Bouton modifier la job */}
-                    <span className="ml-auto">
-                      <EditJobDialog job={job} clientName={client.name} />
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+      {filtered.length === 0 && (
+        <Card>
+          <CardContent className="py-10 text-center">
+            <p className="text-muted-foreground text-sm">Aucun client ne correspond à la recherche.</p>
           </CardContent>
         </Card>
-      ))}
+      )}
+
+      {/* Liste accordéon */}
+      <div className="overflow-hidden rounded-lg border border-border divide-y divide-border">
+        {filtered.map((client) => {
+          const isOpen = expanded.has(client.id);
+          const jobsToShow = statusFilter === "all"
+            ? client.jobs
+            : client.jobs.filter((j) => j.status === statusFilter);
+
+          return (
+            <div key={client.id} className="bg-white dark:bg-card">
+              {/* En-tête cliquable */}
+              <button
+                type="button"
+                onClick={() => toggleExpand(client.id)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+              >
+                {/* Chevron */}
+                <span className="shrink-0 text-muted-foreground">
+                  {isOpen
+                    ? <ChevronDown className="size-4" />
+                    : <ChevronRight className="size-4" />
+                  }
+                </span>
+
+                {/* Nom */}
+                <span className="flex-1 min-w-0 font-medium text-sm truncate">{client.name}</span>
+
+                {/* Ville */}
+                {client.city && (
+                  <span className="hidden sm:block text-xs text-muted-foreground shrink-0">
+                    📍 {client.city}
+                  </span>
+                )}
+
+                {/* GPS */}
+                {client.lat != null && (
+                  <span className="hidden sm:block text-[10px] text-emerald-600 font-medium shrink-0">✓ GPS</span>
+                )}
+
+                {/* Nb jobs */}
+                <Badge variant="secondary" className="text-[10px] shrink-0">
+                  {client.jobs.length} job{client.jobs.length > 1 ? "s" : ""}
+                </Badge>
+
+                {/* Bouton modifier (stoppe la propagation pour ne pas toggle l'accordéon) */}
+                <span onClick={(e) => e.stopPropagation()}>
+                  <EditClientDialog client={client} />
+                </span>
+              </button>
+
+              {/* Contenu accordéon */}
+              {isOpen && (
+                <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-3">
+                  {/* Infos client */}
+                  <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                    {client.phone && <span>📞 {client.phone}</span>}
+                    {client.email && <span>✉ {client.email}</span>}
+                    {client.address_formatted && <span>🏠 {client.address_formatted}</span>}
+                    <span className="text-xs">
+                      Créé le {format(parseISO(client.created_at), "d MMM yyyy", { locale: fr })}
+                    </span>
+                  </div>
+
+                  {/* Jobs */}
+                  {jobsToShow.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Jobs
+                      </p>
+                      {jobsToShow.map((job) => (
+                        <div
+                          key={job.id}
+                          className="flex flex-wrap items-center gap-2 rounded-md bg-white border border-border px-3 py-1.5 dark:bg-card"
+                        >
+                          <Badge variant={statusVariant(job.status)} className="text-[10px]">
+                            {statusLabel(job.status)}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{job.estimated_duration_hours} h</span>
+                          {job.preferred_date && (
+                            <span className="text-xs text-muted-foreground">
+                              Souhaitée : {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
+                            </span>
+                          )}
+                          {job.installation_info && (
+                            <span className="truncate text-xs text-muted-foreground max-w-xs">
+                              {job.installation_info.slice(0, 80)}
+                              {job.installation_info.length > 80 ? "…" : ""}
+                            </span>
+                          )}
+                          <span className="ml-auto">
+                            <EditJobDialog job={job} clientName={client.name} />
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {jobsToShow.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">Aucune job avec ce statut.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

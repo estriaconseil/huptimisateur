@@ -55,6 +55,7 @@ export function AppSidebar() {
             src="/logo.jpg"
             alt="Logo Huppé Réfrigération"
             fill
+            sizes="32px"
             className="object-contain"
             priority
           />
