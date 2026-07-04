@@ -18,7 +18,17 @@ export const newClientJobFormSchema = z.object({
     z.literal(""),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide (AAAA-MM-JJ)"),
   ]),
-  status: z.enum(["draft", "scheduled", "in_progress", "completed", "cancelled"]),
+  status: z.enum([
+    "prospect",
+    "soumission_en_attente",
+    "a_suivre",
+    "a_relancer",
+    "a_planifier",
+    "reparti",
+    "facturation",
+    "complete",
+    "annule",
+  ]),
 });
 
 export type NewClientJobFormValues = z.infer<typeof newClientJobFormSchema>;
@@ -39,12 +49,27 @@ export type EditClientFormValues = z.infer<typeof editClientSchema>;
 
 /** Schéma d'édition d'une job existante. */
 export const editJobSchema = z.object({
-  status: z.enum(["draft", "scheduled", "in_progress", "completed", "cancelled"]),
+  status: z.enum([
+    "prospect",
+    "soumission_en_attente",
+    "a_suivre",
+    "a_relancer",
+    "a_planifier",
+    "reparti",
+    "facturation",
+    "complete",
+    "annule",
+  ]),
   estimated_duration_hours: z.union([z.literal(4), z.literal(8)]),
   preferred_date: z.union([
     z.literal(""),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide (AAAA-MM-JJ)"),
   ]),
+  follow_up_date: z.union([
+    z.literal(""),
+    z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide (AAAA-MM-JJ)"),
+  ]).optional(),
+  salesperson_id: z.string().optional(),
   installation_info: z.string().optional(),
   internal_notes: z.string().optional(),
 });

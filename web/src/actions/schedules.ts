@@ -53,7 +53,7 @@ export async function assignJobToSlot(input: {
 
   const { error: jobErr } = await supabase
     .from("jobs")
-    .update({ status: "scheduled" })
+    .update({ status: "reparti" })
     .eq("id", input.jobId);
 
   if (jobErr) {
@@ -97,7 +97,7 @@ export async function removeSchedule(scheduleId: string) {
     .eq("status", "planned");
 
   if ((count ?? 0) === 0) {
-    await supabase.from("jobs").update({ status: "draft" }).eq("id", row.job_id);
+    await supabase.from("jobs").update({ status: "a_planifier" }).eq("id", row.job_id);
   }
 
   revalidatePath("/dispatch");

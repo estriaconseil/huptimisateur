@@ -12,39 +12,87 @@ import {
   Printer,
   Settings2,
   Users,
+  CalendarCheck,
+  FileText,
+  UserPlus,
+  ShieldCheck,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import type { UserRole } from "@/types/domain";
 
 type NavItem = { href: string; label: string; icon: React.ElementType };
 
-const groups: { title?: string; items: NavItem[] }[] = [
-  {
-    items: [
-      { href: "/dispatch",    label: "Calendrier",          icon: CalendarDays },
-      { href: "/a-planifier", label: "Jobs à placer",        icon: ListTodo },
-      { href: "/nouveau",     label: "Nouveau client / job", icon: ClipboardList },
-      { href: "/clients",     label: "Clients & Jobs",       icon: FolderOpen },
-    ],
-  },
-  {
-    title: "Équipes",
-    items: [
-      { href: "/equipes",     label: "Équipes",              icon: Users },
-      { href: "/techniciens", label: "Techniciens",          icon: HardHat },
-    ],
-  },
-  {
-    title: "Système",
-    items: [
-      { href: "/parametres",  label: "Paramètres",           icon: Settings2 },
-      { href: "/impression",  label: "Impression",           icon: Printer },
-    ],
-  },
+const installationItems: NavItem[] = [
+  { href: "/dispatch",    label: "Calendrier",          icon: CalendarDays },
+  { href: "/a-planifier", label: "Jobs à placer",        icon: ListTodo },
+  { href: "/nouveau",     label: "Nouveau client / job", icon: ClipboardList },
+  { href: "/clients",     label: "Clients & Jobs",       icon: FolderOpen },
 ];
 
-export function AppSidebar() {
+const salesItems: NavItem[] = [
+  { href: "/ventes",              label: "Calendrier ventes",  icon: CalendarCheck },
+  { href: "/ventes/pipeline",     label: "Pipeline prospects", icon: ListTodo },
+  { href: "/ventes/soumissions",  label: "Soumissions",        icon: FileText },
+];
+
+const teamItems: NavItem[] = [
+  { href: "/equipes",     label: "Équipes",              icon: Users },
+  { href: "/techniciens", label: "Techniciens",          icon: HardHat },
+  { href: "/vendeurs",    label: "Vendeurs",             icon: UserPlus },
+];
+
+const systemItems: NavItem[] = [
+  { href: "/parametres",   label: "Paramètres",  icon: Settings2 },
+  { href: "/impression",   label: "Impression",  icon: Printer },
+];
+
+const adminItems: NavItem[] = [
+  { href: "/utilisateurs", label: "Utilisateurs", icon: ShieldCheck },
+];
+
+function NavGroup({
+  title,
+  items,
+  pathname,
+}: {
+  title?: string;
+  items: NavItem[];
+  pathname: string;
+}) {
+  return (
+    <div className="space-y-0.5 mt-4 first:mt-0">
+      {title && (
+        <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/50">
+          {title}
+        </p>
+      )}
+      {items.map(({ href, label, icon: Icon }) => {
+        const active = pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              active
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+            )}
+          >
+            <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
+            {label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+export function AppSidebar({ role }: { role: UserRole }) {
   const pathname = usePathname();
+  const isSalesperson = role === "salesperson";
+  const isAdmin = role === "admin";
 
   return (
     <aside className="bg-sidebar text-sidebar-foreground flex w-56 shrink-0 flex-col border-r border-sidebar-border">
@@ -67,33 +115,28 @@ export function AppSidebar() {
 
       {/* Nav */}
       <nav className="flex flex-1 flex-col gap-0 overflow-y-auto p-2">
-        {groups.map((group, gi) => (
-          <div key={gi} className={cn("space-y-0.5", gi > 0 && "mt-4")}>
-            {group.title && (
-              <p className="px-3 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/50">
-                {group.title}
-              </p>
-            )}
-            {group.items.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || pathname.startsWith(`${href}/`);
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                    active
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/60"
-                  )}
-                >
-                  <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
-                  {label}
-                </Link>
-              );
-            })}
-          </div>
-        ))}
+        {/* Ventes — visible par tous */}
+        <NavGroup title="Ventes" items={salesItems} pathname={pathname} />
+
+        {/* Installations — cachées pour les vendeurs */}
+        {!isSalesperson && (
+          <NavGroup title="Installations" items={installationItems} pathname={pathname} />
+        )}
+
+        {/* Équipes — cachées pour les vendeurs */}
+        {!isSalesperson && (
+          <NavGroup title="Équipes" items={teamItems} pathname={pathname} />
+        )}
+
+        {/* Système — admin et secrétaires uniquement */}
+        {!isSalesperson && (
+          <NavGroup title="Système" items={systemItems} pathname={pathname} />
+        )}
+
+        {/* Admin uniquement */}
+        {isAdmin && (
+          <NavGroup title="Admin" items={adminItems} pathname={pathname} />
+        )}
       </nav>
     </aside>
   );

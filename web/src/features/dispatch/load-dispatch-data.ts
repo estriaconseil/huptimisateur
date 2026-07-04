@@ -64,9 +64,8 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       .gte("scheduled_date", rangeStart)
       .lte("scheduled_date", rangeEnd)
       .eq("status", "planned"),
-    /* Seules les jobs "draft" sont réellement non planifiées.
-       assignJobToSlot → status = scheduled / removeSchedule → status = draft.
-       Cette query est légère et scale à l'infini. */
+    /* Seules les jobs "a_planifier" = soumission acceptée, attendent un créneau.
+       assignJobToSlot → status = reparti / removeSchedule → status = a_planifier. */
     supabase
       .from("jobs")
       .select(
@@ -80,12 +79,12 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         clients ( name, city, lat, lng )
       `
       )
-      .eq("status", "draft")
+      .eq("status", "a_planifier")
       .order("created_at", { ascending: false }),
     supabase.from("app_settings").select("*").limit(1).maybeSingle(),
   ]);
 
-  /* Toutes les jobs "draft" sont non planifiées par définition — pas besoin de filtrage. */
+  /* Toutes les jobs "a_planifier" attendent un créneau — pas besoin de filtrage supplémentaire. */
   const jobsForPicker: JobPickerRow[] = (jobsRes.data ?? []).map((rowRaw) => {
     const row = rowRaw as {
       id: string;

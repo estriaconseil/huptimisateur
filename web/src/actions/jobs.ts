@@ -83,5 +83,6 @@ export async function updateJobStatus(jobId: string, status: string) {
   revalidatePath("/dispatch");
   revalidatePath("/clients");
   revalidatePath("/a-planifier");
+  revalidatePath("/ventes/pipeline");
   return { ok: true as const };
 }

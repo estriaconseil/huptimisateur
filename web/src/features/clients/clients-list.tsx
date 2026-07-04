@@ -57,12 +57,16 @@ export type ClientRow = {
 };
 
 const JOB_STATUSES = [
-  { value: "all",         label: "Tous les statuts" },
-  { value: "draft",       label: "À placer" },
-  { value: "scheduled",   label: "Planifiée" },
-  { value: "in_progress", label: "En cours" },
-  { value: "completed",   label: "Terminée" },
-  { value: "cancelled",   label: "Annulée" },
+  { value: "all",                   label: "Tous les statuts" },
+  { value: "prospect",              label: "Prospect" },
+  { value: "soumission_en_attente", label: "Soumission en attente" },
+  { value: "a_suivre",              label: "À suivre" },
+  { value: "a_relancer",            label: "À relancer" },
+  { value: "a_planifier",           label: "À planifier" },
+  { value: "reparti",               label: "Réparti" },
+  { value: "facturation",           label: "Facturation" },
+  { value: "complete",              label: "Complété" },
+  { value: "annule",                label: "Annulé" },
 ] as const;
 
 /* ─── Dialog : édition client ─── */
@@ -239,11 +243,15 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
             <div className="space-y-1.5">
               <Label htmlFor={`status-${job.id}`}>Statut</Label>
               <select id={`status-${job.id}`} className={selectClass} {...register("status")}>
-                <option value="draft">À placer</option>
-                <option value="scheduled">Planifiée</option>
-                <option value="in_progress">En cours</option>
-                <option value="completed">Terminée</option>
-                <option value="cancelled">Annulée</option>
+                <option value="prospect">Prospect</option>
+                <option value="soumission_en_attente">Soumission en attente</option>
+                <option value="a_suivre">À suivre</option>
+                <option value="a_relancer">À relancer</option>
+                <option value="a_planifier">À planifier</option>
+                <option value="reparti">Réparti</option>
+                <option value="facturation">Facturation</option>
+                <option value="complete">Complété</option>
+                <option value="annule">Annulé</option>
               </select>
             </div>
             <div className="space-y-1.5">
@@ -391,45 +399,48 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
 
           return (
             <div key={client.id} className="bg-white dark:bg-card">
-              {/* En-tête cliquable */}
-              <button
-                type="button"
-                onClick={() => toggleExpand(client.id)}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
-              >
-                {/* Chevron */}
-                <span className="shrink-0 text-muted-foreground">
-                  {isOpen
-                    ? <ChevronDown className="size-4" />
-                    : <ChevronRight className="size-4" />
-                  }
-                </span>
-
-                {/* Nom */}
-                <span className="flex-1 min-w-0 font-medium text-sm truncate">{client.name}</span>
-
-                {/* Ville */}
-                {client.city && (
-                  <span className="hidden sm:block text-xs text-muted-foreground shrink-0">
-                    📍 {client.city}
+              {/* En-tête : zone accordéon + bouton modifier côte à côte */}
+              <div className="flex items-center transition-colors hover:bg-muted/40">
+                {/* Zone cliquable pour l'accordéon */}
+                <button
+                  type="button"
+                  onClick={() => toggleExpand(client.id)}
+                  className="flex flex-1 min-w-0 items-center gap-3 px-4 py-3 text-left"
+                >
+                  {/* Chevron */}
+                  <span className="shrink-0 text-muted-foreground">
+                    {isOpen
+                      ? <ChevronDown className="size-4" />
+                      : <ChevronRight className="size-4" />
+                    }
                   </span>
-                )}
 
-                {/* GPS */}
-                {client.lat != null && (
-                  <span className="hidden sm:block text-[10px] text-emerald-600 font-medium shrink-0">✓ GPS</span>
-                )}
+                  {/* Nom */}
+                  <span className="flex-1 min-w-0 font-medium text-sm truncate">{client.name}</span>
 
-                {/* Nb jobs */}
-                <Badge variant="secondary" className="text-[10px] shrink-0">
-                  {client.jobs.length} job{client.jobs.length > 1 ? "s" : ""}
-                </Badge>
+                  {/* Ville */}
+                  {client.city && (
+                    <span className="hidden sm:block text-xs text-muted-foreground shrink-0">
+                      📍 {client.city}
+                    </span>
+                  )}
 
-                {/* Bouton modifier (stoppe la propagation pour ne pas toggle l'accordéon) */}
-                <span onClick={(e) => e.stopPropagation()}>
+                  {/* GPS */}
+                  {client.lat != null && (
+                    <span className="hidden sm:block text-[10px] text-emerald-600 font-medium shrink-0">✓ GPS</span>
+                  )}
+
+                  {/* Nb jobs */}
+                  <Badge variant="secondary" className="text-[10px] shrink-0">
+                    {client.jobs.length} job{client.jobs.length > 1 ? "s" : ""}
+                  </Badge>
+                </button>
+
+                {/* Bouton modifier — en dehors du <button> accordéon */}
+                <div className="shrink-0 pr-3">
                   <EditClientDialog client={client} />
-                </span>
-              </button>
+                </div>
+              </div>
 
               {/* Contenu accordéon */}
               {isOpen && (

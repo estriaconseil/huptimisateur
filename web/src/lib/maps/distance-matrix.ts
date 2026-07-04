@@ -53,6 +53,57 @@ async function fetchBatch(
   });
 }
 
+/**
+ * 1 origine → N destinations (pour l'optimiseur prospect → créneaux)
+ * L'API retourne rows[0].elements[0..N-1]
+ */
+export async function fetchDrivingMetricsFromOrigin(
+  apiKey: string,
+  origin: { lat: number; lng: number },
+  destinations: Array<{ lat: number; lng: number }>
+): Promise<Metric[]> {
+  if (destinations.length === 0) return [];
+
+  const fmt = (p: { lat: number; lng: number }) => `${p.lat},${p.lng}`;
+  const results: Metric[] = [];
+
+  for (let i = 0; i < destinations.length; i += BATCH_SIZE) {
+    const chunk = destinations.slice(i, i + BATCH_SIZE);
+    const destParam = chunk.map(fmt).join("|");
+    const url =
+      `https://maps.googleapis.com/maps/api/distancematrix/json` +
+      `?units=metric&mode=driving&origins=${encodeURIComponent(fmt(origin))}` +
+      `&destinations=${encodeURIComponent(destParam)}&key=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url);
+    const data = (await res.json()) as {
+      status: string;
+      error_message?: string;
+      rows?: Row[];
+    };
+
+    if (data.status !== "OK" || !data.rows?.length) {
+      console.error("[DistMatrix 1→N] API error:", data.status, data.error_message ?? "");
+      results.push(...chunk.map(() => ({ meters: null, seconds: null })));
+      continue;
+    }
+
+    const elements = data.rows[0]?.elements ?? [];
+    for (const el of elements) {
+      if (!el || el.status !== "OK") {
+        results.push({ meters: null, seconds: null });
+      } else {
+        results.push({
+          meters: el.distance?.value ?? null,
+          seconds: el.duration?.value ?? null,
+        });
+      }
+    }
+  }
+
+  return results;
+}
+
 export async function fetchDrivingMetricsBatch(
   apiKey: string,
   origins: Array<{ lat: number; lng: number }>,

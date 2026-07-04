@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AppHeader } from "@/components/layout/app-header";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import type { UserRole } from "@/types/domain";
 
 export default async function AppSectionLayout({
   children,
@@ -18,9 +19,17 @@ export default async function AppSectionLayout({
     redirect("/login");
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const role = (profile?.role ?? "secretary") as UserRole;
+
   return (
     <div className="flex min-h-svh">
-      <AppSidebar />
+      <AppSidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader />
         <main className="bg-muted/30 flex-1 overflow-auto p-6">{children}</main>

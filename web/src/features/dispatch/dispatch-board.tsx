@@ -146,6 +146,26 @@ export function DispatchBoard(props: Props) {
 
   const dateInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Refresh automatique (2 min) — désactivé quand un dialogue est ouvert ──
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [autoRefreshing, setAutoRefreshing] = useState(false);
+  const autoRefreshInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const anyDialogOpen = pickOpen || newJobOpen || detailOpen || sheetOpen;
+
+  useEffect(() => {
+    if (anyDialogOpen) {
+      if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current);
+      return;
+    }
+    autoRefreshInterval.current = setInterval(() => {
+      setAutoRefreshing(true);
+      router.refresh();
+      setLastRefresh(new Date());
+      setTimeout(() => setAutoRefreshing(false), 800);
+    }, 2 * 60 * 1000);
+    return () => { if (autoRefreshInterval.current) clearInterval(autoRefreshInterval.current); };
+  }, [anyDialogOpen, router]);
+
   const navigateToMonday = useCallback(
     (mondayDate: Date) => {
       const iso = format(startOfWeek(mondayDate, { weekStartsOn: 1 }), "yyyy-MM-dd");
@@ -412,8 +432,21 @@ export function DispatchBoard(props: Props) {
           </Button>
         </div>
 
-        {/* Bouton Nouvelle job */}
-        <div className="flex flex-wrap gap-2">
+        {/* Boutons droite */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Indicateur de refresh */}
+          <button
+            type="button"
+            onClick={() => { setAutoRefreshing(true); router.refresh(); setLastRefresh(new Date()); setTimeout(() => setAutoRefreshing(false), 800); }}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
+            title="Rafraîchir"
+          >
+            {autoRefreshing
+              ? <Loader2 className="size-3.5 animate-spin" />
+              : <ArrowRightLeft className="size-3.5" />
+            }
+            <span className="hidden sm:inline">{format(lastRefresh, "HH:mm")}</span>
+          </button>
           <Button
             type="button"
             size="sm"

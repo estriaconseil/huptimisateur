@@ -422,7 +422,7 @@ export function TeamsManager({ teams, allTechnicians, role }: Props) {
               variant="destructive"
               disabled={pending}
               onClick={handleDelete}
-              className="bg-destructive/90 hover:bg-destructive"
+              className="bg-destructive/90 hover:bg-destructive text-white"
             >
               {pending ? "Suppression..." : "Oui, supprimer"}
             </Button>

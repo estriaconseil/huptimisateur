@@ -29,8 +29,8 @@ function weekMondayIso(): string {
 export default async function APlanifierPage() {
   const supabase = await createServerSupabaseClient();
 
-  /* Seules les jobs "draft" = non planifiées. Statut géré automatiquement :
-     assignJobToSlot → scheduled | removeSchedule → draft */
+  /* jobs "a_planifier" = soumission acceptée, attendent un créneau.
+     assignJobToSlot → reparti | removeSchedule → a_planifier */
   const { data: rawJobs, error } = await supabase
     .from("jobs")
     .select(
@@ -38,7 +38,7 @@ export default async function APlanifierPage() {
        preferred_date, created_at,
        clients ( name, phone, email )`
     )
-    .eq("status", "draft")
+    .eq("status", "a_planifier")
     .order("preferred_date", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: true });
 
