@@ -28,9 +28,9 @@ const STATUS_LABELS: Record<string, string> = {
   no_show:    "Absent",
 };
 
-function fmtDist(m: number | null) {
+function fmtTravelMin(m: number | null) {
   if (m === null) return null;
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m / 60)} min`;
 }
 
 export function AppointmentActionModal({ open, onClose, appointment, salespeople }: Props) {
@@ -52,7 +52,13 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   useEffect(() => {
     if (mode === "move" && moveTab === "optimizer" && hasGps && slots === null) {
       startLoadSlots(async () => {
-        const res = await findBestSlotsForProspect(appointment.client_lat!, appointment.client_lng!);
+        const res = await findBestSlotsForProspect(
+          appointment.client_lat!,
+          appointment.client_lng!,
+          10,
+          appointment.salesperson_id,
+          appointment.id
+        );
         if (res.ok) setSlots(res.slots);
       });
     }
@@ -233,8 +239,8 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                           </div>
                           <div className="shrink-0 text-right">
                             <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-                            {s.detour_meters !== null && (
-                              <div className="text-[10px] text-muted-foreground">détour {fmtDist(s.detour_meters)}</div>
+                            {s.travel_seconds !== null && (
+                              <div className="text-[10px] text-muted-foreground">{fmtTravelMin(s.travel_seconds)}</div>
                             )}
                           </div>
                           {isLoading ? <Loader2 className="size-4 animate-spin shrink-0" /> : <ChevronRight className="size-4 text-muted-foreground shrink-0" />}

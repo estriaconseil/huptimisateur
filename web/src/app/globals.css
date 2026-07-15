@@ -170,10 +170,22 @@
     display: none !important;
   }
 
+  /* Afficher les blocs masqués à l'écran (ex. unités 2–3) */
+  .print\:block {
+    display: block !important;
+  }
+
   /* Fond blanc, texte noir */
   body {
     background: white !important;
     color: black !important;
+  }
+
+  /* Éviter les sauts de page au milieu des blocs soumission */
+  .print\:break-inside-avoid,
+  .bg-background.rounded-xl.border {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   /* Mode 1 job par page : saut de page entre chaque fiche */

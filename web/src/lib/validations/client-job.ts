@@ -1,5 +1,18 @@
 import { z } from "zod";
 
+const JOB_STATUS_ENUM = [
+  "soumission_en_attente",
+  "soumission_repartie",
+  "en_attente",
+  "a_planifier",
+  "reparti",
+  "retour_a_faire",
+  "facturation",
+  "complete",
+  "termine",
+  "annule",
+] as const;
+
 /** Formulaire unique : client + adresse + job (aligné DB Supabase). */
 export const newClientJobFormSchema = z.object({
   name: z.string().min(1, "Nom requis"),
@@ -18,17 +31,7 @@ export const newClientJobFormSchema = z.object({
     z.literal(""),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide (AAAA-MM-JJ)"),
   ]),
-  status: z.enum([
-    "prospect",
-    "soumission_en_attente",
-    "a_suivre",
-    "a_relancer",
-    "a_planifier",
-    "reparti",
-    "facturation",
-    "complete",
-    "annule",
-  ]),
+  status: z.enum(JOB_STATUS_ENUM),
 });
 
 export type NewClientJobFormValues = z.infer<typeof newClientJobFormSchema>;
@@ -49,17 +52,7 @@ export type EditClientFormValues = z.infer<typeof editClientSchema>;
 
 /** Schéma d'édition d'une job existante. */
 export const editJobSchema = z.object({
-  status: z.enum([
-    "prospect",
-    "soumission_en_attente",
-    "a_suivre",
-    "a_relancer",
-    "a_planifier",
-    "reparti",
-    "facturation",
-    "complete",
-    "annule",
-  ]),
+  status: z.enum(JOB_STATUS_ENUM),
   estimated_duration_hours: z.union([z.literal(4), z.literal(8)]),
   preferred_date: z.union([
     z.literal(""),
@@ -69,9 +62,12 @@ export const editJobSchema = z.object({
     z.literal(""),
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date invalide (AAAA-MM-JJ)"),
   ]).optional(),
+  follow_up_flag: z.enum(["a_suivre", "a_relancer", "rdv_passe"]).nullable().optional(),
   salesperson_id: z.string().optional(),
   installation_info: z.string().optional(),
   internal_notes: z.string().optional(),
+  cancellation_reason: z.string().optional(),
+  cancellation_notes: z.string().optional(),
 });
 
 export type EditJobFormValues = z.infer<typeof editJobSchema>;

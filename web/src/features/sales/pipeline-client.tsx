@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Loader2,
   MapPin,
   Pencil,
@@ -21,6 +22,12 @@ import { fr } from "date-fns/locale";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import {
   bookProspectToSlot,
@@ -31,15 +38,21 @@ import {
 } from "@/actions/sales";
 import { createProspect } from "@/actions/prospects";
 import { updateClient, updateJob } from "@/actions/clients";
-import { updateJobStatus } from "@/actions/jobs";
-import { statusLabel, statusColor } from "@/lib/job-status";
-import type { JobStatus, Salesperson } from "@/types/domain";
+import { updateJobStatus, updateJobFlag } from "@/actions/jobs";
+import { statusLabel, statusColor, flagColor, flagLabel } from "@/lib/job-status";
+import { CANCELLATION_REASONS } from "@/types/domain";
+import type { JobStatus, FollowUpFlag, Salesperson } from "@/types/domain";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type PipelineJob = {
   id: string;
   status: JobStatus;
+  follow_up_flag: FollowUpFlag;
+  appointment_id: string | null;
+  /** Date du RDV lié (YYYY-MM-DD) — pour badge RDV passé */
+  appointment_date: string | null;
+  has_quote: boolean;
   salesperson_id: string | null;
   installation_info: string | null;
   internal_notes: string | null;
@@ -60,9 +73,9 @@ export type PipelineJob = {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-function fmtDist(m: number | null): string {
-  if (m === null) return "—";
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+function fmtTravelMin(seconds: number | null): string {
+  if (seconds === null) return "—";
+  return `${Math.round(seconds / 60)} min`;
 }
 
 const DAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
@@ -158,7 +171,7 @@ function QuickProspectModal({
       if (!jobId) return;
       setCreatedJobId(jobId);
       setStep("loading-slots");
-      const res = await findBestSlotsForProspect(form.lat!, form.lng!);
+      const res = await findBestSlotsForProspect(form.lat!, form.lng!, 10, form.salesperson_id || null);
       if (!res.ok) { setError(res.message); setStep("form"); return; }
       setSlots(res.slots);
       setStep("slots");
@@ -302,6 +315,7 @@ function QuickProspectModal({
               slots={slots}
               prospectLat={form.lat!}
               prospectLng={form.lng!}
+              salespersonId={form.salesperson_id || null}
               onBooked={handleBooked}
             />
             {error && <p className="text-destructive text-sm mt-2">{error}</p>}
@@ -315,11 +329,71 @@ function QuickProspectModal({
 // ── Modal d'édition complète d'un prospect ─────────────────────────────────────
 
 const PIPELINE_STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
-  { value: "prospect",              label: "Prospect" },
-  { value: "soumission_en_attente", label: "Soumission en attente" },
-  { value: "a_suivre",              label: "À suivre" },
-  { value: "a_relancer",            label: "À relancer" },
+  { value: "soumission_en_attente", label: "Prospect" },
+  { value: "soumission_repartie",   label: "Visite planifiée" },
+  { value: "en_attente",            label: "En attente" },
+  { value: "annule",                label: "Annulé" },
 ];
+
+// ── Modal d'annulation (Dialog) ───────────────────────────────────────────────
+
+function CancelModal({
+  open,
+  onConfirm,
+  onCancel,
+  pending,
+}: {
+  open: boolean;
+  onConfirm: (reason: string, notes: string) => void;
+  onCancel: () => void;
+  pending: boolean;
+}) {
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Raison d&apos;annulation</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 pt-1">
+          <select
+            className={inp}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          >
+            <option value="">— Sélectionner —</option>
+            {CANCELLATION_REASONS.map((r) => (
+              <option key={r.value} value={r.value}>{r.label}</option>
+            ))}
+          </select>
+          <textarea
+            className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+            rows={3}
+            placeholder="Notes additionnelles (optionnel)"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
+          <div className="flex gap-2 pt-1">
+            <Button
+              variant="destructive"
+              className="flex-1"
+              disabled={!reason || pending}
+              onClick={() => onConfirm(reason, notes)}
+            >
+              {pending ? <Loader2 className="size-3.5 animate-spin" /> : "Confirmer l'annulation"}
+            </Button>
+            <Button variant="outline" className="flex-1" onClick={onCancel}>
+              Retour
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 type EditModalStep = "edit" | "loading-slots" | "slots";
 
@@ -431,7 +505,7 @@ function ProspectEditModal({
     start(async () => {
       if (!await persist()) return;
       setStep("loading-slots");
-      const res = await findBestSlotsForProspect(form.client_lat!, form.client_lng!);
+      const res = await findBestSlotsForProspect(form.client_lat!, form.client_lng!, 10, form.salesperson_id || null);
       if (!res.ok) { setError(res.message); setStep("edit"); return; }
       setSlots(res.slots);
       setStep("slots");
@@ -615,6 +689,7 @@ function ProspectEditModal({
               slots={slots}
               prospectLat={form.client_lat!}
               prospectLng={form.client_lng!}
+              salespersonId={form.salesperson_id || null}
               onBooked={handleBooked}
             />
             {error && <p className="text-destructive text-sm mt-2">{error}</p>}
@@ -702,8 +777,8 @@ function OptimizedList({
             </div>
             <div className="shrink-0 text-right">
               <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-              {s.detour_meters !== null && (
-                <div className="text-[10px] text-muted-foreground">détour {fmtDist(s.detour_meters)}</div>
+              {s.travel_seconds !== null && (
+                <div className="text-[10px] text-muted-foreground">{fmtTravelMin(s.travel_seconds)}</div>
               )}
             </div>
             {isLoading
@@ -724,11 +799,15 @@ function WeekCalendar({
   jobId,
   prospectLat,
   prospectLng,
+  salespersonId = null,
+  excludeAppointmentId = null,
   onBooked,
 }: {
   jobId: string;
   prospectLat: number;
   prospectLng: number;
+  salespersonId?: string | null;
+  excludeAppointmentId?: string | null;
   onBooked: (msg: string) => void;
 }) {
   const [monday, setMonday] = useState<Date>(() =>
@@ -747,7 +826,13 @@ function WeekCalendar({
     setWeekData(null);
     setError(null);
     startLoad(async () => {
-      const res = await getSlotsForWeekWithScores(prospectLat, prospectLng, format(newMonday, "yyyy-MM-dd"));
+      const res = await getSlotsForWeekWithScores(
+        prospectLat,
+        prospectLng,
+        format(newMonday, "yyyy-MM-dd"),
+        salespersonId,
+        excludeAppointmentId
+      );
       if (!res.ok) { setError(res.message); return; }
       setWeekData(res.data);
     });
@@ -868,13 +953,13 @@ function WeekCalendar({
                             onClick={() => book(sp, day.date, slot)}
                             disabled={booking}
                             className="w-full h-full rounded flex flex-col items-center justify-center gap-0.5 hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-50 group"
-                            title={`${cell.prevLabel} · détour ${fmtDist(cell.detourMeters)}`}
+                            title={`${cell.prevLabel} · ${fmtTravelMin(cell.travelSeconds)}`}
                           >
                             {isBooking ? (
                               <Loader2 className="size-3 animate-spin" />
                             ) : (
                               <>
-                                <span className="text-[10px] text-emerald-600 font-medium">{fmtDist(cell.detourMeters)}</span>
+                                <span className="text-[10px] text-emerald-600 font-medium">{fmtTravelMin(cell.travelSeconds)}</span>
                                 <span className="text-[9px] text-muted-foreground group-hover:text-primary/70 leading-tight text-center truncate w-full px-1">
                                   {cell.prevLabel}
                                 </span>
@@ -902,12 +987,16 @@ function SlotChooser({
   slots,
   prospectLat,
   prospectLng,
+  salespersonId = null,
+  excludeAppointmentId = null,
   onBooked,
 }: {
   jobId: string;
   slots: ProspectSlotResult[];
   prospectLat: number;
   prospectLng: number;
+  salespersonId?: string | null;
+  excludeAppointmentId?: string | null;
   onBooked: (msg: string) => void;
 }) {
   const [mode, setMode] = useState<"list" | "calendar">("list");
@@ -944,6 +1033,8 @@ function SlotChooser({
           jobId={jobId}
           prospectLat={prospectLat}
           prospectLng={prospectLng}
+          salespersonId={salespersonId}
+          excludeAppointmentId={excludeAppointmentId}
           onBooked={onBooked}
         />
       )}
@@ -979,7 +1070,13 @@ function ProspectOptimizer({
     setError(null);
     setListLoaded(true);
     startLoad(async () => {
-      const res = await findBestSlotsForProspect(lat, lng);
+      const res = await findBestSlotsForProspect(
+        lat,
+        lng,
+        10,
+        job.salesperson_id,
+        job.appointment_id
+      );
       if (!res.ok) { setError(res.message); return; }
       setSlots(res.slots);
     });
@@ -1041,6 +1138,8 @@ function ProspectOptimizer({
               jobId={job.id}
               prospectLat={lat}
               prospectLng={lng}
+              salespersonId={job.salesperson_id}
+              excludeAppointmentId={job.appointment_id}
               onBooked={onBooked}
             />
           )}
@@ -1064,7 +1163,9 @@ function ProspectCard({
   const router = useRouter();
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
   const [statusPending, startStatus] = useTransition();
+  const [flagPending, startFlag] = useTransition();
   const client = job.clients;
 
   const createdAt = format(new Date(job.created_at), "d MMM yyyy", { locale: fr });
@@ -1072,17 +1173,50 @@ function ProspectCard({
     ? format(new Date(job.follow_up_date + "T12:00:00"), "d MMM yyyy", { locale: fr })
     : null;
 
+  // Badge visuel : RDV passé, statut encore « Visite planifiée »
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const isRdvPasse =
+    job.status === "soumission_repartie" &&
+    !!job.appointment_date &&
+    job.appointment_date < todayStr;
+
   const handleStatusChange = (newStatus: string) => {
+    if (newStatus === "annule") { setShowCancelModal(true); return; }
+    if (newStatus === "soumission_repartie" && !job.appointment_id) {
+      // Visite planifiée uniquement via booking d'un créneau
+      return;
+    }
     startStatus(async () => {
       await updateJobStatus(job.id, newStatus);
       router.refresh();
     });
   };
 
+  const handleCancelConfirm = (reason: string, notes: string) => {
+    startStatus(async () => {
+      await updateJobStatus(job.id, "annule", { reason, notes });
+      setShowCancelModal(false);
+      router.refresh();
+    });
+  };
+
+  const handleFlagChange = (flag: FollowUpFlag) => {
+    startFlag(async () => {
+      await updateJobFlag(job.id, flag);
+      router.refresh();
+    });
+  };
+
   return (
     <Card className="hover:shadow-sm transition-shadow">
+      <CancelModal
+        open={showCancelModal}
+        pending={statusPending}
+        onConfirm={handleCancelConfirm}
+        onCancel={() => setShowCancelModal(false)}
+      />
       <CardContent className="p-4 space-y-3">
-        {/* Ligne 1 : nom + vendeur + GPS */}
+        {/* Ligne 1 : nom + vendeur + GPS + drapeau */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="flex flex-wrap items-center gap-2">
@@ -1092,6 +1226,17 @@ function ProspectCard({
                 : <span className="text-[10px] text-muted-foreground italic">Non assigné</span>
               }
               {client?.lat && <span className="text-[10px] text-emerald-600 flex items-center gap-0.5"><MapPin className="size-2.5" />GPS</span>}
+              {/* Badge drapeau follow_up_flag */}
+              {job.follow_up_flag && (
+                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${flagColor(job.follow_up_flag)}`}>
+                  {flagLabel(job.follow_up_flag)}
+                </span>
+              )}
+              {isRdvPasse && job.follow_up_flag !== "rdv_passe" && (
+                <span className="inline-flex items-center rounded-full border border-orange-300 bg-orange-50 px-2 py-0.5 text-[10px] font-semibold text-orange-800">
+                  RDV passé
+                </span>
+              )}
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               {client?.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{client.phone}</span>}
@@ -1106,6 +1251,23 @@ function ProspectCard({
 
           {/* Actions */}
           <div className="flex items-center gap-2 shrink-0">
+            {/* Sélecteur drapeau */}
+            {(flagPending)
+              ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+              : (
+                <select
+                  value={job.follow_up_flag ?? ""}
+                  onChange={(e) => handleFlagChange((e.target.value || null) as FollowUpFlag)}
+                  className="border-input bg-background h-8 rounded-lg border px-2 text-[11px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title="Drapeau de suivi"
+                >
+                  <option value="">— Drapeau —</option>
+                  <option value="a_suivre">À suivre</option>
+                  <option value="a_relancer">À relancer</option>
+                  <option value="rdv_passe">RDV passé</option>
+                </select>
+              )
+            }
             <Button
               size="sm"
               variant="ghost"
@@ -1115,6 +1277,16 @@ function ProspectCard({
             >
               <Pencil className="size-3.5" />
             </Button>
+            <a href={job.appointment_id ? `/ventes/rdv/${job.appointment_id}` : `/ventes/soumission/${job.id}`}>
+              <Button
+                size="sm"
+                variant={job.has_quote ? "default" : "secondary"}
+                className={`gap-1.5 h-8 ${job.has_quote ? "" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+              >
+                <FileText className="size-3.5" />
+                {job.has_quote ? "Voir soumission" : "Créer soumission"}
+              </Button>
+            </a>
             <Button
               size="sm"
               variant={showOptimizer ? "default" : "outline"}
@@ -1136,12 +1308,26 @@ function ProspectCard({
                 {PIPELINE_STATUS_OPTIONS.map((o) => (
                   <button
                     key={o.value}
-                    onClick={() => job.status !== o.value && handleStatusChange(o.value)}
-                    disabled={statusPending}
+                    onClick={() => {
+                      if (job.status === o.value) return;
+                      if (o.value === "soumission_repartie" && !job.appointment_id) return;
+                      handleStatusChange(o.value);
+                    }}
+                    disabled={
+                      statusPending ||
+                      (o.value === "soumission_repartie" && !job.appointment_id && job.status !== "soumission_repartie")
+                    }
+                    title={
+                      o.value === "soumission_repartie" && !job.appointment_id
+                        ? "Réservez un créneau pour passer en Visite planifiée"
+                        : undefined
+                    }
                     className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${
                       job.status === o.value
                         ? statusColor(o.value)
-                        : "border hover:bg-muted text-muted-foreground"
+                        : o.value === "soumission_repartie" && !job.appointment_id
+                          ? "border text-muted-foreground/40 cursor-not-allowed"
+                          : "border hover:bg-muted text-muted-foreground"
                     }`}
                   >
                     {o.label}
@@ -1179,10 +1365,9 @@ function ProspectCard({
 // ── Composant principal Pipeline ───────────────────────────────────────────────
 
 const PIPELINE_STATUSES: JobStatus[] = [
-  "prospect",
   "soumission_en_attente",
-  "a_suivre",
-  "a_relancer",
+  "soumission_repartie",
+  "en_attente",
 ];
 
 export function PipelineClient({
@@ -1199,6 +1384,7 @@ export function PipelineClient({
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<JobStatus | "all">("all");
+  const [filterFlag, setFilterFlag] = useState<FollowUpFlag | "all">("all");
   const [filterSalesperson, setFilterSalesperson] = useState<string>(
     currentSalespersonId ?? "all"
   );
@@ -1219,10 +1405,11 @@ export function PipelineClient({
     [jobs, currentSalespersonId]
   );
 
-  // Filtres actifs (statut + vendeur + recherche)
+  // Filtres actifs (statut + drapeau + vendeur + recherche)
   const filteredJobs = useMemo(() => {
     return roleFiltered.filter((j) => {
       if (filterStatus !== "all" && j.status !== filterStatus) return false;
+      if (filterFlag !== "all" && j.follow_up_flag !== filterFlag) return false;
       if (!currentSalespersonId && filterSalesperson !== "all" && j.salesperson_id !== filterSalesperson) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
@@ -1237,7 +1424,7 @@ export function PipelineClient({
       }
       return true;
     });
-  }, [roleFiltered, filterStatus, filterSalesperson, search, currentSalespersonId]);
+  }, [roleFiltered, filterStatus, filterFlag, filterSalesperson, search, currentSalespersonId]);
 
   // Counts pour le dashboard (sur les jobs filtrés par rôle + vendeur, sans filtre statut)
   const baseForCounts = useMemo(
@@ -1290,25 +1477,92 @@ export function PipelineClient({
         </div>
       </div>
 
-      {/* Dashboard rapide — statuts */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {statusCounts.map(({ status, count }) => (
-          <button
-            key={status}
-            onClick={() => setFilterStatus((s) => (s === status ? "all" : status))}
-            className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-              filterStatus === status
-                ? "border-primary bg-primary/5"
-                : "hover:bg-muted"
-            }`}
-          >
-            <div className="text-2xl font-bold tabular-nums">{count}</div>
-            <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold mt-1 ${statusColor(status)}`}>
-              {statusLabel(status)}
-            </div>
-          </button>
-        ))}
-      </div>
+      {/* Dashboard rapide — compteurs statuts × vendeurs */}
+      {!currentSalespersonId ? (
+        /* Vue admin/secrétaire : tableau croisé vendeur × statut */
+        <div className="rounded-xl border overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Vendeur</th>
+                {PIPELINE_STATUSES.map((s) => (
+                  <th key={s} className="px-3 py-2 text-center font-medium text-muted-foreground whitespace-nowrap">
+                    {statusLabel(s)}
+                  </th>
+                ))}
+                <th className="px-3 py-2 text-center font-medium text-muted-foreground">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Ligne "Tous" */}
+              <tr className="border-b hover:bg-muted/20">
+                <td className="px-3 py-2 font-medium">Tous</td>
+                {PIPELINE_STATUSES.map((s) => {
+                  const cnt = roleFiltered.filter((j) => j.status === s).length;
+                  return (
+                    <td key={s} className="px-3 py-2 text-center">
+                      <button
+                        onClick={() => setFilterStatus((prev) => prev === s ? "all" : s)}
+                        className={`tabular-nums font-bold rounded px-1.5 ${filterStatus === s ? statusColor(s) : "hover:bg-muted"}`}
+                      >
+                        {cnt}
+                      </button>
+                    </td>
+                  );
+                })}
+                <td className="px-3 py-2 text-center font-bold">{roleFiltered.length}</td>
+              </tr>
+              {/* Une ligne par vendeur */}
+              {salespeople.map((sp) => {
+                const spJobs = roleFiltered.filter((j) => j.salesperson_id === sp.id);
+                if (spJobs.length === 0) return null;
+                return (
+                  <tr key={sp.id} className="border-b last:border-0 hover:bg-muted/20">
+                    <td className="px-3 py-2 text-muted-foreground">{sp.name}</td>
+                    {PIPELINE_STATUSES.map((s) => {
+                      const cnt = spJobs.filter((j) => j.status === s).length;
+                      return (
+                        <td key={s} className="px-3 py-2 text-center">
+                          {cnt > 0 ? (
+                            <button
+                              onClick={() => {
+                                setFilterSalesperson(sp.id);
+                                setFilterStatus((prev) => prev === s ? "all" : s);
+                              }}
+                              className={`tabular-nums font-semibold rounded px-1.5 ${filterStatus === s && filterSalesperson === sp.id ? statusColor(s) : "hover:bg-muted"}`}
+                            >
+                              {cnt}
+                            </button>
+                          ) : <span className="text-muted-foreground/40">—</span>}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2 text-center text-muted-foreground">{spJobs.length}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        /* Vue vendeur : ses compteurs seulement */
+        <div className="grid grid-cols-2 gap-2">
+          {statusCounts.map(({ status, count }) => (
+            <button
+              key={status}
+              onClick={() => setFilterStatus((s) => (s === status ? "all" : status))}
+              className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                filterStatus === status ? "border-primary bg-primary/5" : "hover:bg-muted"
+              }`}
+            >
+              <div className="text-2xl font-bold tabular-nums">{count}</div>
+              <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold mt-1 ${statusColor(status)}`}>
+                {statusLabel(status)}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Barre de filtres */}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -1345,16 +1599,48 @@ export function PipelineClient({
           </select>
         )}
 
-        {/* Badge filtre statut actif */}
-        {filterStatus !== "all" && (
-          <button
-            onClick={() => setFilterStatus("all")}
-            className={`h-9 inline-flex items-center gap-1.5 rounded-lg px-3 text-sm font-medium ${statusColor(filterStatus)}`}
-          >
-            {statusLabel(filterStatus)}
-            <X className="size-3.5" />
-          </button>
-        )}
+        {/* Bouton mode rappel — filtre sur les drapeaux */}
+        <select
+          className="border-input bg-background h-9 rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={filterFlag ?? "all"}
+          onChange={(e) => setFilterFlag(e.target.value === "all" ? "all" : e.target.value as FollowUpFlag)}
+        >
+          <option value="all">Tous les drapeaux</option>
+          <option value="a_suivre">À suivre</option>
+          <option value="a_relancer">Mode rappel</option>
+          <option value="rdv_passe">RDV passé</option>
+        </select>
+
+      </div>
+
+      {/* Tabs de statuts rapides */}
+      <div className="flex flex-wrap gap-1.5">
+        <button
+          onClick={() => setFilterStatus("all")}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            filterStatus === "all"
+              ? "bg-primary text-primary-foreground ring-1 ring-primary"
+              : "border hover:bg-muted text-muted-foreground"
+          }`}
+        >
+          Tous <span className="tabular-nums">({roleFiltered.length})</span>
+        </button>
+        {PIPELINE_STATUSES.map((s) => {
+          const count = roleFiltered.filter((j) => j.status === s).length;
+          return (
+            <button
+              key={s}
+              onClick={() => setFilterStatus((prev) => (prev === s ? "all" : s))}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                filterStatus === s
+                  ? statusColor(s) + " ring-1 ring-current"
+                  : "border hover:bg-muted text-muted-foreground"
+              }`}
+            >
+              {statusLabel(s)} <span className="tabular-nums">({count})</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Résultats */}

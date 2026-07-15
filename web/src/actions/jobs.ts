@@ -76,13 +76,54 @@ export async function getJobDetails(
   };
 }
 
-export async function updateJobStatus(jobId: string, status: string) {
+export async function updateJobStatus(
+  jobId: string,
+  status: string,
+  cancellation?: { reason: string; notes?: string }
+) {
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.from("jobs").update({ status }).eq("id", jobId);
+
+  if (status === "soumission_repartie") {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("appointment_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (!job?.appointment_id) {
+      return {
+        ok: false as const,
+        message:
+          "Impossible de passer en Visite planifiée sans rendez-vous. Utilisez « Trouver un créneau ».",
+      };
+    }
+  }
+
+  const payload: Record<string, unknown> = { status };
+  if (status === "annule" && cancellation) {
+    payload.cancellation_reason = cancellation.reason;
+    payload.cancellation_notes = cancellation.notes ?? null;
+  }
+
+  const { error } = await supabase.from("jobs").update(payload).eq("id", jobId);
   if (error) return { ok: false as const, message: error.message };
   revalidatePath("/dispatch");
   revalidatePath("/clients");
   revalidatePath("/a-planifier");
+  revalidatePath("/ventes/pipeline");
+  return { ok: true as const };
+}
+
+/** Met à jour uniquement le drapeau de suivi parallèle (follow_up_flag), sans changer le statut. */
+export async function updateJobFlag(
+  jobId: string,
+  flag: "a_suivre" | "a_relancer" | "rdv_passe" | null
+) {
+  const supabase = await createServerSupabaseClient();
+  const { error } = await supabase
+    .from("jobs")
+    .update({ follow_up_flag: flag })
+    .eq("id", jobId);
+  if (error) return { ok: false as const, message: error.message };
   revalidatePath("/ventes/pipeline");
   return { ok: true as const };
 }

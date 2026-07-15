@@ -10,6 +10,27 @@ import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
 import { FIXED_TIME_SLOTS } from "@/features/sales/sales-utils";
 import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
 
+/** Statuts ventes avant « En attente » — seuls ceux-ci peuvent être promus. */
+const PRE_EN_ATTENTE = ["soumission_en_attente", "soumission_repartie"] as const;
+
+/**
+ * Si la soumission a un sous-total > 0, passe le job lié en « en_attente ».
+ * Ne rétrograde jamais et n'écrase pas un statut d'installation.
+ */
+async function promoteJobToEnAttenteIfPriced(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  jobId: string | null | undefined,
+  subtotal: number
+): Promise<void> {
+  if (!jobId || !(subtotal > 0)) return;
+  await supabase
+    .from("jobs")
+    .update({ status: "en_attente" })
+    .eq("id", jobId)
+    .in("status", [...PRE_EN_ATTENTE]);
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type CreateAppointmentInput = {
@@ -45,6 +66,7 @@ export type UnitInput = {
   difficulty: string;
   tech_count: number | null;
   unit_subtotal: number;
+  serial_number: string | null;
 };
 
 export type QuoteInput = {
@@ -56,8 +78,9 @@ export type QuoteInput = {
   client_cell: string;
   client_email: string;
   has_subsidy: boolean;
-  ready_to_schedule: boolean;
   will_call_back: boolean;
+  montant_subvention: number | null;
+  total_net: number | null;
   quote_date: string;
   inst_prepiping: boolean;
   inst_drill_concrete: boolean;
@@ -76,6 +99,7 @@ export type QuoteInput = {
   notes: string;
   subtotal: number;
   deposit: number | null;
+  estimated_duration_hours: 4 | 8 | null;
   salesperson_id: string;
   approved_by: string;
   signature_data: string | null;
@@ -162,7 +186,7 @@ export async function moveAppointment(
 }
 
 /**
- * Annule un rendez-vous et remet le job associé en "a_suivre".
+ * Annule un rendez-vous (créneau libéré) et remet le job lié en Prospect.
  */
 export async function cancelAppointment(appointmentId: string): Promise<Ok | Err> {
   const supabase = await createServerSupabaseClient();
@@ -175,7 +199,16 @@ export async function cancelAppointment(appointmentId: string): Promise<Ok | Err
     .eq("id", appointmentId);
 
   if (error) return { ok: false, message: error.message };
+
+  // Job lié → Prospect, créneau libéré
+  await supabase
+    .from("jobs")
+    .update({ status: "soumission_en_attente", appointment_id: null, follow_up_flag: null })
+    .eq("appointment_id", appointmentId)
+    .in("status", ["soumission_repartie", "soumission_en_attente", "en_attente"]);
+
   revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
   return { ok: true };
 }
 
@@ -194,17 +227,50 @@ export async function deleteAppointment(id: string): Promise<Ok | Err> {
 // ── Soumissions ──────────────────────────────────────────────────────────────
 
 export async function createQuote(
-  appointmentId: string,
+  link: { appointmentId?: string | null; jobId?: string | null },
   data: QuoteInput,
   units: UnitInput[]
 ): Promise<{ ok: true; id: string } | Err> {
   const supabase = await createServerSupabaseClient();
+  const appointmentId = link.appointmentId ?? null;
+  let jobId = link.jobId ?? null;
+  let clientId: string | null = null;
+
+  // Résoudre job + client depuis le RDV ou le job fourni
+  if (jobId) {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("id, client_id, appointment_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (!job) return { ok: false, message: "Job introuvable" };
+    clientId = job.client_id;
+    if (!appointmentId && job.appointment_id) {
+      // garder null si création volontaire sans RDV — on n'écrase pas
+    }
+  } else if (appointmentId) {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("id, client_id")
+      .eq("appointment_id", appointmentId)
+      .maybeSingle();
+    if (job) {
+      jobId = job.id;
+      clientId = job.client_id;
+    }
+  }
+
+  if (!appointmentId && !jobId) {
+    return { ok: false, message: "Un rendez-vous ou un job est requis pour créer une soumission." };
+  }
 
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
     .insert({
       quote_number: data.quote_number,
       appointment_id: appointmentId,
+      job_id: jobId,
+      client_id: clientId,
       client_name: data.client_name,
       client_address: data.client_address || null,
       client_work_address: data.client_work_address || null,
@@ -212,8 +278,9 @@ export async function createQuote(
       client_cell: data.client_cell || null,
       client_email: data.client_email || null,
       has_subsidy: data.has_subsidy,
-      ready_to_schedule: data.ready_to_schedule,
       will_call_back: data.will_call_back,
+      montant_subvention: data.montant_subvention,
+      total_net: data.total_net,
       quote_date: data.quote_date,
       inst_prepiping: data.inst_prepiping,
       inst_drill_concrete: data.inst_drill_concrete,
@@ -232,6 +299,7 @@ export async function createQuote(
       notes: data.notes || null,
       subtotal: data.subtotal,
       deposit: data.deposit,
+      estimated_duration_hours: data.estimated_duration_hours,
       salesperson_id: data.salesperson_id || null,
       approved_by: data.approved_by || null,
       signature_data: data.signature_data,
@@ -265,21 +333,29 @@ export async function createQuote(
         difficulty: u.difficulty || null,
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
+        serial_number: u.serial_number || null,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
   }
 
-  // Lier le rendez-vous à cette soumission
-  const { error: linkErr } = await supabase
-    .from("sales_appointments")
-    .update({ quote_id: quote.id })
-    .eq("id", appointmentId);
+  // Lier le rendez-vous à cette soumission (si applicable)
+  if (appointmentId) {
+    const { error: linkErr } = await supabase
+      .from("sales_appointments")
+      .update({ quote_id: quote.id })
+      .eq("id", appointmentId);
 
-  if (linkErr) return { ok: false, message: `Soumission créée mais lien RDV échoué : ${linkErr.message}` };
+    if (linkErr) return { ok: false, message: `Soumission créée mais lien RDV échoué : ${linkErr.message}` };
+  }
+
+  await promoteJobToEnAttenteIfPriced(supabase, jobId, data.subtotal);
 
   revalidatePath("/ventes");
-  revalidatePath(`/ventes/rdv/${appointmentId}`);
+  revalidatePath("/ventes/soumissions");
+  revalidatePath("/ventes/pipeline");
+  if (appointmentId) revalidatePath(`/ventes/rdv/${appointmentId}`);
+  if (jobId) revalidatePath(`/ventes/soumission/${jobId}`);
   return { ok: true, id: quote.id };
 }
 
@@ -301,8 +377,9 @@ export async function updateQuote(
       client_cell: data.client_cell || null,
       client_email: data.client_email || null,
       has_subsidy: data.has_subsidy,
-      ready_to_schedule: data.ready_to_schedule,
       will_call_back: data.will_call_back,
+      montant_subvention: data.montant_subvention,
+      total_net: data.total_net,
       quote_date: data.quote_date,
       inst_prepiping: data.inst_prepiping,
       inst_drill_concrete: data.inst_drill_concrete,
@@ -321,6 +398,7 @@ export async function updateQuote(
       notes: data.notes || null,
       subtotal: data.subtotal,
       deposit: data.deposit,
+      estimated_duration_hours: data.estimated_duration_hours,
       salesperson_id: data.salesperson_id || null,
       approved_by: data.approved_by || null,
       signature_data: data.signature_data,
@@ -357,12 +435,34 @@ export async function updateQuote(
         difficulty: u.difficulty || null,
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
+        serial_number: u.serial_number || null,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
   }
 
+  // Résoudre job lié pour promotion éventuelle
+  const { data: quoteRow } = await supabase
+    .from("quotes")
+    .select("job_id, appointment_id")
+    .eq("id", quoteId)
+    .maybeSingle();
+
+  let promoteJobId = quoteRow?.job_id ?? null;
+  if (!promoteJobId && quoteRow?.appointment_id) {
+    const { data: jobByAppt } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("appointment_id", quoteRow.appointment_id)
+      .maybeSingle();
+    promoteJobId = jobByAppt?.id ?? null;
+  }
+  await promoteJobToEnAttenteIfPriced(supabase, promoteJobId, data.subtotal);
+
   revalidatePath("/ventes");
+  revalidatePath("/ventes/soumissions");
+  revalidatePath("/ventes/pipeline");
+  if (promoteJobId) revalidatePath(`/ventes/soumission/${promoteJobId}`);
   return { ok: true };
 }
 
@@ -381,9 +481,13 @@ export async function updateQuoteStatus(
   return { ok: true };
 }
 
-/** Convertit une soumission acceptée en client + job d'installation */
+/** Convertit une soumission en job d'installation (réutilise le job prospect si lié). */
 export async function convertQuoteToInstallationJob(
-  quoteId: string
+  quoteId: string,
+  options?: {
+    estimatedDurationHours?: 4 | 8;
+    cancelSalesAppointment?: boolean;
+  }
 ): Promise<{ ok: true; jobId: string } | Err> {
   const supabase = await createServerSupabaseClient();
 
@@ -394,10 +498,92 @@ export async function convertQuoteToInstallationJob(
     .single();
 
   if (qErr || !quote) return { ok: false, message: qErr?.message ?? "Soumission introuvable" };
-  if (quote.installation_job_id)
-    return { ok: false, message: "Cette soumission a déjà été convertie en job." };
 
-  // Créer ou trouver le client
+  const duration =
+    options?.estimatedDurationHours ??
+    (quote.estimated_duration_hours === 4 || quote.estimated_duration_hours === 8
+      ? (quote.estimated_duration_hours as 4 | 8)
+      : null);
+
+  if (!duration) {
+    return { ok: false, message: "Durée des travaux requise (demi-journée ou journée complète)." };
+  }
+
+  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+
+  // Résoudre le job lié (colonne job_id, sinon via appointment_id)
+  let linkedJobId: string | null = quote.job_id ?? null;
+  if (!linkedJobId && quote.appointment_id) {
+    const { data: jobByAppt } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("appointment_id", quote.appointment_id)
+      .maybeSingle();
+    linkedJobId = jobByAppt?.id ?? null;
+  }
+
+  // Cas principal : réutiliser le job prospect déjà lié
+  if (linkedJobId) {
+    const { data: existingJob, error: jobReadErr } = await supabase
+      .from("jobs")
+      .select("id, status, installation_info, appointment_id")
+      .eq("id", linkedJobId)
+      .maybeSingle();
+
+    if (jobReadErr) return { ok: false, message: jobReadErr.message };
+    if (!existingJob) return { ok: false, message: "Job lié à la soumission introuvable" };
+
+    if (INSTALL_STATUSES.includes(existingJob.status)) {
+      return { ok: false, message: "Cette soumission a déjà été convertie en job d'installation." };
+    }
+
+    const appointmentIdToCancel =
+      options?.cancelSalesAppointment
+        ? (existingJob.appointment_id ?? quote.appointment_id ?? null)
+        : null;
+
+    const { error: jobUpdErr } = await supabase
+      .from("jobs")
+      .update({
+        status: "a_planifier",
+        estimated_duration_hours: duration,
+        installation_info: quote.notes || existingJob.installation_info,
+        internal_notes: `Soumission #${quote.quote_number}`,
+        follow_up_flag: null,
+        ...(appointmentIdToCancel ? { appointment_id: null } : {}),
+      })
+      .eq("id", existingJob.id);
+
+    if (jobUpdErr) return { ok: false, message: jobUpdErr.message };
+
+    const { error: quoteUpdErr } = await supabase
+      .from("quotes")
+      .update({
+        job_id: existingJob.id,
+        status: "accepted",
+        estimated_duration_hours: duration,
+      })
+      .eq("id", quoteId);
+
+    if (quoteUpdErr) {
+      return { ok: false, message: `Job mis à jour mais soumission non acceptée : ${quoteUpdErr.message}` };
+    }
+
+    if (appointmentIdToCancel) {
+      // Supprimer le RDV (ON DELETE SET NULL sur quotes/jobs) → créneau vraiment libre
+      await supabase.from("sales_appointments").delete().eq("id", appointmentIdToCancel);
+    }
+
+    revalidatePath("/ventes");
+    revalidatePath("/ventes/soumissions");
+    revalidatePath("/ventes/pipeline");
+    revalidatePath("/dispatch");
+    revalidatePath("/a-planifier");
+    revalidatePath("/clients");
+    return { ok: true, jobId: existingJob.id };
+  }
+
+  // Fallback : soumission sans job lié (données legacy) → créer client + job
   const { data: client, error: cErr } = await supabase
     .from("clients")
     .insert({
@@ -411,14 +597,13 @@ export async function convertQuoteToInstallationJob(
 
   if (cErr) return { ok: false, message: cErr.message };
 
-  // Créer la job d'installation
   const { data: job, error: jErr } = await supabase
     .from("jobs")
     .insert({
       client_id: client.id,
       installation_info: quote.notes,
       internal_notes: `Soumission #${quote.quote_number}`,
-      estimated_duration_hours: 4,
+      estimated_duration_hours: duration,
       status: "a_planifier",
     })
     .select("id")
@@ -426,15 +611,27 @@ export async function convertQuoteToInstallationJob(
 
   if (jErr) return { ok: false, message: jErr.message };
 
-  // Lier la soumission au job
   const { error: quoteLinkErr } = await supabase
     .from("quotes")
-    .update({ installation_job_id: job.id, status: "accepted" })
+    .update({
+      job_id: job.id,
+      client_id: client.id,
+      status: "accepted",
+      estimated_duration_hours: duration,
+    })
     .eq("id", quoteId);
 
-  if (quoteLinkErr) return { ok: false, message: `Job créée mais lien soumission échoué : ${quoteLinkErr.message}` };
+  if (quoteLinkErr) {
+    return { ok: false, message: `Job créée mais lien soumission échoué : ${quoteLinkErr.message}` };
+  }
+
+  if (options?.cancelSalesAppointment && quote.appointment_id) {
+    await supabase.from("sales_appointments").delete().eq("id", quote.appointment_id);
+  }
 
   revalidatePath("/ventes");
+  revalidatePath("/ventes/soumissions");
+  revalidatePath("/dispatch");
   revalidatePath("/a-planifier");
   revalidatePath("/clients");
   return { ok: true, jobId: job.id };
@@ -537,7 +734,7 @@ export async function bookProspectToSlot(input: {
   // Récupérer les infos du client via la job
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select(`id, status, clients ( name, phone, email, address_formatted, lat, lng )`)
+    .select(`id, status, appointment_id, clients ( name, phone, email, address_formatted, lat, lng )`)
     .eq("id", input.jobId)
     .maybeSingle();
 
@@ -549,6 +746,12 @@ export async function bookProspectToSlot(input: {
   }>((job as { clients: unknown }).clients);
 
   if (!client) return { ok: false, message: "Client introuvable" };
+
+  // Remplacement : libérer l'ancien RDV s'il existe
+  const previousApptId = (job as { appointment_id: string | null }).appointment_id;
+  if (previousApptId) {
+    await supabase.from("sales_appointments").delete().eq("id", previousApptId);
+  }
 
   // Créer le rendez-vous
   const { data: appt, error: apptErr } = await supabase
@@ -570,10 +773,15 @@ export async function bookProspectToSlot(input: {
 
   if (apptErr) return { ok: false, message: apptErr.message };
 
-  // Passer la job en "soumission_en_attente"
+  // Passer la job en "soumission_repartie" et lier le rendez-vous
   const { error: jobStatusErr } = await supabase
     .from("jobs")
-    .update({ status: "soumission_en_attente" })
+    .update({
+      status: "soumission_repartie",
+      salesperson_id: input.salespersonId,
+      appointment_id: appt.id,
+      follow_up_flag: null,
+    })
     .eq("id", input.jobId);
 
   if (jobStatusErr) return { ok: false, message: `RDV créé mais statut du prospect non mis à jour : ${jobStatusErr.message}` };
@@ -669,24 +877,39 @@ export type ProspectSlotResult = {
   date: string;
   start_time: string;
   dateFormatted: string;
-  /** Distance totale détour en mètres (prev→prospect + prospect→next). null si pas de données GPS. */
-  detour_meters: number | null;
-  /** Adresse du prev/next RDV pour info */
+  /** Temps de trajet score en secondes (moyenne prev/next si les deux). null si pas de GPS. */
+  travel_seconds: number | null;
+  /** Contexte prev/next pour info */
   context: string;
 };
 
 /**
+ * Score trajet (secondes) :
+ * - prev = RDV avant le créneau, sinon domicile vendeur (1er de la journée)
+ * - next = RDV après le créneau (sinon ignoré)
+ * - si prev et next → moyenne ; sinon le seul disponible
+ */
+function scoreTravelSeconds(
+  tPrev: number | null,
+  tNext: number | null
+): number {
+  if (tPrev !== null && tNext !== null) return (tPrev + tNext) / 2;
+  if (tPrev !== null) return tPrev;
+  if (tNext !== null) return tNext;
+  return Infinity;
+}
+
+/**
  * Trouve et classe les meilleurs créneaux disponibles pour un prospect donné (lat/lng).
- * Algorithme :
- *   Pour chaque créneau libre : score = dist(prev_appt → prospect) + dist(prospect → next_appt)
- *   Si pas de prev → utilise le domicile du vendeur
- *   Si pas de next → compte seulement dist(prev → prospect)
- * Retourne les `maxResults` meilleurs créneaux.
+ * Score en minutes de trajet (Distance Matrix duration).
+ * `excludeAppointmentId` : ignore ce RDV (re-optimisation d'un dossier déjà booké).
  */
 export async function findBestSlotsForProspect(
   prospectLat: number,
   prospectLng: number,
-  maxResults = 10
+  maxResults = 10,
+  salespersonId?: string | null,
+  excludeAppointmentId?: string | null
 ): Promise<{ ok: true; slots: ProspectSlotResult[] } | { ok: false; message: string }> {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!apiKey) return { ok: false, message: "Clé Google Maps manquante" };
@@ -696,18 +919,24 @@ export async function findBestSlotsForProspect(
   const todayStr = format(today, "yyyy-MM-dd");
   const in30Days = format(addDays(today, 30), "yyyy-MM-dd");
 
-  // 1. Vendeurs actifs + horaires + domicile
-  const { data: salespeople } = await supabase
+  // 1. Vendeurs actifs + horaires + domicile (filtrés si vendeur assigné)
+  let spQuery = supabase
     .from("salespeople")
     .select(`id, name, home_lat, home_lng, home_address,
              salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )`)
     .eq("active", true)
     .order("name");
 
+  if (salespersonId) {
+    spQuery = spQuery.eq("id", salespersonId);
+  }
+
+  const { data: salespeople } = await spQuery;
+
   if (!salespeople?.length) return { ok: true, slots: [] };
 
-  // 2. Tous les RDV dans la fenêtre (avec coordonnées)
-  const { data: allAppts } = await supabase
+  // 2. Tous les RDV dans la fenêtre (avec coordonnées), hors annulés et hors RDV exclu
+  let apptQuery = supabase
     .from("sales_appointments")
     .select("id, salesperson_id, scheduled_date, start_time, client_name, client_address, client_lat, client_lng")
     .neq("status", "cancelled")
@@ -715,6 +944,11 @@ export async function findBestSlotsForProspect(
     .lte("scheduled_date", in30Days)
     .order("scheduled_date")
     .order("start_time");
+
+  const { data: rawAppts } = await apptQuery;
+  const allAppts = (rawAppts ?? []).filter(
+    (a) => !excludeAppointmentId || a.id !== excludeAppointmentId
+  );
 
   const base = new Date(2000, 0, 1);
 
@@ -739,13 +973,13 @@ export async function findBestSlotsForProspect(
     addPos(sp.home_lat as number | null, sp.home_lng as number | null, `Domicile ${sp.name}`);
   }
   // Adresses des RDV
-  for (const a of allAppts ?? []) {
+  for (const a of allAppts) {
     addPos(a.client_lat as number | null, a.client_lng as number | null, a.client_name ?? "");
   }
 
-  // 4. Appel Distance Matrix : prospect → toutes les positions connues
-  type DistCache = Map<number, number | null>; // posIdx → mètres
-  let distCache: DistCache = new Map();
+  // 4. Appel Distance Matrix : prospect → toutes les positions (durée en secondes)
+  type SecCache = Map<number, number | null>;
+  const secCache: SecCache = new Map();
 
   if (positions.length > 0) {
     const metrics = await fetchDrivingMetricsFromOrigin(
@@ -754,19 +988,18 @@ export async function findBestSlotsForProspect(
       positions.map((p) => ({ lat: p.lat, lng: p.lng }))
     );
     metrics.forEach((m, i) => {
-      distCache.set(i, m.meters);
+      secCache.set(i, m.seconds);
     });
   }
 
-  const getDist = (posIdx: number): number | null => {
+  const getSec = (posIdx: number): number | null => {
     if (posIdx < 0) return null;
-    return distCache.get(posIdx) ?? null;
+    return secCache.get(posIdx) ?? null;
   };
 
-  // Helper : trouver le RDV prev/next pour un vendeur à une date/heure donnée
-  type ApptRow = typeof allAppts extends (infer T)[] | null | undefined ? T : never;
+  type ApptRow = (typeof allAppts)[number];
   const apptsFor = (spId: string, date: string): ApptRow[] =>
-    (allAppts ?? []).filter((a) => a.salesperson_id === spId && a.scheduled_date === date);
+    allAppts.filter((a) => a.salesperson_id === spId && a.scheduled_date === date);
 
   // 5. Construire et scorer chaque créneau disponible
   type ScoredSlot = ProspectSlotResult & { score: number };
@@ -805,28 +1038,22 @@ export async function findBestSlotsForProspect(
         if (slotTime < startTime || slotTime >= endTime) continue;
         if (occupiedTimes.has(slot)) continue;
 
-        // Trouver prev et next
         const prevAppt = dayAppts.filter((a) => a.time < slot).at(-1);
         const nextAppt = dayAppts.find((a) => a.time > slot);
 
+        // Maison uniquement si aucun RDV avant (1er créneau de la journée)
         const prevIdx = prevAppt?.posIdx ?? homeIdx;
         const nextIdx = nextAppt?.posIdx ?? -1;
 
-        const dPrev = getDist(prevIdx); // prospect ↔ prev (approximation symétrique)
-        const dNext = getDist(nextIdx); // prospect ↔ next
+        const tPrev = getSec(prevIdx);
+        const tNext = nextIdx >= 0 ? getSec(nextIdx) : null;
 
-        let score: number;
-        let context: string;
-
-        if (dPrev === null && dNext === null) {
-          score = Infinity; // Pas de données GPS
-          context = prevAppt ? prevAppt.label : `Domicile ${sp.name}`;
-        } else {
-          score = (dPrev ?? 0) + (dNext ?? 0);
-          const prevLabel = prevAppt?.label ?? `Domicile ${sp.name}`;
-          const nextLabel = nextAppt?.label;
-          context = nextLabel ? `${prevLabel} → [prospect] → ${nextLabel}` : `Après : ${prevLabel}`;
-        }
+        const score = scoreTravelSeconds(tPrev, tNext);
+        const prevLabel = prevAppt?.label ?? `Domicile ${sp.name}`;
+        const nextLabel = nextAppt?.label;
+        const context = nextLabel
+          ? `${prevLabel} → [prospect] → ${nextLabel}`
+          : `Après : ${prevLabel}`;
 
         scored.push({
           salesperson_id: sp.id,
@@ -834,7 +1061,7 @@ export async function findBestSlotsForProspect(
           date: dateStr,
           start_time: slot,
           dateFormatted: format(date, "EEEE d MMM", { locale: fr }),
-          detour_meters: score === Infinity ? null : score,
+          travel_seconds: score === Infinity ? null : score,
           context,
           score,
         });
@@ -855,7 +1082,7 @@ export type WeekSlotCell = {
   slot: string;           // "08:00"
   occupied: boolean;
   occupiedBy: string | null;
-  detourMeters: number | null;  // null si pas de GPS ou créneau occupé
+  travelSeconds: number | null;  // null si pas de GPS ou créneau occupé
   prevLabel: string;     // "Domicile Jim" ou "après Marie Roy"
 };
 
@@ -873,22 +1100,20 @@ export type SalespersonWeekData = {
 
 /**
  * Retourne la grille semaine (lun-ven) pour chaque vendeur actif :
- * - Créneaux occupés (avec nom du client)
- * - Créneaux libres (avec distance depuis le RDV précédent jusqu'au prospect)
+ * créneaux libres scorés en minutes (moyenne prev/next).
  */
 export async function getSlotsForWeekWithScores(
   prospectLat: number,
   prospectLng: number,
-  weekMonday: string // yyyy-MM-dd
+  weekMonday: string, // yyyy-MM-dd
+  salespersonId?: string | null,
+  excludeAppointmentId?: string | null
 ): Promise<{ ok: true; data: SalespersonWeekData[] } | { ok: false; message: string }> {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!apiKey) return { ok: false, message: "Clé Google Maps manquante" };
 
   const supabase = await createServerSupabaseClient();
 
-  // Calculer les 5 jours de la semaine
-  // Attention : new Date("yyyy-MM-dd") interprète en UTC → décalage d'un jour en UTC-x.
-  // En ajoutant T12:00:00 on force l'interprétation en heure locale.
   const monday = new Date(weekMonday + "T12:00:00");
   const weekDates: string[] = [];
   for (let i = 0; i < 5; i++) {
@@ -897,16 +1122,22 @@ export async function getSlotsForWeekWithScores(
   }
   const weekEnd = weekDates[4];
 
-  const [{ data: salespeople }, { data: weekAppts }] = await Promise.all([
-    supabase
-      .from("salespeople")
-      .select(`id, name, home_lat, home_lng, home_address,
+  let spQuery = supabase
+    .from("salespeople")
+    .select(`id, name, home_lat, home_lng, home_address,
                salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )`)
-      .eq("active", true)
-      .order("name"),
+    .eq("active", true)
+    .order("name");
+
+  if (salespersonId) {
+    spQuery = spQuery.eq("id", salespersonId);
+  }
+
+  const [{ data: salespeople }, { data: rawWeekAppts }] = await Promise.all([
+    spQuery,
     supabase
       .from("sales_appointments")
-      .select("salesperson_id, scheduled_date, start_time, client_name, client_address, client_lat, client_lng")
+      .select("id, salesperson_id, scheduled_date, start_time, client_name, client_address, client_lat, client_lng")
       .neq("status", "cancelled")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekEnd)
@@ -914,9 +1145,12 @@ export async function getSlotsForWeekWithScores(
       .order("start_time"),
   ]);
 
+  const weekAppts = (rawWeekAppts ?? []).filter(
+    (a) => !excludeAppointmentId || a.id !== excludeAppointmentId
+  );
+
   if (!salespeople?.length) return { ok: true, data: [] };
 
-  // Collecter toutes les positions uniques (domiciles + adresses des RDV de la semaine)
   type Pos = { lat: number; lng: number };
   const positions: Pos[] = [];
   const posMap = new Map<string, number>();
@@ -933,18 +1167,22 @@ export async function getSlotsForWeekWithScores(
   };
 
   for (const sp of salespeople) addPos(sp.home_lat as number | null, sp.home_lng as number | null);
-  for (const a of weekAppts ?? []) addPos(a.client_lat as number | null, a.client_lng as number | null);
+  for (const a of weekAppts) addPos(a.client_lat as number | null, a.client_lng as number | null);
 
-  // Distance Matrix : prospect → toutes les positions
-  const distCache = new Map<number, number | null>();
+  const secCache = new Map<number, number | null>();
   if (positions.length > 0) {
     const metrics = await fetchDrivingMetricsFromOrigin(
       apiKey,
       { lat: prospectLat, lng: prospectLng },
       positions
     );
-    metrics.forEach((m, i) => distCache.set(i, m.meters));
+    metrics.forEach((m, i) => secCache.set(i, m.seconds));
   }
+
+  const getSec = (posIdx: number): number | null => {
+    if (posIdx < 0) return null;
+    return secCache.get(posIdx) ?? null;
+  };
 
   const base = new Date(2000, 0, 1);
 
@@ -956,7 +1194,7 @@ export async function getSlotsForWeekWithScores(
     const homeIdx = addPos(sp.home_lat as number | null, sp.home_lng as number | null);
 
     const days: WeekDayData[] = weekDates.map((dateStr) => {
-      const dow = getISODay(new Date(dateStr + "T12:00:00")); // 1=Lun…7=Dim
+      const dow = getISODay(new Date(dateStr + "T12:00:00"));
       const cfg = cfgByDow.get(dow);
 
       if (!cfg || !cfg.active) {
@@ -966,7 +1204,7 @@ export async function getSlotsForWeekWithScores(
       const startTime = parse(cfg.work_start_time.slice(0, 5), "HH:mm", base);
       const endTime = parse(cfg.work_end_time.slice(0, 5), "HH:mm", base);
 
-      const dayAppts = (weekAppts ?? [])
+      const dayAppts = weekAppts
         .filter((a) => a.salesperson_id === sp.id && a.scheduled_date === dateStr)
         .map((a) => ({
           time: (a.start_time as string).slice(0, 5),
@@ -989,17 +1227,29 @@ export async function getSlotsForWeekWithScores(
               slot,
               occupied: true,
               occupiedBy: occ.name,
-              detourMeters: null,
+              travelSeconds: null,
               prevLabel: "",
             };
           }
 
           const prev = dayAppts.filter((a) => a.time < slot).at(-1);
+          const next = dayAppts.find((a) => a.time > slot);
           const prevIdx = prev?.posIdx ?? homeIdx;
-          const prevLabel = prev ? `après ${prev.name}` : `départ domicile`;
-          const detourMeters = distCache.get(prevIdx) ?? null;
+          const nextIdx = next?.posIdx ?? -1;
+          const tPrev = getSec(prevIdx);
+          const tNext = nextIdx >= 0 ? getSec(nextIdx) : null;
+          const score = scoreTravelSeconds(tPrev, tNext);
+          const prevLabel = prev
+            ? (next ? `${prev.name} ↔ ${next.name}` : `après ${prev.name}`)
+            : (next ? `domicile → … → ${next.name}` : `départ domicile`);
 
-          return { slot, occupied: false, occupiedBy: null, detourMeters, prevLabel };
+          return {
+            slot,
+            occupied: false,
+            occupiedBy: null,
+            travelSeconds: score === Infinity ? null : score,
+            prevLabel,
+          };
         });
 
       return { date: dateStr, dayOff: false, cells };
@@ -1023,6 +1273,8 @@ export type ProspectForSlot = {
   client_lat: number;
   client_lng: number;
   distance_meters: number | null;
+  /** Temps de trajet en secondes (Distance Matrix). */
+  travel_seconds: number | null;
   prev_label: string;
 };
 
@@ -1072,7 +1324,7 @@ export async function getProspectsForSlot(
       id, status,
       clients ( name, phone, city, address_formatted, lat, lng )
     `)
-    .in("status", ["prospect", "a_suivre", "a_relancer"])
+    .in("status", ["soumission_en_attente", "soumission_repartie", "en_attente"])
     .order("created_at");
 
   if (!jobs?.length) return { ok: true, prospects: [], prevLabel, originLat, originLng };
@@ -1101,6 +1353,7 @@ export async function getProspectsForSlot(
     client_lat: j.clients!.lat!,
     client_lng: j.clients!.lng!,
     distance_meters: null,
+    travel_seconds: null,
     prev_label: prevLabel,
   }));
 
@@ -1108,16 +1361,18 @@ export async function getProspectsForSlot(
 }
 
 /**
- * Calcul séparé des distances (appelé en arrière-plan après affichage de la liste).
- * Retourne les distances en mètres pour chaque destination, dans le même ordre.
+ * Calcul séparé des trajets (appelé en arrière-plan après affichage de la liste).
+ * Retourne durée (secondes) et distance (mètres) pour chaque destination.
  */
 export async function computeProspectDistances(
   originLat: number,
   originLng: number,
   destinations: { lat: number; lng: number }[]
-): Promise<{ meters: number | null }[]> {
+): Promise<{ meters: number | null; seconds: number | null }[]> {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-  if (!apiKey || !destinations.length) return destinations.map(() => ({ meters: null }));
+  if (!apiKey || !destinations.length) {
+    return destinations.map(() => ({ meters: null, seconds: null }));
+  }
 
   try {
     const metrics = await fetchDrivingMetricsFromOrigin(
@@ -1125,8 +1380,8 @@ export async function computeProspectDistances(
       { lat: originLat, lng: originLng },
       destinations
     );
-    return metrics.map((m) => ({ meters: m.meters }));
+    return metrics.map((m) => ({ meters: m.meters, seconds: m.seconds }));
   } catch {
-    return destinations.map(() => ({ meters: null }));
+    return destinations.map(() => ({ meters: null, seconds: null }));
   }
 }

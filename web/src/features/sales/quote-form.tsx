@@ -3,6 +3,7 @@
 import { useState, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { Printer } from "lucide-react";
 
 import { createQuote, updateQuote, updateQuoteStatus, convertQuoteToInstallationJob } from "@/actions/sales";
 import { SignaturePad } from "./signature-pad";
@@ -29,6 +30,7 @@ type UnitState = {
   difficulty: string;
   tech_count: string;
   unit_subtotal: string;
+  serial_number: string;
 };
 
 type FormState = {
@@ -40,7 +42,6 @@ type FormState = {
   client_cell: string;
   client_email: string;
   has_subsidy: boolean;
-  ready_to_schedule: boolean;
   will_call_back: boolean;
   quote_date: string;
   inst_prepiping: boolean;
@@ -60,6 +61,13 @@ type FormState = {
   notes: string;
   subtotal: string;
   deposit: string;
+  montant_subvention: string;
+  total_net: string;
+  /** "" | "4" | "8" — durée travaux évaluée à la soumission */
+  estimated_duration_hours: "" | "4" | "8";
+  /** Niveau / tech — une fois pour toute la job, répliqués sur chaque unité */
+  difficulty: string;
+  tech_count: string;
   salesperson_id: string;
   approved_by: string;
   status: QuoteStatus;
@@ -70,6 +78,7 @@ const defaultUnit = (): UnitState => ({
   warranty_parts: "", warranty_months: "", evaporator: "", pipe_feet: "",
   cap_long1_length: "", cap_long1_color: "", cap_long2_length: "", cap_long2_color: "",
   support_type: "", floor_mount_type: "", difficulty: "", tech_count: "", unit_subtotal: "0",
+  serial_number: "",
 });
 
 const toUnitState = (u: QuoteUnit): UnitState => ({
@@ -91,6 +100,7 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   difficulty: u.difficulty ?? "",
   tech_count: u.tech_count?.toString() ?? "",
   unit_subtotal: u.unit_subtotal?.toString() ?? "0",
+  serial_number: u.serial_number ?? "",
 });
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -133,32 +143,43 @@ type DefaultClient = {
 };
 
 type Props = {
-  appointmentId: string;
+  appointmentId?: string | null;
+  jobId?: string | null;
   quoteId?: string;
   initialQuote?: Quote;
   initialUnits?: QuoteUnit[];
   salespeople: Salesperson[];
   nextQuoteNumber?: number;
   defaultClient?: DefaultClient;
+  /** true si le job lié est déjà en statut installation (a_planifier+) */
+  alreadyConverted?: boolean;
 };
 
 // ── Composant ─────────────────────────────────────────────────────────────────
 
 export function QuoteForm({
-  appointmentId,
+  appointmentId = null,
+  jobId = null,
   quoteId,
   initialQuote,
   initialUnits,
   salespeople,
   nextQuoteNumber = 30001,
   defaultClient,
+  alreadyConverted = false,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [showRepartirModal, setShowRepartirModal] = useState(false);
 
   const [signature, setSignature] = useState<string | null>(initialQuote?.signature_data ?? null);
+
+  const initialDuration =
+    initialQuote?.estimated_duration_hours === 4 || initialQuote?.estimated_duration_hours === 8
+      ? (String(initialQuote.estimated_duration_hours) as "4" | "8")
+      : "";
 
   const [form, setForm] = useState<FormState>({
     quote_number: String(initialQuote?.quote_number ?? nextQuoteNumber),
@@ -169,7 +190,6 @@ export function QuoteForm({
     client_cell: initialQuote?.client_cell ?? "",
     client_email: initialQuote?.client_email ?? defaultClient?.email ?? "",
     has_subsidy: initialQuote?.has_subsidy ?? false,
-    ready_to_schedule: initialQuote?.ready_to_schedule ?? false,
     will_call_back: initialQuote?.will_call_back ?? false,
     quote_date: initialQuote?.quote_date ?? new Date().toISOString().slice(0, 10),
     inst_prepiping: initialQuote?.inst_prepiping ?? false,
@@ -189,6 +209,11 @@ export function QuoteForm({
     notes: initialQuote?.notes ?? "",
     subtotal: String(initialQuote?.subtotal ?? "0"),
     deposit: String(initialQuote?.deposit ?? ""),
+    montant_subvention: String(initialQuote?.montant_subvention ?? ""),
+    total_net: String(initialQuote?.total_net ?? ""),
+    estimated_duration_hours: initialDuration,
+    difficulty: initialUnits?.[0]?.difficulty ?? "",
+    tech_count: initialUnits?.[0]?.tech_count?.toString() ?? "",
     salesperson_id: initialQuote?.salesperson_id ?? defaultClient?.salesperson_id ?? salespeople[0]?.id ?? "",
     approved_by: initialQuote?.approved_by ?? "",
     status: (initialQuote?.status as QuoteStatus) ?? "draft",
@@ -239,7 +264,6 @@ export function QuoteForm({
         client_cell: form.client_cell,
         client_email: form.client_email,
         has_subsidy: form.has_subsidy,
-        ready_to_schedule: form.ready_to_schedule,
         will_call_back: form.will_call_back,
         quote_date: form.quote_date,
         inst_prepiping: form.inst_prepiping,
@@ -259,6 +283,12 @@ export function QuoteForm({
         notes: form.notes,
         subtotal: parseFloat(form.subtotal) || 0,
         deposit: form.deposit ? parseFloat(form.deposit) : null,
+        montant_subvention: form.montant_subvention ? parseFloat(form.montant_subvention) : null,
+        total_net: form.total_net ? parseFloat(form.total_net) : null,
+        estimated_duration_hours:
+          form.estimated_duration_hours === "4" || form.estimated_duration_hours === "8"
+            ? (Number(form.estimated_duration_hours) as 4 | 8)
+            : null,
         salesperson_id: form.salesperson_id,
         approved_by: form.approved_by,
         signature_data: signature,
@@ -281,9 +311,10 @@ export function QuoteForm({
         cap_long2_color: u.cap_long2_color,
         support_type: u.support_type,
         floor_mount_type: u.floor_mount_type,
-        difficulty: u.difficulty,
-        tech_count: u.tech_count ? parseInt(u.tech_count) : null,
+        difficulty: form.difficulty,
+        tech_count: form.tech_count ? parseInt(form.tech_count) : null,
         unit_subtotal: parseFloat(u.unit_subtotal) || 0,
+        serial_number: u.serial_number || null,
       })),
     };
   }, [form, units, signature, nextQuoteNumber]);
@@ -296,9 +327,17 @@ export function QuoteForm({
       if (quoteId) {
         res = await updateQuote(quoteId, quoteData, unitInputs);
       } else {
-        res = await createQuote(appointmentId, quoteData, unitInputs);
+        res = await createQuote(
+          { appointmentId, jobId },
+          quoteData,
+          unitInputs
+        );
         if (res.ok && "id" in res) {
-          router.replace(`/ventes/rdv/${appointmentId}`);
+          if (appointmentId) {
+            router.replace(`/ventes/rdv/${appointmentId}`);
+          } else if (jobId) {
+            router.replace(`/ventes/soumission/${jobId}`);
+          }
           return;
         }
       }
@@ -317,17 +356,62 @@ export function QuoteForm({
     });
   };
 
-  const handleConvert = () => {
+  const validateRepartir = (): boolean => {
+    setError(null);
+
+    if (form.estimated_duration_hours !== "4" && form.estimated_duration_hours !== "8") {
+      setError("Durée des travaux requise : Demi-journée (4 h) ou Journée complète (8 h).");
+      return false;
+    }
+
+    const missingSerial = units
+      .filter((u) => u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0)
+      .filter((u) => !u.serial_number?.trim())
+      .map((_, i) => `Unité ${i + 1}`);
+
+    if (missingSerial.length > 0) {
+      setError(`# de série manquant : ${missingSerial.join(", ")}`);
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleRepartirClick = () => {
     if (!quoteId) return;
+    if (!validateRepartir()) return;
+    // Si un RDV ventes est lié, demander s'il faut l'annuler
+    if (appointmentId) {
+      setShowRepartirModal(true);
+      return;
+    }
+    doRepartir(false);
+  };
+
+  const doRepartir = (cancelSalesAppointment: boolean) => {
+    if (!quoteId) return;
+    const duration = Number(form.estimated_duration_hours) as 4 | 8;
+    setShowRepartirModal(false);
     startTransition(async () => {
-      const res = await convertQuoteToInstallationJob(quoteId);
+      // Persister la durée avant conversion
+      const { quoteData, unitInputs } = buildPayload();
+      const saveRes = await updateQuote(quoteId, quoteData, unitInputs);
+      if (!saveRes.ok) { setError(saveRes.message); return; }
+
+      const res = await convertQuoteToInstallationJob(quoteId, {
+        estimatedDurationHours: duration,
+        cancelSalesAppointment,
+      });
       if (!res.ok) { setError(res.message); return; }
-      router.push(`/a-planifier`);
+      router.push(`/dispatch`);
     });
   };
 
   const subtotal = parseFloat(form.subtotal) || 0;
+  const montantSubvention = parseFloat(form.montant_subvention) || 0;
   const { tps, tvq, total } = calcTaxes(subtotal);
+  // Auto-calcul total net : si montant_subvention change, on met à jour total_net automatiquement
+  const computedTotalNet = subtotal - montantSubvention;
   const statusInfo = STATUS_INFO[form.status];
 
   const UNIT_TABS = ["Unité 1", "Unité 2", "Unité 3"];
@@ -353,7 +437,18 @@ export function QuoteForm({
 
           {/* N° soumission + statut */}
           <div className="text-right space-y-2">
-            <div className="text-2xl font-bold">SOUMISSION</div>
+            <div className="flex items-center justify-end gap-2">
+              <div className="text-2xl font-bold">SOUMISSION</div>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="print:hidden inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                title="Imprimer"
+              >
+                <Printer className="size-3.5" />
+                Imprimer
+              </button>
+            </div>
             <div className="flex items-center justify-end gap-2">
               <span className="text-sm text-muted-foreground">N°</span>
               <input
@@ -377,10 +472,6 @@ export function QuoteForm({
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={form.has_subsidy} onChange={setF("has_subsidy")} className="rounded" />
             Subvention
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.ready_to_schedule} onChange={setF("ready_to_schedule")} className="rounded" />
-            Prêt à céduler
           </label>
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={form.will_call_back} onChange={setF("will_call_back")} className="rounded" />
@@ -431,10 +522,10 @@ export function QuoteForm({
         </div>
       </div>
 
-      {/* Unités (onglets) */}
+      {/* Unités (onglets à l'écran ; empilées à l'impression) */}
       <div className="bg-background rounded-xl border p-5">
         <p className={sectionTitle}>Équipements</p>
-        <div className="flex gap-1 mb-4">
+        <div className="flex gap-1 mb-4 print:hidden">
           {UNIT_TABS.map((tab, i) => (
             <button
               key={i}
@@ -454,8 +545,34 @@ export function QuoteForm({
           ))}
         </div>
 
-        {units.map((u, i) => (
-          <div key={i} className={i === activeUnit ? "" : "hidden"}>
+        {units.map((u, i) => {
+          const filled = !!(
+            u.brand.trim() ||
+            u.model.trim() ||
+            u.description.trim() ||
+            parseFloat(u.unit_subtotal) > 0
+          );
+          return (
+          <div
+            key={i}
+            className={
+              i === activeUnit
+                ? filled
+                  ? "print:break-inside-avoid"
+                  : "print:hidden"
+                : filled
+                  ? "hidden print:block print:break-inside-avoid print:mt-6 print:border-t print:pt-4"
+                  : "hidden print:hidden"
+            }
+          >
+            <p className="mb-3 hidden text-sm font-semibold print:block">
+              Unité {i + 1}
+              {(u.brand || u.model) && (
+                <span className="ml-2 font-normal text-muted-foreground">
+                  {[u.brand, u.model].filter(Boolean).join(" — ")}
+                </span>
+              )}
+            </p>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="col-span-2 sm:col-span-4">
                 <label className={lbl}>Description / Emplacement</label>
@@ -510,7 +627,7 @@ export function QuoteForm({
                 <input className={inp} value={u.cap_long2_color} onChange={setU(i, "cap_long2_color")} />
               </div>
 
-              {/* Support */}
+              {/* Support — par unité */}
               <div className="col-span-2 sm:col-span-4">
                 <label className={lbl}>Support</label>
                 <div className="flex flex-wrap gap-3 mt-1">
@@ -529,7 +646,7 @@ export function QuoteForm({
                 </div>
               </div>
 
-              {/* Au sol */}
+              {/* Au sol — par unité */}
               <div className="col-span-2 sm:col-span-4">
                 <label className={lbl}>Au sol</label>
                 <div className="flex flex-wrap gap-3 mt-1">
@@ -558,64 +675,115 @@ export function QuoteForm({
                 </div>
               </div>
 
-              {/* Niveau */}
-              <div className="col-span-2">
-                <label className={lbl}>Niveau d&apos;installation</label>
-                <div className="flex gap-4 mt-1">
-                  {["easy", "medium", "hard"].map((v) => (
-                    <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`diff-${i}`}
-                        value={v}
-                        checked={u.difficulty === v}
-                        onChange={setU(i, "difficulty")}
-                      />
-                      {v === "easy" ? "Facile" : v === "medium" ? "Moyen" : "Difficile"}
-                    </label>
-                  ))}
+              {/* Dernière ligne : Total (gauche) + # Série (droite) */}
+              <div className="col-span-2 sm:col-span-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between pt-1">
+                <div className="w-full sm:max-w-[220px]">
+                  <label className="mb-1 block text-base font-bold text-primary">
+                    Total unité
+                  </label>
+                  <div className="border-input bg-background focus-within:ring-ring flex h-8 w-full items-center rounded border px-2 focus-within:ring-2 focus-within:ring-offset-1">
+                    <input
+                      className="h-full w-full bg-transparent text-sm font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      type="number"
+                      min={0}
+                      step={0.01}
+                      value={u.unit_subtotal}
+                      onChange={setU(i, "unit_subtotal")}
+                      placeholder="0.00"
+                    />
+                    <span className="ml-1 shrink-0 text-sm text-muted-foreground select-none">$</span>
+                  </div>
                 </div>
-              </div>
-
-              {/* Techniciens */}
-              <div>
-                <label className={lbl}>Techniciens</label>
-                <div className="flex gap-4 mt-1">
-                  {["1", "2"].map((v) => (
-                    <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                      <input
-                        type="radio"
-                        name={`tech-${i}`}
-                        value={v}
-                        checked={u.tech_count === v}
-                        onChange={setU(i, "tech_count")}
-                      />
-                      {v} Tech
-                    </label>
-                  ))}
+                <div className="w-full sm:max-w-[240px] sm:ml-auto">
+                  <label className={`${lbl} flex items-center gap-1`}>
+                    # Série
+                    <span className="text-[10px] text-muted-foreground font-normal">(rempli par la secrétaire)</span>
+                  </label>
+                  <input
+                    className={inp}
+                    value={u.serial_number}
+                    onChange={setU(i, "serial_number")}
+                    placeholder="Ex: SN-123456"
+                  />
                 </div>
-              </div>
-
-              {/* Total unité */}
-              <div className="col-span-2 sm:col-span-1">
-                <label className={lbl}>Total unité ($)</label>
-                <input
-                  className={`${inp} font-semibold`}
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={u.unit_subtotal}
-                  onChange={setU(i, "unit_subtotal")}
-                />
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Détails installation */}
-      <div className="bg-background rounded-xl border p-5">
+      <div className="bg-background rounded-xl border p-5 print:break-inside-avoid">
         <p className={sectionTitle}>Autres détails d&apos;installation</p>
+
+        <div className="mb-4">
+          <label className={`${lbl} flex items-center gap-1`}>
+            Durée des travaux
+            <span className="text-[10px] text-muted-foreground font-normal">(obligatoire avant répartition)</span>
+          </label>
+          <div className="flex flex-wrap gap-4 mt-1">
+            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="estimated_duration_hours"
+                value="4"
+                checked={form.estimated_duration_hours === "4"}
+                onChange={() => setForm((f) => ({ ...f, estimated_duration_hours: "4" }))}
+              />
+              Demi-journée (4 h)
+            </label>
+            <label className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="estimated_duration_hours"
+                value="8"
+                checked={form.estimated_duration_hours === "8"}
+                onChange={() => setForm((f) => ({ ...f, estimated_duration_hours: "8" }))}
+              />
+              Journée complète (8 h)
+            </label>
+          </div>
+        </div>
+
+        {/* Niveau / tech — une fois pour toute la job */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+          <div className="col-span-2">
+            <label className={lbl}>Niveau d&apos;installation</label>
+            <div className="flex gap-4 mt-1">
+              {["easy", "medium", "hard"].map((v) => (
+                <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="job-diff"
+                    value={v}
+                    checked={form.difficulty === v}
+                    onChange={() => setForm((f) => ({ ...f, difficulty: v }))}
+                  />
+                  {v === "easy" ? "Facile" : v === "medium" ? "Moyen" : "Difficile"}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className={lbl}>Techniciens</label>
+            <div className="flex gap-4 mt-1">
+              {["1", "2"].map((v) => (
+                <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="radio"
+                    name="job-tech"
+                    value={v}
+                    checked={form.tech_count === v}
+                    onChange={() => setForm((f) => ({ ...f, tech_count: v }))}
+                  />
+                  {v} Tech
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             ["inst_prepiping", "Prépiping"],
@@ -708,7 +876,7 @@ export function QuoteForm({
               <div className="flex justify-between px-4 py-2 bg-muted/40 text-sm">
                 <span>Sous-total</span>
                 <div className="flex items-center gap-1">
-                  $<input
+                  <input
                     className="w-24 text-right border-0 bg-transparent text-sm font-medium outline-none"
                     type="number"
                     min={0}
@@ -716,24 +884,25 @@ export function QuoteForm({
                     value={form.subtotal}
                     onChange={setF("subtotal")}
                   />
+                  <span className="text-muted-foreground">$</span>
                 </div>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t">
                 <span>TPS (5%)</span>
-                <span>${fmt(tps)}</span>
+                <span>{fmt(tps)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t">
                 <span>TVQ (9.975%)</span>
-                <span>${fmt(tvq)}</span>
+                <span>{fmt(tvq)} $</span>
               </div>
-              <div className="flex justify-between px-4 py-2 bg-foreground text-background font-bold border-t text-sm">
+              <div className="flex justify-between px-4 py-2.5 bg-foreground text-background font-bold border-t text-base">
                 <span>TOTAL</span>
-                <span>${fmt(total)}</span>
+                <span>{fmt(total)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t">
                 <span>Dépôt</span>
                 <div className="flex items-center gap-1">
-                  $<input
+                  <input
                     className="w-24 text-right border-0 bg-transparent text-sm outline-none"
                     type="number"
                     min={0}
@@ -742,6 +911,46 @@ export function QuoteForm({
                     onChange={setF("deposit")}
                     placeholder="0.00"
                   />
+                  <span className="text-muted-foreground">$</span>
+                </div>
+              </div>
+              <div className="flex justify-between px-4 py-2 text-sm border-t">
+                <span>Montant subvention</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    className="w-24 text-right border-0 bg-transparent text-sm outline-none"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={form.montant_subvention}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const sub = parseFloat(form.subtotal) || 0;
+                      const subv = parseFloat(val) || 0;
+                      setForm((f) => ({
+                        ...f,
+                        montant_subvention: val,
+                        total_net: String(Math.max(0, sub - subv).toFixed(2)),
+                      }));
+                    }}
+                    placeholder="0.00"
+                  />
+                  <span className="text-muted-foreground">$</span>
+                </div>
+              </div>
+              <div className="flex justify-between px-4 py-2 bg-emerald-50 text-emerald-900 font-semibold border-t text-sm">
+                <span>Total net</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    className="w-24 text-right border-0 bg-transparent text-sm font-semibold outline-none"
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={form.total_net || fmt(computedTotalNet)}
+                    onChange={setF("total_net")}
+                    placeholder={fmt(computedTotalNet)}
+                  />
+                  <span>$</span>
                 </div>
               </div>
             </div>
@@ -759,10 +968,48 @@ export function QuoteForm({
       </div>
 
       {/* Actions */}
-      {error && <p className="text-destructive text-sm rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2">{error}</p>}
-      {saved && <p className="text-emerald-600 text-sm">✓ Soumission sauvegardée</p>}
+      {error && <p className="text-destructive text-sm rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 print:hidden">{error}</p>}
+      {saved && <p className="text-emerald-600 text-sm print:hidden">✓ Soumission sauvegardée</p>}
 
-      <div className="flex flex-wrap gap-3 pb-8">
+      {showRepartirModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
+          <div className="bg-background w-full max-w-md rounded-xl border p-5 shadow-lg space-y-4">
+            <h3 className="font-semibold text-base">Répartir vers l&apos;installation</h3>
+            <p className="text-sm text-muted-foreground">
+              Un rendez-vous vendeur est lié à cette fiche. Souhaitez-vous annuler ce RDV ventes
+              (il ne restera plus dans le calendrier vendeurs)&nbsp;?
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => setShowRepartirModal(false)}
+                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => doRepartir(false)}
+                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Garder le RDV
+              </button>
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() => doRepartir(true)}
+                className="h-[38px] px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              >
+                Annuler le RDV et répartir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3 pb-8 print:hidden">
         <button
           type="button"
           onClick={handleSave}
@@ -783,39 +1030,19 @@ export function QuoteForm({
             Envoyer en attente
           </button>
         )}
-        {quoteId && (form.status === "pending" || form.status === "draft") && (
-          <>
-            <button
-              type="button"
-              onClick={() => handleStatusChange("accepted")}
-              disabled={pending}
-              className="h-[38px] px-5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50"
-            >
-              Marquer acceptée
-            </button>
-            <button
-              type="button"
-              onClick={() => handleStatusChange("refused")}
-              disabled={pending}
-              className="h-[38px] px-5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50"
-            >
-              Marquer refusée
-            </button>
-          </>
-        )}
-        {quoteId && form.status === "accepted" && !initialQuote?.installation_job_id && (
+        {quoteId && !alreadyConverted && (
           <button
             type="button"
-            onClick={handleConvert}
+            onClick={handleRepartirClick}
             disabled={pending}
             className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 border-2 border-primary"
           >
-            → Créer job d&apos;installation
+            → Répartir vers l&apos;installation
           </button>
         )}
-        {quoteId && initialQuote?.installation_job_id && (
+        {quoteId && alreadyConverted && (
           <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200">
-            ✓ Job d&apos;installation créée
+            ✓ Réparti vers l&apos;installation
           </span>
         )}
       </div>

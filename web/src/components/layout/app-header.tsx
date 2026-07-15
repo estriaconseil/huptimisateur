@@ -14,7 +14,7 @@ export async function AppHeader() {
   const profile = await getCurrentProfile();
 
   return (
-    <header className="bg-background flex h-14 shrink-0 items-center justify-between border-b px-6">
+    <header className="bg-background flex h-14 shrink-0 items-center justify-between border-b px-6 print:hidden">
       <div className="flex flex-wrap items-center gap-2 text-sm">
         {user?.email ? (
           <>

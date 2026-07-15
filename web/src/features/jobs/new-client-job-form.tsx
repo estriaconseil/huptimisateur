@@ -46,7 +46,7 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
       internal_notes: "",
       estimated_duration_hours: 4,
       preferred_date: "",
-      status: "prospect",
+      status: "soumission_en_attente",
     },
   });
 
@@ -214,14 +214,15 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
           <div className="space-y-2">
             <Label htmlFor="status">Statut initial</Label>
             <select id="status" className={selectClass} {...register("status")}>
-              <option value="prospect">Prospect</option>
-              <option value="soumission_en_attente">Soumission en attente</option>
-              <option value="a_suivre">À suivre</option>
-              <option value="a_relancer">À relancer</option>
+              <option value="soumission_en_attente">Prospect</option>
+              <option value="soumission_repartie">Visite planifiée</option>
+              <option value="en_attente">En attente</option>
               <option value="a_planifier">À planifier</option>
               <option value="reparti">Réparti</option>
+              <option value="retour_a_faire">Retour à faire</option>
               <option value="facturation">Facturation</option>
               <option value="complete">Complété</option>
+              <option value="termine">Terminé</option>
               <option value="annule">Annulé</option>
             </select>
           </div>

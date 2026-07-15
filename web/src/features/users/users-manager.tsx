@@ -17,8 +17,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  createUser,
   deleteUser,
-  inviteUser,
   resetUserPassword,
   updateUserRole,
   type AdminUserRow,
@@ -39,29 +39,60 @@ const ROLE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
 const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const lbl = "block text-sm font-medium mb-1";
 
-// ── Dialogue invitation ───────────────────────────────────────────────────────
+// ── Dialogue création utilisateur ─────────────────────────────────────────────
 
-function InviteDialog({ onClose }: { onClose: () => void }) {
+function CreateUserDialog({ onClose }: { onClose: () => void }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ email: "", full_name: "", role: "secretary" as "admin" | "secretary" | "salesperson" });
+  const [form, setForm] = useState({
+    email: "",
+    full_name: "",
+    password: "",
+    confirm: "",
+    role: "secretary" as "admin" | "secretary" | "salesperson",
+  });
 
   const handleSubmit = () => {
     if (!form.email.trim() || !form.full_name.trim()) return;
+    if (form.password.length < 8) {
+      setError("Le mot de passe doit contenir au moins 8 caractères");
+      return;
+    }
+    if (form.password !== form.confirm) {
+      setError("Les mots de passe ne correspondent pas");
+      return;
+    }
     setError(null);
     start(async () => {
-      const res = await inviteUser(form);
-      if (!res.ok) { setError(res.message); return; }
+      const res = await createUser({
+        email: form.email,
+        full_name: form.full_name,
+        password: form.password,
+        role: form.role,
+      });
+      if (!res.ok) {
+        setError(res.message);
+        return;
+      }
       onClose();
     });
   };
 
+  const canSubmit =
+    !!form.email.trim() &&
+    !!form.full_name.trim() &&
+    form.password.length >= 8 &&
+    form.password === form.confirm;
+
   return (
     <DialogContent className="max-w-md">
       <DialogHeader>
-        <DialogTitle>Inviter un utilisateur</DialogTitle>
+        <DialogTitle>Créer un utilisateur</DialogTitle>
       </DialogHeader>
       <div className="space-y-4 py-2">
+        <p className="text-sm text-muted-foreground">
+          Le compte est créé tout de suite (courriel confirmé). Communique le mot de passe temporaire à la personne.
+        </p>
         <div>
           <label className={lbl}>Nom complet <span className="text-destructive">*</span></label>
           <input
@@ -82,6 +113,28 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
           />
         </div>
         <div>
+          <label className={lbl}>Mot de passe temporaire <span className="text-destructive">*</span></label>
+          <input
+            className={inp}
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+            placeholder="Min. 8 caractères"
+            autoComplete="new-password"
+          />
+        </div>
+        <div>
+          <label className={lbl}>Confirmer le mot de passe <span className="text-destructive">*</span></label>
+          <input
+            className={inp}
+            type="password"
+            value={form.confirm}
+            onChange={(e) => setForm((f) => ({ ...f, confirm: e.target.value }))}
+            placeholder="Répéter le mot de passe"
+            autoComplete="new-password"
+          />
+        </div>
+        <div>
           <label className={lbl}>Rôle</label>
           <select
             className={inp}
@@ -99,11 +152,11 @@ function InviteDialog({ onClose }: { onClose: () => void }) {
         <Button variant="outline" onClick={onClose}>Annuler</Button>
         <Button
           onClick={handleSubmit}
-          disabled={pending || !form.email.trim() || !form.full_name.trim()}
+          disabled={pending || !canSubmit}
           className="gap-1.5"
         >
           <UserPlus className="size-4" />
-          {pending ? "Envoi en cours…" : "Envoyer l'invitation"}
+          {pending ? "Création…" : "Créer le compte"}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -280,7 +333,7 @@ function UserRow({ user }: { user: AdminUserRow }) {
 // ── Composant principal ────────────────────────────────────────────────────────
 
 export function UsersManager({ users }: { users: AdminUserRow[] }) {
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   return (
     <div className="space-y-3">
@@ -288,9 +341,9 @@ export function UsersManager({ users }: { users: AdminUserRow[] }) {
         <p className="text-sm text-muted-foreground">
           {users.length} utilisateur{users.length !== 1 ? "s" : ""}
         </p>
-        <Button onClick={() => setInviteOpen(true)} className="h-[38px] gap-1.5">
+        <Button onClick={() => setCreateOpen(true)} className="h-[38px] gap-1.5">
           <Plus className="size-4" />
-          Inviter un utilisateur
+          Créer un utilisateur
         </Button>
       </div>
 
@@ -304,8 +357,8 @@ export function UsersManager({ users }: { users: AdminUserRow[] }) {
         <UserRow key={u.id} user={u} />
       ))}
 
-      <Dialog open={inviteOpen} onOpenChange={(o) => { if (!o) setInviteOpen(false); }}>
-        {inviteOpen && <InviteDialog onClose={() => setInviteOpen(false)} />}
+      <Dialog open={createOpen} onOpenChange={(o) => { if (!o) setCreateOpen(false); }}>
+        {createOpen && <CreateUserDialog onClose={() => setCreateOpen(false)} />}
       </Dialog>
     </div>
   );

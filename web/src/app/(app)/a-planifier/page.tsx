@@ -1,6 +1,6 @@
 import { format, parseISO, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
-import { CalendarDays, MapPin, PlusCircle } from "lucide-react";
+import { CalendarDays, FileText, MapPin, Phone, PlusCircle } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { statusLabel, statusVariant } from "@/lib/job-status";
+import { cn } from "@/lib/utils";
 import type { EstimatedDurationHours, Job } from "@/types/domain";
 
 type PendingJob = {
@@ -19,7 +20,12 @@ type PendingJob = {
   internal_notes: string | null;
   preferred_date: string | null;
   created_at: string;
-  clients: { name: string; phone: string | null; email: string | null } | null;
+  clients: {
+    name: string;
+    phone: string | null;
+    email: string | null;
+    address_formatted: string | null;
+  } | null;
 };
 
 function weekMondayIso(): string {
@@ -36,7 +42,7 @@ export default async function APlanifierPage() {
     .select(
       `id, estimated_duration_hours, status, installation_info, internal_notes,
        preferred_date, created_at,
-       clients ( name, phone, email )`
+       clients ( name, phone, email, address_formatted )`
     )
     .eq("status", "a_planifier")
     .order("preferred_date", { ascending: true, nullsFirst: false })
@@ -62,9 +68,12 @@ export default async function APlanifierPage() {
         internal_notes: row.internal_notes,
         preferred_date: row.preferred_date,
         created_at: row.created_at,
-        clients: unwrapRelation<{ name: string; phone: string | null; email: string | null }>(
-          row.clients
-        ),
+        clients: unwrapRelation<{
+          name: string;
+          phone: string | null;
+          email: string | null;
+          address_formatted: string | null;
+        }>(row.clients),
       };
     });
 
@@ -113,6 +122,8 @@ export default async function APlanifierPage() {
             const pref = job.preferred_date
               ? format(parseISO(job.preferred_date), "d MMMM yyyy", { locale: fr })
               : null;
+            const durationLabel =
+              job.estimated_duration_hours === 8 ? "Journée (8 h)" : "Demi-journée (4 h)";
 
             return (
               <li key={job.id}>
@@ -123,7 +134,7 @@ export default async function APlanifierPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{clientName}</span>
                         <Badge variant="outline" className="text-[10px]">
-                          {job.estimated_duration_hours} h
+                          {durationLabel}
                         </Badge>
                         <Badge
                           variant={statusVariant(job.status)}
@@ -140,8 +151,16 @@ export default async function APlanifierPage() {
                       )}
 
                       {job.clients?.phone && (
-                        <p className="text-muted-foreground text-xs">
+                        <p className="text-muted-foreground text-xs flex items-center gap-1">
+                          <Phone className="size-3" />
                           {job.clients.phone}
+                        </p>
+                      )}
+
+                      {job.clients?.address_formatted && (
+                        <p className="text-muted-foreground text-xs flex items-start gap-1">
+                          <MapPin className="size-3 mt-0.5 shrink-0" />
+                          <span>{job.clients.address_formatted}</span>
                         </p>
                       )}
 
@@ -154,6 +173,13 @@ export default async function APlanifierPage() {
 
                     {/* Actions */}
                     <div className="flex shrink-0 flex-wrap gap-2 sm:flex-col sm:items-end">
+                      <Link
+                        href={`/ventes/soumission/${job.id}`}
+                        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-1.5")}
+                      >
+                        <FileText className="size-3.5" />
+                        Ouvrir soumission
+                      </Link>
                       <Link
                         href={`/dispatch?week=${week}&jobId=${job.id}&suggest=1`}
                         className={buttonVariants({ size: "sm" })}

@@ -46,6 +46,7 @@ export async function updateJob(
       estimated_duration_hours: data.estimated_duration_hours,
       preferred_date: data.preferred_date || null,
       follow_up_date: data.follow_up_date !== undefined ? (data.follow_up_date || null) : undefined,
+      follow_up_flag: data.follow_up_flag !== undefined ? (data.follow_up_flag || null) : undefined,
       salesperson_id: data.salesperson_id !== undefined ? (data.salesperson_id || null) : undefined,
       installation_info: data.installation_info || null,
       internal_notes: data.internal_notes || null,

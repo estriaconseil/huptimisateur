@@ -33,7 +33,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import type { JobPickerRow, TeamWithTechs } from "@/features/dispatch/load-dispatch-data";
+import type { JobPickerRow, RetourAFaireRow, TeamWithTechs } from "@/features/dispatch/load-dispatch-data";
+import { updateJobStatus } from "@/actions/jobs";
+import { statusLabel } from "@/lib/job-status";
 import { slotLabel } from "@/services/planning/slot-rules";
 import {
   buildDispatchStateMap,
@@ -59,6 +61,7 @@ type Props = {
   teams: TeamWithTechs[];
   schedules: EnrichedScheduleRow[];
   jobsForPicker: JobPickerRow[];
+  retourAFaireJobs: RetourAFaireRow[];
   settings: AppSettings | null;
   initialSuggestJobId: string | null;
   initialSuggestFlag: boolean;
@@ -82,6 +85,7 @@ export function DispatchBoard(props: Props) {
     teams,
     schedules,
     jobsForPicker,
+    retourAFaireJobs,
     settings,
     initialSuggestJobId,
     initialSuggestFlag,
@@ -614,6 +618,80 @@ export function DispatchBoard(props: Props) {
         </div>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+
+      {/* ── Section : jobs en attente de planification ──────────────── */}
+      {(jobsForPicker.length > 0 || retourAFaireJobs.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          {/* À planifier */}
+          {jobsForPicker.length > 0 && (
+            <div className="rounded-xl border p-4 space-y-2">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[11px] font-semibold">
+                  {statusLabel("a_planifier")}
+                </span>
+                <span className="text-muted-foreground font-normal">{jobsForPicker.length} job{jobsForPicker.length > 1 ? "s" : ""}</span>
+              </h2>
+              <ul className="space-y-1">
+                {jobsForPicker.map((job) => (
+                  <li key={job.id} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/40 transition-colors">
+                    <div className="min-w-0">
+                      <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
+                      {job.clients?.city && <span className="block text-xs text-muted-foreground">📍 {job.clients.city}</span>}
+                      {job.installation_info && <span className="block text-xs text-muted-foreground line-clamp-1">{job.installation_info}</span>}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 ml-2"
+                      onClick={() => void openSuggestionsForJob(job.id, {})}
+                    >
+                      Planifier
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Retour à faire */}
+          {retourAFaireJobs.length > 0 && (
+            <div className="rounded-xl border p-4 space-y-2">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <span className="inline-flex items-center rounded-full bg-orange-100 text-orange-800 px-2 py-0.5 text-[11px] font-semibold">
+                  {statusLabel("retour_a_faire")}
+                </span>
+                <span className="text-muted-foreground font-normal">{retourAFaireJobs.length} job{retourAFaireJobs.length > 1 ? "s" : ""}</span>
+              </h2>
+              <ul className="space-y-1">
+                {retourAFaireJobs.map((job) => (
+                  <li key={job.id} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/40 transition-colors">
+                    <div className="min-w-0">
+                      <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
+                      {job.clients?.city && <span className="block text-xs text-muted-foreground">📍 {job.clients.city}</span>}
+                      {job.installation_info && <span className="block text-xs text-muted-foreground line-clamp-1">{job.installation_info}</span>}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 ml-2"
+                      onClick={() => {
+                        startTransition(async () => {
+                          await updateJobStatus(job.id, "a_planifier");
+                          router.refresh();
+                        });
+                      }}
+                    >
+                      Replanifier
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <Dialog open={pickOpen} onOpenChange={(o) => { setPickOpen(o); if (!o) { setPickerRanked(null); setPickerOriginLabel(null); } }}>
         <DialogContent className="sm:max-w-md">

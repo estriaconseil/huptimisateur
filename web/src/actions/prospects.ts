@@ -38,12 +38,12 @@ export async function createProspect(input: {
 
   if (cErr) return { ok: false, message: cErr.message };
 
-  // 2. Créer la job en statut "prospect"
+  // 2. Créer la job en statut initial "soumission_en_attente" (Prospect)
   const { data: job, error: jErr } = await supabase
     .from("jobs")
     .insert({
       client_id: client.id,
-      status: "prospect",
+      status: "soumission_en_attente",
       estimated_duration_hours: 4,
       created_by: user.id,
       installation_info: input.installation_info || null,

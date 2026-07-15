@@ -32,7 +32,7 @@ export default async function AppSectionLayout({
       <AppSidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader />
-        <main className="bg-muted/30 flex-1 overflow-auto p-6">{children}</main>
+        <main className="bg-muted/30 flex-1 overflow-auto p-6 print:bg-white print:p-0">{children}</main>
       </div>
     </div>
   );

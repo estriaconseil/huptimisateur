@@ -15,6 +15,13 @@ export type JobPickerRow = Pick<
   clients: { name: string; city: string | null; lat: number | null; lng: number | null } | null;
 };
 
+export type RetourAFaireRow = {
+  id: string;
+  installation_info: string | null;
+  created_at: string;
+  clients: { name: string; city: string | null } | null;
+};
+
 function mondayFromParam(weekParam: string | undefined): Date {
   if (weekParam && /^\d{4}-\d{2}-\d{2}$/.test(weekParam)) {
     return startOfWeek(parseISO(weekParam), { weekStartsOn: 1 });
@@ -35,6 +42,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     teamsRes,
     schedulesRes,
     jobsRes,
+    retourRes,
     settingsRes,
   ] = await Promise.all([
     supabase
@@ -80,6 +88,12 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       `
       )
       .eq("status", "a_planifier")
+      .order("created_at", { ascending: false }),
+    /* Jobs "retour_a_faire" = oubli technicien, liste d'attente sans date */
+    supabase
+      .from("jobs")
+      .select(`id, installation_info, created_at, clients ( name, city )`)
+      .eq("status", "retour_a_faire")
       .order("created_at", { ascending: false }),
     supabase.from("app_settings").select("*").limit(1).maybeSingle(),
   ]);
@@ -151,6 +165,16 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     team_technicians: { technicians: { id: string; first_name: string; last_name: string } | null }[];
   };
 
+  const retourAFaireJobs: RetourAFaireRow[] = (retourRes.data ?? []).map((rawRaw) => {
+    const row = rawRaw as { id: string; installation_info: string | null; created_at: string; clients: unknown };
+    return {
+      id: row.id,
+      installation_info: row.installation_info,
+      created_at: row.created_at,
+      clients: unwrapRelation<{ name: string; city: string | null }>(row.clients),
+    };
+  });
+
   return {
     weekDates,
     weekStartLabel,
@@ -170,6 +194,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     }),
     schedules,
     jobsForPicker,
+    retourAFaireJobs,
     settings: settingsRes.data as AppSettings | null,
     errors: {
       teams: teamsRes.error?.message,

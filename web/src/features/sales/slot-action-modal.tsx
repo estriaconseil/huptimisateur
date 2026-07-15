@@ -44,9 +44,9 @@ const BLOCK_TYPES = [
   { value: "autre",    label: "Autre" },
 ] as const;
 
-function fmtDist(m: number | null) {
-  if (m === null) return "—";
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+function fmtTravelMin(seconds: number | null) {
+  if (seconds === null) return "—";
+  return `${Math.round(seconds / 60)} min`;
 }
 
 // ── Onglet Prospects ──────────────────────────────────────────────────────────
@@ -82,12 +82,16 @@ function ProspectsTab({
           .then((distances) => {
             setProspects((prev) => {
               if (!prev) return prev;
-              const updated = prev.map((p, i) => ({ ...p, distance_meters: distances[i]?.meters ?? null }));
+              const updated = prev.map((p, i) => ({
+                ...p,
+                distance_meters: distances[i]?.meters ?? null,
+                travel_seconds: distances[i]?.seconds ?? null,
+              }));
               updated.sort((a, b) => {
-                if (a.distance_meters === null && b.distance_meters === null) return 0;
-                if (a.distance_meters === null) return 1;
-                if (b.distance_meters === null) return -1;
-                return a.distance_meters - b.distance_meters;
+                if (a.travel_seconds === null && b.travel_seconds === null) return 0;
+                if (a.travel_seconds === null) return 1;
+                if (b.travel_seconds === null) return -1;
+                return a.travel_seconds - b.travel_seconds;
               });
               return updated;
             });
@@ -142,13 +146,13 @@ function ProspectsTab({
         </p>
         {loadingDist
           ? <span className="flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="size-3 animate-spin" />Classement en cours…</span>
-          : <span className="text-[10px] text-muted-foreground">Trié par distance</span>
+          : <span className="text-[10px] text-muted-foreground">Trié par temps de trajet</span>
         }
       </div>
       {prospects.map((p, i) => {
-        const dist = fmtDist(p.distance_meters);
+        const dist = fmtTravelMin(p.travel_seconds);
         const isBooking = booking && bookingId === p.job_id;
-        const rankKnown = p.distance_meters !== null;
+        const rankKnown = p.travel_seconds !== null;
         return (
           <button
             key={p.job_id}
@@ -367,8 +371,8 @@ function NewClientTab({
               </div>
               <div className="shrink-0 text-right">
                 <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-                {s.detour_meters !== null && (
-                  <div className="text-[10px] text-muted-foreground">détour {fmtDist(s.detour_meters)}</div>
+                {s.travel_seconds !== null && (
+                  <div className="text-[10px] text-muted-foreground">{fmtTravelMin(s.travel_seconds)}</div>
                 )}
               </div>
               {isBooking

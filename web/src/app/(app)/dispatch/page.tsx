@@ -31,6 +31,7 @@ export default async function DispatchPage({
         teams={data.teams}
         schedules={data.schedules}
         jobsForPicker={data.jobsForPicker}
+        retourAFaireJobs={data.retourAFaireJobs}
         settings={data.settings}
         initialSuggestJobId={typeof sp.jobId === "string" ? sp.jobId : null}
         initialSuggestFlag={sp.suggest === "1"}

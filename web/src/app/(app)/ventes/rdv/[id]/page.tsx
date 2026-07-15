@@ -6,10 +6,14 @@ import { ArrowLeft, Phone, MapPin, CalendarDays, Clock } from "lucide-react";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { QuoteForm } from "@/features/sales/quote-form";
+import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
-type Props = { params: Promise<{ id: string }> };
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ print?: string }>;
+};
 
 const STATUS_LABELS: Record<string, string> = {
   scheduled: "Prévu",
@@ -35,8 +39,10 @@ function formatEndTime(startTime: string, durationMin = 90): string {
   return format(addMinutes(start, durationMin), "HH:mm");
 }
 
-export default async function AppointmentDetailPage({ params }: Props) {
+export default async function AppointmentDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const { print } = await searchParams;
+  const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
   // Charger le rendez-vous
@@ -51,6 +57,7 @@ export default async function AppointmentDetailPage({ params }: Props) {
   // Charger la soumission liée (si elle existe)
   let quote: Quote | null = null;
   let units: QuoteUnit[] = [];
+  let linkedJobStatus: string | null = null;
 
   if (appt.quote_id) {
     const { data: q } = await supabase
@@ -67,6 +74,18 @@ export default async function AppointmentDetailPage({ params }: Props) {
       .order("unit_order");
     if (u) units = u as QuoteUnit[];
   }
+
+  // Job lié au RDV (pour statut conversion + jobId)
+  const { data: linkedJob } = await supabase
+    .from("jobs")
+    .select("id, status")
+    .eq("appointment_id", id)
+    .maybeSingle();
+
+  if (linkedJob) linkedJobStatus = linkedJob.status;
+
+  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+  const alreadyConverted = !!(linkedJobStatus && INSTALL_STATUSES.includes(linkedJobStatus));
 
   // Vendeurs pour le formulaire
   const { data: spData } = await supabase
@@ -95,17 +114,18 @@ export default async function AppointmentDetailPage({ params }: Props) {
 
   return (
     <div className="max-w-4xl mx-auto">
+      <AutoPrint enabled={autoPrint} />
       {/* Retour */}
       <Link
         href={`/ventes?week=${weekDate}`}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 print:hidden"
       >
         <ArrowLeft className="size-4" />
         Retour au calendrier
       </Link>
 
       {/* Carte rendez-vous */}
-      <div className="bg-background rounded-xl border p-5 mb-6">
+      <div className="bg-background rounded-xl border p-5 mb-6 print:hidden">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-bold">{appt.client_name}</h1>
@@ -146,7 +166,7 @@ export default async function AppointmentDetailPage({ params }: Props) {
       </div>
 
       {/* Soumission */}
-      <div className="mb-3">
+      <div className="mb-3 print:hidden">
         <h2 className="text-lg font-semibold">
           {quote ? `Soumission #${quote.quote_number}` : "Créer la soumission"}
         </h2>
@@ -154,12 +174,14 @@ export default async function AppointmentDetailPage({ params }: Props) {
 
       <QuoteForm
         appointmentId={id}
+        jobId={linkedJob?.id ?? quote?.job_id ?? null}
         quoteId={quote?.id}
         initialQuote={quote ?? undefined}
         initialUnits={units}
         salespeople={salespeople}
         nextQuoteNumber={nextQuoteNumber}
         defaultClient={quote ? undefined : defaultClient}
+        alreadyConverted={alreadyConverted}
       />
     </div>
   );

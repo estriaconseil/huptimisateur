@@ -58,14 +58,15 @@ export type ClientRow = {
 
 const JOB_STATUSES = [
   { value: "all",                   label: "Tous les statuts" },
-  { value: "prospect",              label: "Prospect" },
-  { value: "soumission_en_attente", label: "Soumission en attente" },
-  { value: "a_suivre",              label: "À suivre" },
-  { value: "a_relancer",            label: "À relancer" },
+  { value: "soumission_en_attente", label: "Prospect" },
+  { value: "soumission_repartie",   label: "Visite planifiée" },
+  { value: "en_attente",            label: "En attente" },
   { value: "a_planifier",           label: "À planifier" },
   { value: "reparti",               label: "Réparti" },
+  { value: "retour_a_faire",        label: "Retour à faire" },
   { value: "facturation",           label: "Facturation" },
   { value: "complete",              label: "Complété" },
+  { value: "termine",               label: "Terminé" },
   { value: "annule",                label: "Annulé" },
 ] as const;
 
@@ -243,14 +244,15 @@ function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; cl
             <div className="space-y-1.5">
               <Label htmlFor={`status-${job.id}`}>Statut</Label>
               <select id={`status-${job.id}`} className={selectClass} {...register("status")}>
-                <option value="prospect">Prospect</option>
-                <option value="soumission_en_attente">Soumission en attente</option>
-                <option value="a_suivre">À suivre</option>
-                <option value="a_relancer">À relancer</option>
+                <option value="soumission_en_attente">Prospect</option>
+                <option value="soumission_repartie">Visite planifiée</option>
+                <option value="en_attente">En attente</option>
                 <option value="a_planifier">À planifier</option>
                 <option value="reparti">Réparti</option>
+                <option value="retour_a_faire">Retour à faire</option>
                 <option value="facturation">Facturation</option>
                 <option value="complete">Complété</option>
+                <option value="termine">Terminé</option>
                 <option value="annule">Annulé</option>
               </select>
             </div>

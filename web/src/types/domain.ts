@@ -3,15 +3,19 @@
 export type UserRole = "admin" | "secretary" | "salesperson";
 
 export type JobStatus =
-  | "prospect"
   | "soumission_en_attente"
-  | "a_suivre"
-  | "a_relancer"
+  | "soumission_repartie"
+  | "en_attente"
   | "a_planifier"
   | "reparti"
+  | "retour_a_faire"
   | "facturation"
   | "complete"
+  | "termine"
   | "annule";
+
+/** Drapeau de suivi parallèle — indépendant du statut principal */
+export type FollowUpFlag = "a_suivre" | "a_relancer" | "rdv_passe" | null;
 
 export const CANCELLATION_REASONS = [
   { value: "autre_entreprise", label: "Autre entreprise choisie" },
@@ -78,12 +82,14 @@ export interface Job {
   id: string;
   client_id: string;
   salesperson_id: string | null;
+  appointment_id: string | null;
   installation_info: string | null;
   internal_notes: string | null;
   estimated_duration_hours: EstimatedDurationHours;
   preferred_date: string | null;
   status: JobStatus;
   follow_up_date: string | null;
+  follow_up_flag: FollowUpFlag;
   cancellation_reason: string | null;
   cancellation_notes: string | null;
   created_by: string | null;
@@ -119,21 +125,22 @@ export interface AppSettings {
 export type QuoteStatus = "draft" | "pending" | "accepted" | "refused";
 export type AppointmentStatus = "scheduled" | "completed" | "cancelled" | "no_show";
 
-/** Statuts qui indiquent que le dossier est en phase de vente (pas encore installé) */
+/** Statuts visibles dans le pipeline de VENTES */
 export const SALES_STATUSES: JobStatus[] = [
-  "prospect",
   "soumission_en_attente",
-  "a_suivre",
-  "a_relancer",
+  "soumission_repartie",
+  "en_attente",
 ];
 
-/** Statuts qui indiquent que la soumission est acceptée et doit être installée */
+/** Statuts visibles dans le dashboard d'INSTALLATION */
 export const INSTALL_STATUSES: JobStatus[] = [
   "a_planifier",
   "reparti",
-  "facturation",
-  "complete",
+  "retour_a_faire",
 ];
+
+/** Statut archivé — caché par défaut, visible sur demande dans le dispatch */
+export const ARCHIVED_STATUSES: JobStatus[] = ["termine", "annule", "complete", "facturation"];
 
 /** Statuts visibles dans la liste "à planifier" (attendent un créneau) */
 export const DISPATCH_STATUSES: JobStatus[] = ["a_planifier"];
@@ -201,6 +208,8 @@ export interface Quote {
   id: string;
   quote_number: number;
   appointment_id: string | null;
+  client_id: string | null;
+  job_id: string | null;
   client_name: string;
   client_address: string | null;
   client_work_address: string | null;
@@ -208,8 +217,9 @@ export interface Quote {
   client_cell: string | null;
   client_email: string | null;
   has_subsidy: boolean;
-  ready_to_schedule: boolean;
   will_call_back: boolean;
+  montant_subvention: number | null;
+  total_net: number | null;
   quote_date: string;
   inst_prepiping: boolean;
   inst_drill_concrete: boolean;
@@ -228,11 +238,11 @@ export interface Quote {
   notes: string | null;
   subtotal: number;
   deposit: number | null;
+  estimated_duration_hours: 4 | 8 | null;
   salesperson_id: string | null;
   approved_by: string | null;
   signature_data: string | null;
   status: QuoteStatus;
-  installation_job_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -259,6 +269,7 @@ export interface QuoteUnit {
   difficulty: string | null;
   tech_count: number | null;
   unit_subtotal: number;
+  serial_number: string | null;
 }
 
 /** Suggestion de creneau (pas d'affectation auto) */
