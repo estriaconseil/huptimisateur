@@ -24,7 +24,7 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
 
     supabase
       .from("sales_appointments")
-      .select("id, salesperson_id, client_name, client_phone, client_address, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id")
+      .select("id, salesperson_id, client_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted )")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekDates[weekDates.length - 1])
       .neq("status", "cancelled"),
@@ -70,10 +70,37 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
 
   return {
     salespeople,
-    appointments: (appointments ?? []).map((a) => ({
-      ...a,
-      start_time: (a.start_time as string).slice(0, 5),
-    })),
+    appointments: (appointments ?? []).map((a) => {
+      const raw = a as unknown as {
+        id: string;
+        salesperson_id: string;
+        client_id: string;
+        client_lat: number | null;
+        client_lng: number | null;
+        scheduled_date: string;
+        start_time: string;
+        status: string;
+        notes: string | null;
+        quote_id: string | null;
+        clients: { name: string; phone: string | null; address_formatted: string | null } | { name: string; phone: string | null; address_formatted: string | null }[] | null;
+      };
+      const c = Array.isArray(raw.clients) ? raw.clients[0] : raw.clients;
+      return {
+        id: raw.id,
+        salesperson_id: raw.salesperson_id,
+        client_id: raw.client_id,
+        client_name: c?.name ?? "—",
+        client_phone: c?.phone ?? null,
+        client_address: c?.address_formatted ?? null,
+        client_lat: raw.client_lat,
+        client_lng: raw.client_lng,
+        scheduled_date: raw.scheduled_date,
+        start_time: (raw.start_time as string).slice(0, 5),
+        status: raw.status,
+        notes: raw.notes,
+        quote_id: raw.quote_id,
+      };
+    }),
     blocks: (rawBlocks ?? []) as BlockRow[],
     weekDates,
   };

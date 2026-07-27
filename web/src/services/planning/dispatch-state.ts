@@ -1,4 +1,5 @@
 import type { ScheduleSlot } from "@/types/domain";
+import { cityFromAddress } from "@/lib/address";
 
 export type SlotHalf = "am" | "pm";
 
@@ -36,6 +37,7 @@ export type EnrichedScheduleRow = {
       email: string | null;
       lat: number | null;
       lng: number | null;
+      address_formatted?: string | null;
     } | null;
   } | null;
 };
@@ -66,7 +68,10 @@ export function buildDispatchStateMap(
     }
 
     const label = labelFromRow(row);
-    const city = row.job?.clients?.city ?? null;
+    const city =
+      row.job?.clients?.city ??
+      cityFromAddress(row.job?.clients?.address_formatted) ??
+      null;
     const phone = row.job?.clients?.phone ?? null;
     const email = row.job?.clients?.email ?? null;
 

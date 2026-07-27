@@ -15,14 +15,14 @@ Prérequis : migrations `20260705*`, `20260712100000`, `20260712120000` appliqu�
 
 ## 2. Happy path (statuts)
 
-- [ ] **A** Créer un prospect → statut **Prospect**
-- [ ] **B** Pipeline → **Trouver un créneau** → booker → **Visite planifiée** + RDV visible au calendrier
-- [ ] **C** Ouvrir soumission, 1 unité avec total > 0, sauvegarder → **En attente**
-- [ ] **D** **Répartir** (durée 4 h ou 8 h + choix RDV) → job **À planifier** dans Jobs à placer
+- [x ] **A** Créer un prospect → statut **Prospect**
+- [ x] **B** Pipeline → **Trouver un créneau** → booker → **Visite planifiée** + RDV visible au calendrier
+- [x ] **C** Ouvrir soumission, 1 unité avec total > 0, sauvegarder → **En attente**
+- [ x] **D** **Répartir** (durée 4 h ou 8 h + choix RDV) → job **À planifier** dans Jobs à placer
 
 ### Négatifs
 
-- [ ] Passer manuellement en **Visite planifiée** sans RDV → erreur / bloqué (« Trouver un créneau »)
+- [x ] Passer manuellement en **Visite planifiée** sans RDV → erreur / bloqué (« Trouver un créneau »)
 - [ ] Sauvegarder soumission avec sous-total = 0 → ne passe **pas** En attente
 - [ ] Répartir sans durée 4/8 h → erreur
 

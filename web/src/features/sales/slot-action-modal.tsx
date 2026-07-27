@@ -8,7 +8,6 @@ import { CalendarOff, ChevronLeft, ChevronRight, Loader2, MapPin, Plus, Sparkles
 
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import {
-  createAppointment,
   findBestSlotsForProspect,
   getProspectsForSlot,
   computeProspectDistances,
@@ -16,7 +15,9 @@ import {
   type ProspectForSlot,
   type ProspectSlotResult,
 } from "@/actions/sales";
+import { createProspect } from "@/actions/prospects";
 import { createSalespersonBlock } from "@/actions/blocks";
+import { TravelDuration } from "@/lib/format-travel";
 import { FIXED_TIME_SLOTS } from "./sales-utils";
 import type { SalespersonForCalendar } from "./sales-utils";
 
@@ -43,11 +44,6 @@ const BLOCK_TYPES = [
   { value: "bureau",   label: "Bureau / Formation" },
   { value: "autre",    label: "Autre" },
 ] as const;
-
-function fmtTravelMin(seconds: number | null) {
-  if (seconds === null) return "—";
-  return `${Math.round(seconds / 60)} min`;
-}
 
 // ── Onglet Prospects ──────────────────────────────────────────────────────────
 
@@ -150,7 +146,6 @@ function ProspectsTab({
         }
       </div>
       {prospects.map((p, i) => {
-        const dist = fmtTravelMin(p.travel_seconds);
         const isBooking = booking && bookingId === p.job_id;
         const rankKnown = p.travel_seconds !== null;
         return (
@@ -171,10 +166,10 @@ function ProspectsTab({
               </div>
             </div>
             <div className="shrink-0 text-right min-w-[52px]">
-              <div className={`text-xs font-semibold ${p.distance_meters !== null ? "text-primary" : "text-muted-foreground/50"}`}>
-                {dist}
+              <div className="text-xs font-semibold">
+                <TravelDuration seconds={p.travel_seconds} numberClassName="font-semibold" />
               </div>
-              <div className="text-[10px] text-muted-foreground">de distance</div>
+              <div className="text-[10px] text-muted-foreground">de trajet</div>
             </div>
             {isBooking
               ? <Loader2 className="size-4 animate-spin text-muted-foreground shrink-0" />
@@ -192,6 +187,7 @@ function ProspectsTab({
 type NewClientStep = "form" | "loading" | "slots";
 
 function NewClientTab({
+  slot,
   onCreated,
 }: {
   slot: SlotInfo;
@@ -206,6 +202,7 @@ function NewClientTab({
     client_address: "",
     client_lat: null as number | null,
     client_lng: null as number | null,
+    installation_info: "",
   });
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -237,20 +234,29 @@ function NewClientTab({
     setBookingKey(key);
     setError(null);
     startBook(async () => {
-      const res = await createAppointment({
-        salesperson_id: s.salesperson_id,
-        client_name: form.client_name,
-        client_phone: form.client_phone || null,
-        client_email: form.client_email || null,
-        client_address: form.client_address || null,
-        client_lat: form.client_lat,
-        client_lng: form.client_lng,
-        scheduled_date: s.date,
-        start_time: s.start_time,
+      // 1. Créer le prospect (client + job dans le pipeline)
+      const prospectRes = await createProspect({
+        name: form.client_name,
+        phone: form.client_phone,
+        email: form.client_email,
+        address: form.client_address,
+        lat: form.client_lat,
+        lng: form.client_lng,
+        installation_info: form.installation_info || null,
+        salesperson_id: s.salesperson_id || slot.salesperson_id || null,
+      });
+      if (!prospectRes.ok) { setError(prospectRes.message); setBookingKey(null); return; }
+
+      // 2. Réserver le créneau
+      const bookRes = await bookProspectToSlot({
+        jobId: prospectRes.jobId,
+        salespersonId: s.salesperson_id,
+        scheduledDate: s.date,
+        startTime: s.start_time,
       });
       setBookingKey(null);
-      if (!res.ok) { setError(res.message); return; }
-      onCreated(res.id);
+      if (!bookRes.ok) { setError(bookRes.message); return; }
+      onCreated(bookRes.appointmentId);
     });
   };
 
@@ -303,6 +309,15 @@ function NewClientTab({
             value={form.client_address}
             onChange={(v) => setForm((f) => ({ ...f, client_address: v, client_lat: null, client_lng: null }))}
             onResolved={onAddressResolved}
+          />
+        </div>
+        <div>
+          <label className={lbl}>Notes / Info projet</label>
+          <textarea
+            className={`${inp} h-16 py-2 resize-none`}
+            value={form.installation_info}
+            onChange={(e) => setForm((f) => ({ ...f, installation_info: e.target.value }))}
+            placeholder="Détails sur l'installation, besoins spéciaux…"
           />
         </div>
         {error && <p className="text-destructive text-sm">{error}</p>}
@@ -372,7 +387,9 @@ function NewClientTab({
               <div className="shrink-0 text-right">
                 <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
                 {s.travel_seconds !== null && (
-                  <div className="text-[10px] text-muted-foreground">{fmtTravelMin(s.travel_seconds)}</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    <TravelDuration seconds={s.travel_seconds} />
+                  </div>
                 )}
               </div>
               {isBooking

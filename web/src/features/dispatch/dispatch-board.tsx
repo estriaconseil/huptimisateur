@@ -8,7 +8,7 @@ import {
   startOfWeek,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, Loader2, MapPin, Printer, PlusCircle, Trash2 } from "lucide-react";
+import { ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, FileText, Loader2, MapPin, Printer, PlusCircle, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
@@ -44,6 +44,8 @@ import {
 } from "@/services/planning/dispatch-state";
 import type { AppSettings, EstimatedDurationHours, ScheduleSuggestion } from "@/types/domain";
 import { cn } from "@/lib/utils";
+import { TravelDuration } from "@/lib/format-travel";
+import { cityFromAddress } from "@/lib/address";
 
 type PickTarget = {
   teamId: string;
@@ -66,17 +68,6 @@ type Props = {
   initialSuggestJobId: string | null;
   initialSuggestFlag: boolean;
 };
-
-function formatKm(m: number | null): string {
-  if (m == null) return "—";
-  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
-}
-
-function formatDur(sec: number | null): string {
-  if (sec == null) return "—";
-  const m = Math.round(sec / 60);
-  return `${m} min`;
-}
 
 export function DispatchBoard(props: Props) {
   const {
@@ -131,11 +122,10 @@ export function DispatchBoard(props: Props) {
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestJobId, setSuggestJobId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<ScheduleSuggestion[]>([]);
-  /** Si un déplacement est en cours, contient le scheduleId à retirer seulement lors du choix final */
-  const [moveSourceScheduleId, setMoveSourceScheduleId] = useState<string | null>(null);
+  /** Schedule à ignorer dans les suggestions (créneau source d'un déplacement / re-placement) */
+  const [excludeScheduleId, setExcludeScheduleId] = useState<string | null>(null);
   const [suggestWarning, setSuggestWarning] = useState<string | null>(null);
   const [suggestTargetDate, setSuggestTargetDate] = useState("");
-  const [suggestExcludeDate, setSuggestExcludeDate] = useState<string | null>(null);
 
   const suggestJobMeta = useMemo(() => {
     if (!suggestJobId) return null;
@@ -299,16 +289,21 @@ export function DispatchBoard(props: Props) {
 
   async function openSuggestionsForJob(
     jobId: string,
-    opts: { excludeDate?: string | null; targetDate?: string } = {}
+    opts: { excludeScheduleId?: string | null; targetDate?: string } = {}
   ) {
     setSuggestJobId(jobId);
     setSuggestions([]);
     setSuggestWarning(null);
-    setSuggestExcludeDate(opts.excludeDate ?? null);
+    setExcludeScheduleId(opts.excludeScheduleId ?? null);
     setSheetOpen(true);
     setSuggestLoading(true);
-    const fetchDate = opts.targetDate ?? (opts.excludeDate ?? weekStartLabel);
-    const res = await getDistanceSuggestionsForJob(jobId, weekStartLabel, fetchDate !== weekStartLabel ? fetchDate : undefined);
+    const fetchDate = opts.targetDate ?? weekStartLabel;
+    const res = await getDistanceSuggestionsForJob(
+      jobId,
+      weekStartLabel,
+      fetchDate !== weekStartLabel ? fetchDate : undefined,
+      opts.excludeScheduleId ?? null
+    );
     setSuggestLoading(false);
     if (res.ok) {
       setSuggestions(res.suggestions);
@@ -324,12 +319,9 @@ export function DispatchBoard(props: Props) {
     const sourceScheduleId = detail.scheduleId;
     const sourceDate = schedules.find((s) => s.id === sourceScheduleId)?.scheduled_date ?? null;
 
-    /* Mémoriser le créneau source — il sera retiré seulement quand l'utilisateur choisit un nouveau slot */
-    setMoveSourceScheduleId(sourceScheduleId);
-    setSuggestExcludeDate(sourceDate);
     setDetailOpen(false);
     setDetailJobFull(null);
-
+    setExcludeScheduleId(sourceScheduleId);
     setSuggestJobId(jobId);
     setSuggestions([]);
     setSuggestWarning(null);
@@ -338,7 +330,8 @@ export function DispatchBoard(props: Props) {
     void getDistanceSuggestionsForJob(
       jobId,
       weekStartLabel,
-      suggestTargetDate || sourceDate || undefined
+      suggestTargetDate || sourceDate || undefined,
+      sourceScheduleId
     ).then((r) => {
       setSuggestLoading(false);
       if (r.ok) { setSuggestions(r.suggestions); setSuggestWarning(r.warning ?? null); }
@@ -350,16 +343,7 @@ export function DispatchBoard(props: Props) {
     if (!suggestJobId || !suggestJobMeta) return;
     const half: "am" | "pm" = s.slot === "pm" ? "pm" : "am";
     startTransition(async () => {
-      /* Si déplacement en cours, retirer l'ancien créneau en premier */
-      if (moveSourceScheduleId) {
-        const removeRes = await removeSchedule(moveSourceScheduleId);
-        if (!removeRes.ok) {
-          setSuggestWarning(removeRes.message);
-          return;
-        }
-        setMoveSourceScheduleId(null);
-      }
-
+      // assignJobToSlot remplace tout schedule planned de la job (pas de doublon)
       const res = await assignJobToSlot({
         jobId: suggestJobId,
         teamId: s.teamId,
@@ -372,6 +356,7 @@ export function DispatchBoard(props: Props) {
         setSuggestWarning(res.message);
         return;
       }
+      setExcludeScheduleId(null);
       setSheetOpen(false);
       setSuggestions([]);
       router.push(`/dispatch?week=${encodeURIComponent(weekStartLabel)}`);
@@ -560,7 +545,7 @@ export function DispatchBoard(props: Props) {
                           />
                         ) : (
                           /* ── Deux demi-créneaux ── */
-                          <div className="flex flex-col divide-y">
+                          <div className="flex flex-col divide-y h-[104px]">
                             <HalfCell
                               label="AM"
                               teamActive={team.active}
@@ -717,7 +702,7 @@ export function DispatchBoard(props: Props) {
             <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
               {pickerRankLoading
                 ? <span className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" /> Classement par proximité depuis {pickerOriginLabel}…</span>
-                : <span>📍 Triées par distance depuis {pickerOriginLabel}</span>
+                : <span>📍 Triées par temps de trajet depuis {pickerOriginLabel}</span>
               }
             </div>
           )}
@@ -757,9 +742,12 @@ export function DispatchBoard(props: Props) {
                             <span className="text-muted-foreground block text-xs">{job.estimated_duration_hours} h</span>
                           </div>
                           {rank && (
-                            <div className="shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                              <span className="block font-medium">{formatKm(rank.distanceMeters)}</span>
-                              <span className="block">~{formatDur(rank.durationSeconds)}</span>
+                            <div className="shrink-0 text-right text-xs tabular-nums">
+                              <TravelDuration
+                                seconds={rank.durationSeconds}
+                                className="block font-medium"
+                                numberClassName="font-medium"
+                              />
                             </div>
                           )}
                         </div>
@@ -859,12 +847,22 @@ export function DispatchBoard(props: Props) {
                 <div className="rounded-md bg-muted/40 px-3 py-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Adresse</p>
                   {detailJobFull.clientAddress && <p>{detailJobFull.clientAddress}</p>}
-                  {detailJobFull.clientCity && (
-                    <p>{detailJobFull.clientCity}{detailJobFull.clientPostal ? `, ${detailJobFull.clientPostal}` : ""}</p>
+                  {(detailJobFull.clientCity || cityFromAddress(detailJobFull.clientAddress)) && (
+                    <p>
+                      {detailJobFull.clientCity ?? cityFromAddress(detailJobFull.clientAddress)}
+                      {detailJobFull.clientPostal ? `, ${detailJobFull.clientPostal}` : ""}
+                    </p>
                   )}
                 </div>
               )}
 
+              <a
+                href={`/ventes/soumission/${detailJobFull.jobId}`}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <FileText className="size-4 text-muted-foreground" />
+                {detailJobFull.hasQuote ? "Ouvrir la soumission" : "Créer / voir la soumission"}
+              </a>
               {/* Installation */}
               {detailJobFull.installationInfo && (
                 <div>
@@ -907,7 +905,31 @@ export function DispatchBoard(props: Props) {
               <TooltipContent>Imprimer la fiche</TooltipContent>
             </Tooltip>
 
-            {/* 2 — Suggestions */}
+            {/* 2 — Soumission */}
+            {detail?.jobId && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        setDetailOpen(false);
+                        router.push(`/ventes/soumission/${detail.jobId}`);
+                      }}
+                    />
+                  }
+                >
+                  <FileText className="size-4" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  {detailJobFull?.hasQuote ? "Ouvrir la soumission" : "Créer / voir la soumission"}
+                </TooltipContent>
+              </Tooltip>
+            )}
+
+            {/* 3 — Optimiser */}
             {detail?.jobId && (
               <Tooltip>
                 <TooltipTrigger render={
@@ -916,19 +938,20 @@ export function DispatchBoard(props: Props) {
                     variant="outline"
                     size="icon"
                     onClick={() => {
-                      const schedDate = schedules.find((s) => s.id === detail.scheduleId)?.scheduled_date ?? null;
                       setDetailOpen(false);
-                      void openSuggestionsForJob(detail.jobId, { excludeDate: schedDate });
+                      void openSuggestionsForJob(detail.jobId, {
+                        excludeScheduleId: detail.scheduleId,
+                      });
                     }}
                   />
                 }>
                   <MapPin className="size-4" />
                 </TooltipTrigger>
-                <TooltipContent>Suggestions par distance</TooltipContent>
+                <TooltipContent>Optimiser le trajet</TooltipContent>
               </Tooltip>
             )}
 
-            {/* 3 — Déplacer */}
+            {/* 4 — Déplacer */}
             <Tooltip>
               <TooltipTrigger render={
                 <Button type="button" variant="outline" size="icon" disabled={pending} onClick={() => moveAppointment()} />
@@ -938,7 +961,7 @@ export function DispatchBoard(props: Props) {
               <TooltipContent>Déplacer vers un autre créneau</TooltipContent>
             </Tooltip>
 
-            {/* 4 — Supprimer (demande confirmation) */}
+            {/* 5 — Retirer */}
             <Tooltip>
               <TooltipTrigger render={
                 <Button
@@ -957,12 +980,12 @@ export function DispatchBoard(props: Props) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={sheetOpen} onOpenChange={(o) => { setSheetOpen(o); if (!o) setMoveSourceScheduleId(null); }}>
+      <Dialog open={sheetOpen} onOpenChange={(o) => { setSheetOpen(o); if (!o) setExcludeScheduleId(null); }}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col gap-0 overflow-hidden p-0">
           {/* Header */}
           <div className="px-6 pt-6 pb-4 border-b">
             <DialogHeader>
-              <DialogTitle>Suggestions par distance</DialogTitle>
+              <DialogTitle>Optimiser le trajet</DialogTitle>
             </DialogHeader>
             {/* Sélecteur de journée cible */}
             <div className="mt-3 flex items-center gap-2 flex-wrap">
@@ -985,7 +1008,12 @@ export function DispatchBoard(props: Props) {
                   setSuggestions([]);
                   setSuggestWarning(null);
                   setSuggestLoading(true);
-                  void getDistanceSuggestionsForJob(suggestJobId, weekStartLabel, suggestTargetDate).then((r) => {
+                  void getDistanceSuggestionsForJob(
+                    suggestJobId,
+                    weekStartLabel,
+                    suggestTargetDate,
+                    excludeScheduleId
+                  ).then((r) => {
                     setSuggestLoading(false);
                     if (r.ok) { setSuggestions(r.suggestions); setSuggestWarning(r.warning ?? null); }
                     else setSuggestWarning(r.message);
@@ -1009,7 +1037,6 @@ export function DispatchBoard(props: Props) {
             )}
             {!suggestLoading && !suggestWarning && (() => {
               const filtered = suggestions
-                .filter((s) => !suggestExcludeDate || s.date !== suggestExcludeDate)
                 .filter((s) => !suggestTargetDate || s.date === suggestTargetDate);
               if (filtered.length > 0) return null;
               return (
@@ -1022,9 +1049,8 @@ export function DispatchBoard(props: Props) {
             })()}
             <ul className="space-y-2 pb-4">
               {suggestions
-                .filter((s) => !suggestExcludeDate || s.date !== suggestExcludeDate)
                 .filter((s) => !suggestTargetDate || s.date === suggestTargetDate)
-                /* Déjà triés par distance depuis rankScheduleSuggestions */
+                /* Déjà triés par temps de trajet depuis rankScheduleSuggestions */
                 .slice(0, MAX_SUGGESTIONS)
                 .map((s, idx) => (
                   <li key={`${s.teamId}-${s.date}-${s.slot}-${idx}`}>
@@ -1034,15 +1060,14 @@ export function DispatchBoard(props: Props) {
                       className="border-border hover:bg-accent w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
                       onClick={() => void applySuggestion(s)}
                     >
-                      {/* Ligne principale : date à gauche, distance à droite */}
+                      {/* Ligne principale : date à gauche, temps de trajet à droite */}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-semibold capitalize">
                           {format(parseISO(s.date), "EEEE d MMMM", { locale: fr })}
                           <span className="ml-1.5 text-xs font-normal text-muted-foreground">{slotLabel(s.slot)}</span>
                         </span>
                         <span className="shrink-0 text-sm font-semibold tabular-nums">
-                          {formatKm(s.distanceMeters)}
-                          <span className="ml-1 text-xs font-normal text-muted-foreground">~{formatDur(s.durationSeconds)}</span>
+                          <TravelDuration seconds={s.durationSeconds} numberClassName="font-semibold" />
                         </span>
                       </div>
                       {/* Équipe en dessous, plus petit */}
@@ -1088,34 +1113,33 @@ function FullDayCell(props: {
   const { labelText, city, phone, email, onOpenDetail } = props;
   const hasContact = phone || email;
 
-  const cellBtn = (
-    <button
-      type="button"
-      className="flex min-h-[104px] w-full flex-col items-start bg-[#00854d] px-2 py-1.5 text-left text-white transition-colors cursor-pointer hover:brightness-90"
-      onClick={onOpenDetail}
-    >
-      <span className="text-[10px] font-semibold uppercase opacity-80">Journée complète</span>
-      <span className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight">{labelText ?? "—"}</span>
-      {city && <span className="mt-0.5 text-xs opacity-90 leading-tight">{city}</span>}
-    </button>
+  const cellClassName =
+    "flex h-[104px] w-full flex-col items-start overflow-hidden bg-[#00854d] px-2 py-1.5 text-left text-white transition-colors cursor-pointer hover:brightness-90";
+
+  const cellChildren = (
+    <>
+      <span className="text-[10px] font-semibold uppercase opacity-80 shrink-0">Journée complète</span>
+      <span className="mt-0.5 line-clamp-1 text-sm font-semibold leading-tight">{labelText ?? "—"}</span>
+      {city && <span className="mt-0.5 line-clamp-1 text-xs opacity-90 leading-tight">{city}</span>}
+    </>
   );
 
-  if (!hasContact) return cellBtn;
+  if (!hasContact) {
+    return (
+      <button type="button" className={cellClassName} onClick={onOpenDetail}>
+        {cellChildren}
+      </button>
+    );
+  }
 
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
-            type="button"
-            className="flex min-h-[104px] w-full flex-col items-start bg-[#00854d] px-2 py-1.5 text-left text-white transition-colors cursor-pointer hover:brightness-90"
-            onClick={onOpenDetail}
-          />
+          <button type="button" className={cellClassName} onClick={onOpenDetail} />
         }
       >
-        <span className="text-[10px] font-semibold uppercase opacity-70">Journée complète</span>
-        <span className="mt-0.5 line-clamp-2 text-xs font-semibold leading-tight">{labelText ?? "—"}</span>
-        {city && <span className="mt-0.5 text-[11px] opacity-85 leading-tight">{city}</span>}
+        {cellChildren}
       </TooltipTrigger>
       <TooltipContent side="right" className="text-xs space-y-0.5">
         {phone && <p>📞 {phone}</p>}
@@ -1153,15 +1177,14 @@ function HalfCell(props: {
   if (occupied || fullDay) {
     const hasContact = phone || email;
     const cellClassName = cn(
-      "flex min-h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left transition-colors cursor-pointer hover:brightness-90",
+      "flex h-[52px] w-full flex-1 flex-col items-start overflow-hidden px-2 py-1 text-left transition-colors cursor-pointer hover:brightness-90",
       "bg-[#0073ea] text-white"
     );
     const cellChildren = (
       <>
-        <span className="text-[10px] font-semibold uppercase opacity-70">{label}</span>
+        <span className="text-[10px] font-semibold uppercase opacity-70 shrink-0 leading-none">{label}</span>
         <span className="line-clamp-1 text-sm leading-tight font-semibold">{labelText ?? "—"}</span>
-        {city && <span className="mt-0.5 text-xs opacity-90 leading-tight">{city}</span>}
-        {fullDay && <span className="mt-0.5 text-[10px] opacity-70">Journée complète</span>}
+        {city && <span className="line-clamp-1 text-[11px] opacity-90 leading-tight">{city}</span>}
       </>
     );
 
@@ -1194,7 +1217,7 @@ function HalfCell(props: {
       disabled={!teamActive}
       onClick={() => teamActive && onPick()}
       className={cn(
-        "flex min-h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left",
+        "flex h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left",
         teamActive
           ? "cursor-pointer hover:bg-accent/70"
           : "cursor-not-allowed bg-muted/20"

@@ -1,6 +1,6 @@
 "use server";
 
-import { format, parseISO, startOfWeek } from "date-fns";
+import { addDays, format, parseISO, startOfWeek } from "date-fns";
 
 import { getBusinessWeekDateStrings } from "@/lib/dispatch/business-week";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -13,7 +13,10 @@ import type { AppSettings, EstimatedDurationHours, Job, ScheduleSuggestion, Team
 export async function getDistanceSuggestionsForJob(
   jobId: string,
   weekStartIso: string,
-  targetDateIso?: string
+  targetDateIso?: string,
+  excludeScheduleId?: string | null,
+  /** Number of business weeks to search (default 1). Use ≥4 for the dashboard optimizer. */
+  numWeeks?: number
 ): Promise<
   | { ok: true; suggestions: ScheduleSuggestion[]; warning?: string }
   | { ok: false; message: string }
@@ -31,10 +34,17 @@ export async function getDistanceSuggestionsForJob(
     return { ok: false, message: "Non authentifié" };
   }
 
-  /* Si une date cible est fournie, chercher dans la semaine qui la contient */
+  /* Calcul des dates à couvrir — une ou plusieurs semaines */
+  const weeks = Math.max(1, numWeeks ?? 1);
   const anchor = parseISO(targetDateIso ?? weekStartIso);
   const monday = startOfWeek(anchor, { weekStartsOn: 1 });
-  const weekDates = getBusinessWeekDateStrings(monday);
+
+  // Flatten all business days across `weeks` consecutive weeks
+  const weekDates: string[] = [];
+  for (let w = 0; w < weeks; w++) {
+    const weekMonday = addDays(monday, w * 7);
+    getBusinessWeekDateStrings(weekMonday).forEach((d) => weekDates.push(d));
+  }
   const rangeStart = weekDates[0];
   const rangeEnd = weekDates[weekDates.length - 1];
 
@@ -50,7 +60,7 @@ export async function getDistanceSuggestionsForJob(
         .from("schedules")
         .select(
           `id, job_id, team_id, scheduled_date, slot_type, status,
-           jobs ( id, estimated_duration_hours, clients ( name, lat, lng ) )`
+           jobs ( id, estimated_duration_hours, clients ( name, lat, lng, city, phone, email, address_formatted ) )`
         )
         .gte("scheduled_date", rangeStart)
         .lte("scheduled_date", rangeEnd)
@@ -90,7 +100,15 @@ export async function getDistanceSuggestionsForJob(
     };
   }
 
-  const schedules: EnrichedScheduleRow[] = (schedRows ?? []).map((raw: unknown) => {
+  const schedules: EnrichedScheduleRow[] = (schedRows ?? [])
+    .filter((raw: unknown) => {
+      const row = raw as { id: string; job_id: string };
+      // Exclure le créneau source (re-optimisation) + tout autre schedule de cette job
+      if (excludeScheduleId && row.id === excludeScheduleId) return false;
+      if (row.job_id === jobId) return false;
+      return true;
+    })
+    .map((raw: unknown) => {
     const row = raw as {
       id: string;
       job_id: string;
@@ -116,6 +134,7 @@ export async function getDistanceSuggestionsForJob(
             email: string | null;
             lat: number | null;
             lng: number | null;
+            address_formatted: string | null;
           }>(jo.clients),
         }
       : null;

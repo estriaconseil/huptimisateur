@@ -3,7 +3,7 @@
 import { useState, useTransition, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Printer } from "lucide-react";
+import { Mail, Printer } from "lucide-react";
 
 import { createQuote, updateQuote, updateQuoteStatus, convertQuoteToInstallationJob } from "@/actions/sales";
 import { SignaturePad } from "./signature-pad";
@@ -175,6 +175,12 @@ export function QuoteForm({
   const [showRepartirModal, setShowRepartirModal] = useState(false);
 
   const [signature, setSignature] = useState<string | null>(initialQuote?.signature_data ?? null);
+
+  // ── État envoi courriel ───────────────────────────────────────────────────
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [emailTo, setEmailTo] = useState(initialQuote?.client_email ?? "");
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<{ ok: boolean; message: string } | null>(null);
 
   const initialDuration =
     initialQuote?.estimated_duration_hours === 4 || initialQuote?.estimated_duration_hours === 8
@@ -365,9 +371,10 @@ export function QuoteForm({
     }
 
     const missingSerial = units
-      .filter((u) => u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0)
-      .filter((u) => !u.serial_number?.trim())
-      .map((_, i) => `Unité ${i + 1}`);
+      .map((u, i) => ({ u, i }))
+      .filter(({ u }) => u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0)
+      .filter(({ u }) => !u.serial_number?.trim())
+      .map(({ i }) => `Unité ${i + 1}`);
 
     if (missingSerial.length > 0) {
       setError(`# de série manquant : ${missingSerial.join(", ")}`);
@@ -403,8 +410,32 @@ export function QuoteForm({
         cancelSalesAppointment,
       });
       if (!res.ok) { setError(res.message); return; }
-      router.push(`/dispatch`);
+      router.push(`/a-planifier?highlight=${res.jobId}`);
     });
+  };
+
+  const handleSendEmail = async () => {
+    if (!jobId || !emailTo.trim()) return;
+    setEmailSending(true);
+    setEmailStatus(null);
+    try {
+      const res = await fetch(`/api/email/soumission/${jobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: emailTo.trim() }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (data.ok) {
+        setEmailStatus({ ok: true, message: `Soumission envoyée à ${emailTo.trim()}` });
+        setEmailDialogOpen(false);
+      } else {
+        setEmailStatus({ ok: false, message: data.error ?? "Erreur lors de l'envoi" });
+      }
+    } catch {
+      setEmailStatus({ ok: false, message: "Erreur réseau" });
+    } finally {
+      setEmailSending(false);
+    }
   };
 
   const subtotal = parseFloat(form.subtotal) || 0;
@@ -967,9 +998,62 @@ export function QuoteForm({
         </p>
       </div>
 
+      {/* Dialogue envoi par courriel */}
+      {emailDialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
+          <div className="bg-background w-full max-w-sm rounded-xl border p-5 shadow-lg space-y-4">
+            <h3 className="font-semibold text-base flex items-center gap-2">
+              <Mail className="size-4" />
+              Envoyer la soumission par courriel
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Un PDF de la soumission sera joint au courriel.
+            </p>
+            <div>
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">Adresse courriel du client</label>
+              <input
+                type="email"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                className="border-input bg-background h-8 w-full rounded border px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="client@example.com"
+                autoFocus
+              />
+            </div>
+            {emailStatus && !emailStatus.ok && (
+              <p className="text-destructive text-sm">{emailStatus.message}</p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setEmailDialogOpen(false); setEmailStatus(null); }}
+                disabled={emailSending}
+                className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleSendEmail}
+                disabled={emailSending || !emailTo.trim()}
+                className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {emailSending ? (
+                  <span className="inline-block size-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                ) : (
+                  <Mail className="size-3.5" />
+                )}
+                {emailSending ? "Envoi..." : "Envoyer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       {error && <p className="text-destructive text-sm rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 print:hidden">{error}</p>}
       {saved && <p className="text-emerald-600 text-sm print:hidden">✓ Soumission sauvegardée</p>}
+      {emailStatus?.ok && <p className="text-emerald-600 text-sm print:hidden">✓ {emailStatus.message}</p>}
 
       {showRepartirModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
@@ -1018,6 +1102,29 @@ export function QuoteForm({
         >
           {pending ? "Enregistrement..." : quoteId ? "Sauvegarder" : "Créer la soumission"}
         </button>
+
+        {/* PDF / Courriel — uniquement si la soumission existe */}
+        {quoteId && jobId && (
+          <>
+            <a
+              href={`/api/pdf/soumission/${jobId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
+            >
+              <Printer className="size-3.5" />
+              Aperçu PDF
+            </a>
+            <button
+              type="button"
+              onClick={() => { setEmailDialogOpen(true); setEmailStatus(null); setEmailTo(form.client_email || ""); }}
+              className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
+            >
+              <Mail className="size-3.5" />
+              Envoyer par courriel
+            </button>
+          </>
+        )}
 
         {/* Changements de statut */}
         {quoteId && form.status === "draft" && (

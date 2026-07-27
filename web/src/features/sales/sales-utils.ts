@@ -27,6 +27,8 @@ export function getTimeSlotsForSalesperson(
 export type AppointmentRow = {
   id: string;
   salesperson_id: string;
+  client_id: string;
+  /** Infos client via JOIN (chargées dans loadSalesPageData) */
   client_name: string;
   client_phone: string | null;
   client_address: string | null;

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { jobBlocksFullDay } from "@/services/planning/slot-rules";
+import { logActivity } from "@/actions/activity";
 import type { ScheduleSlot } from "@/types/domain";
 
 function isWeekendYmd(ymd: string): boolean {
@@ -13,6 +14,11 @@ function isWeekendYmd(ymd: string): boolean {
   return day === 0 || day === 6;
 }
 
+/**
+ * Place une job sur un créneau.
+ * Remplace atomiquement tout schedule « planned » existant pour cette job
+ * (évite les doublons au déplacement).
+ */
 export async function assignJobToSlot(input: {
   jobId: string;
   teamId: string;
@@ -39,6 +45,17 @@ export async function assignJobToSlot(input: {
   const long = jobBlocksFullDay(input.estimatedDurationHours, input.fullDayThresholdHours);
   const slot_type: ScheduleSlot = long ? "full_day" : input.half;
 
+  // Libère l'ancien créneau (déplacement / re-placement) avant d'insérer
+  const { error: clearErr } = await supabase
+    .from("schedules")
+    .delete()
+    .eq("job_id", input.jobId)
+    .eq("status", "planned");
+
+  if (clearErr) {
+    return { ok: false as const, message: clearErr.message };
+  }
+
   const { error } = await supabase.from("schedules").insert({
     job_id: input.jobId,
     team_id: input.teamId,
@@ -48,6 +65,12 @@ export async function assignJobToSlot(input: {
   });
 
   if (error) {
+    if (error.code === "23505") {
+      return {
+        ok: false as const,
+        message: "Conflit de planification. Réessayez ou choisissez un autre créneau.",
+      };
+    }
     return { ok: false as const, message: error.message };
   }
 
@@ -59,6 +82,14 @@ export async function assignJobToSlot(input: {
   if (jobErr) {
     console.error("[assignJobToSlot] Impossible de mettre à jour le statut de la job :", jobErr.message);
   }
+
+  // Journal d'activité
+  const { data: teamRow } = await supabase.from("teams").select("name").eq("id", input.teamId).maybeSingle();
+  await logActivity(input.jobId, "schedule_assigned", {
+    date: input.scheduledDate,
+    slot: slot_type,
+    team: (teamRow as { name?: string } | null)?.name ?? input.teamId,
+  });
 
   revalidatePath("/dispatch");
   revalidatePath("/a-planifier");
@@ -100,6 +131,9 @@ export async function removeSchedule(scheduleId: string) {
     await supabase.from("jobs").update({ status: "a_planifier" }).eq("id", row.job_id);
   }
 
+  await logActivity(row.job_id, "schedule_removed", {});
+
   revalidatePath("/dispatch");
+  revalidatePath("/a-planifier");
   return { ok: true as const };
 }

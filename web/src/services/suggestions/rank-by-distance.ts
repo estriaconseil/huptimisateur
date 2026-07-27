@@ -55,9 +55,16 @@ export async function rankScheduleSuggestions(input: {
   }
 
   results.sort((a, b) => {
-    const da = a.distanceMeters;
-    const db = b.distanceMeters;
-    if (da == null && db == null) return 0;
+    const da = a.durationSeconds;
+    const db = b.durationSeconds;
+    if (da == null && db == null) {
+      const ma = a.distanceMeters;
+      const mb = b.distanceMeters;
+      if (ma == null && mb == null) return 0;
+      if (ma == null) return 1;
+      if (mb == null) return -1;
+      return ma - mb;
+    }
     if (da == null) return 1;
     if (db == null) return -1;
     return da - db;

@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
+import { cityFromAddress } from "@/lib/address";
+import { canTransition } from "@/lib/job-state-machine";
+import { logActivity } from "@/actions/activity";
+import type { JobStatus } from "@/types/domain";
 
 export type JobFullDetail = {
   jobId: string;
@@ -18,6 +22,7 @@ export type JobFullDetail = {
   clientAddress: string | null;
   clientCity: string | null;
   clientPostal: string | null;
+  hasQuote: boolean;
 };
 
 export async function getJobDetails(
@@ -37,6 +42,12 @@ export async function getJobDetails(
   if (error || !data) {
     return { ok: false, message: error?.message ?? "Job introuvable" };
   }
+
+  const { data: quoteRow } = await supabase
+    .from("quotes")
+    .select("id")
+    .eq("job_id", jobId)
+    .maybeSingle();
 
   const row = data as {
     id: string;
@@ -70,8 +81,9 @@ export async function getJobDetails(
       clientPhone: client?.phone ?? null,
       clientEmail: client?.email ?? null,
       clientAddress: client?.address_formatted ?? null,
-      clientCity: client?.city ?? null,
+      clientCity: client?.city ?? cityFromAddress(client?.address_formatted) ?? null,
       clientPostal: client?.postal_code ?? null,
+      hasQuote: !!quoteRow,
     },
   };
 }
@@ -79,17 +91,34 @@ export async function getJobDetails(
 export async function updateJobStatus(
   jobId: string,
   status: string,
-  cancellation?: { reason: string; notes?: string }
+  cancellation?: { reason: string; notes?: string },
+  options?: {
+    /** Annule le RDV lié et efface appointment_id du job (ex: retour à Prospect). */
+    cancelLinkedAppointment?: boolean;
+  }
 ) {
   const supabase = await createServerSupabaseClient();
 
+  // Lire le statut actuel pour valider la transition
+  const { data: current } = await supabase
+    .from("jobs")
+    .select("status, appointment_id")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (current) {
+    const from = current.status as JobStatus;
+    const to = status as JobStatus;
+    if (!canTransition(from, to)) {
+      return {
+        ok: false as const,
+        message: `Transition invalide : ${from} → ${to}.`,
+      };
+    }
+  }
+
   if (status === "soumission_repartie") {
-    const { data: job } = await supabase
-      .from("jobs")
-      .select("appointment_id")
-      .eq("id", jobId)
-      .maybeSingle();
-    if (!job?.appointment_id) {
+    if (!current?.appointment_id) {
       return {
         ok: false as const,
         message:
@@ -106,11 +135,77 @@ export async function updateJobStatus(
 
   const { error } = await supabase.from("jobs").update(payload).eq("id", jobId);
   if (error) return { ok: false as const, message: error.message };
+
+  // Annuler le RDV lié si demandé (retour à Prospect / En attente depuis Visite planifiée)
+  const appointmentId = current?.appointment_id ?? null;
+  if (options?.cancelLinkedAppointment && appointmentId) {
+    await supabase
+      .from("sales_appointments")
+      .update({ status: "cancelled" })
+      .eq("id", appointmentId);
+
+    await supabase
+      .from("jobs")
+      .update({ appointment_id: null })
+      .eq("id", jobId);
+
+    await logActivity(jobId, "appointment_cancelled", { appointment_id: appointmentId });
+  }
+
+  // Journal d'activité
+  await logActivity(jobId, "status_changed", {
+    from: current?.status ?? "inconnu",
+    to: status,
+    ...(status === "annule" && cancellation ? { reason: cancellation.reason } : {}),
+  });
+
   revalidatePath("/dispatch");
   revalidatePath("/clients");
   revalidatePath("/a-planifier");
   revalidatePath("/ventes/pipeline");
+  revalidatePath("/ventes");
   return { ok: true as const };
+}
+
+/**
+ * Accepte la soumission liée à un job `en_attente` et le passe en `a_planifier`.
+ * Raccourci pipeline : évite d'ouvrir la page soumission pour un cas simple.
+ */
+export async function acceptJobAsPlanifier(
+  jobId: string
+): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  const { data: job } = await supabase
+    .from("jobs")
+    .select("status, appointment_id")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (!job) return { ok: false, message: "Job introuvable." };
+  if (!canTransition(job.status as JobStatus, "a_planifier")) {
+    return { ok: false, message: `Transition invalide depuis ${job.status}.` };
+  }
+
+  const { error } = await supabase
+    .from("jobs")
+    .update({ status: "a_planifier", follow_up_flag: null })
+    .eq("id", jobId);
+
+  if (error) return { ok: false, message: error.message };
+
+  // Accepter aussi la soumission liée si elle existe
+  await supabase
+    .from("quotes")
+    .update({ status: "accepted" })
+    .eq("job_id", jobId)
+    .eq("status", "pending");
+
+  await logActivity(jobId, "status_changed", { from: job.status, to: "a_planifier" });
+
+  revalidatePath("/ventes/pipeline");
+  revalidatePath("/a-planifier");
+  return { ok: true, message: "Job transféré en installation." };
 }
 
 /** Met à jour uniquement le drapeau de suivi parallèle (follow_up_flag), sans changer le statut. */

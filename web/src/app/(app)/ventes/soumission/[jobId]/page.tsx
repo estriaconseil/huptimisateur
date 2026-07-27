@@ -76,16 +76,18 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
   const salespeople: Salesperson[] = (spData ?? []) as Salesperson[];
   const nextQuoteNumber = quote ? undefined : await getNextQuoteNumber();
   const alreadyConverted = INSTALL_STATUSES.includes(job.status);
+  const backHref = alreadyConverted ? "/a-planifier" : "/ventes/pipeline";
+  const backLabel = alreadyConverted ? "Retour aux jobs à placer" : "Retour au pipeline";
 
   return (
     <div className="max-w-4xl mx-auto">
       <AutoPrint enabled={autoPrint} />
       <Link
-        href="/ventes/pipeline"
+        href={backHref}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 print:hidden"
       >
         <ArrowLeft className="size-4" />
-        Retour au pipeline
+        {backLabel}
       </Link>
 
       <div className="bg-background rounded-xl border p-5 mb-6 print:hidden">

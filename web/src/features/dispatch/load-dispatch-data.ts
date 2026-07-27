@@ -65,7 +65,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         jobs (
           id,
           estimated_duration_hours,
-          clients ( name, city, phone, email, lat, lng )
+          clients ( name, city, phone, email, lat, lng, address_formatted )
         )
       `
       )
@@ -147,6 +147,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
             email: string | null;
             lat: number | null;
             lng: number | null;
+            address_formatted: string | null;
           }>(jo.clients),
         }
       : null;

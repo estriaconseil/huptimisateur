@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
+import { todayYmd } from "@/lib/address";
 import { FIXED_TIME_SLOTS } from "@/features/sales/sales-utils";
 import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
 
@@ -35,6 +36,8 @@ async function promoteJobToEnAttenteIfPriced(
 
 export type CreateAppointmentInput = {
   salesperson_id: string;
+  /** client_id existant OU créer un client à partir de client_name. */
+  client_id?: string | null;
   client_name: string;
   client_phone?: string | null;
   client_email?: string | null;
@@ -115,14 +118,29 @@ export async function createAppointment(
   data: CreateAppointmentInput
 ): Promise<{ ok: true; id: string } | Err> {
   const supabase = await createServerSupabaseClient();
+
+  // Si client_id fourni, l'utiliser directement; sinon créer un client minimal
+  let clientId = data.client_id ?? null;
+  if (!clientId) {
+    const { data: newClient, error: clientErr } = await supabase
+      .from("clients")
+      .insert({
+        name: data.client_name,
+        phone: data.client_phone || null,
+        email: data.client_email || null,
+        address_formatted: data.client_address || null,
+      })
+      .select("id")
+      .single();
+    if (clientErr) return { ok: false, message: clientErr.message };
+    clientId = newClient.id;
+  }
+
   const { data: appt, error } = await supabase
     .from("sales_appointments")
     .insert({
       salesperson_id: data.salesperson_id,
-      client_name: data.client_name,
-      client_phone: data.client_phone || null,
-      client_email: data.client_email || null,
-      client_address: data.client_address || null,
+      client_id: clientId,
       client_lat: data.client_lat ?? null,
       client_lng: data.client_lng ?? null,
       scheduled_date: data.scheduled_date,
@@ -626,7 +644,11 @@ export async function convertQuoteToInstallationJob(
   }
 
   if (options?.cancelSalesAppointment && quote.appointment_id) {
-    await supabase.from("sales_appointments").delete().eq("id", quote.appointment_id);
+    // Marquer cancelled plutôt que de supprimer pour conserver l'historique
+    await supabase
+      .from("sales_appointments")
+      .update({ status: "cancelled" })
+      .eq("id", quote.appointment_id);
   }
 
   revalidatePath("/ventes");
@@ -734,11 +756,15 @@ export async function bookProspectToSlot(input: {
   // Récupérer les infos du client via la job
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select(`id, status, appointment_id, clients ( name, phone, email, address_formatted, lat, lng )`)
+    .select(`id, client_id, status, appointment_id, clients ( name, phone, email, address_formatted, lat, lng )`)
     .eq("id", input.jobId)
     .maybeSingle();
 
   if (jobErr || !job) return { ok: false, message: jobErr?.message ?? "Job introuvable" };
+
+  if (input.scheduledDate < todayYmd()) {
+    return { ok: false, message: "Impossible de réserver un créneau déjà passé." };
+  }
 
   const client = unwrapRelation<{
     name: string; phone: string | null; email: string | null;
@@ -758,9 +784,7 @@ export async function bookProspectToSlot(input: {
     .from("sales_appointments")
     .insert({
       salesperson_id: input.salespersonId,
-      client_name: client.name,
-      client_phone: client.phone ?? null,
-      client_address: client.address_formatted ?? null,
+      client_id: (job as { client_id: string }).client_id,
       client_lat: client.lat ?? null,
       client_lng: client.lng ?? null,
       scheduled_date: input.scheduledDate,
@@ -771,7 +795,12 @@ export async function bookProspectToSlot(input: {
     .select("id")
     .single();
 
-  if (apptErr) return { ok: false, message: apptErr.message };
+  if (apptErr) {
+    if (apptErr.code === "23505") {
+      return { ok: false, message: "Ce créneau vient d'être réservé par quelqu'un d'autre. Veuillez en choisir un autre." };
+    }
+    return { ok: false, message: apptErr.message };
+  }
 
   // Passer la job en "soumission_repartie" et lier le rendez-vous
   const { error: jobStatusErr } = await supabase
@@ -938,7 +967,7 @@ export async function findBestSlotsForProspect(
   // 2. Tous les RDV dans la fenêtre (avec coordonnées), hors annulés et hors RDV exclu
   let apptQuery = supabase
     .from("sales_appointments")
-    .select("id, salesperson_id, scheduled_date, start_time, client_name, client_address, client_lat, client_lng")
+    .select("id, salesperson_id, scheduled_date, start_time, client_lat, client_lng, clients ( name, address_formatted )")
     .neq("status", "cancelled")
     .gte("scheduled_date", todayStr)
     .lte("scheduled_date", in30Days)
@@ -946,9 +975,17 @@ export async function findBestSlotsForProspect(
     .order("start_time");
 
   const { data: rawAppts } = await apptQuery;
-  const allAppts = (rawAppts ?? []).filter(
-    (a) => !excludeAppointmentId || a.id !== excludeAppointmentId
-  );
+  const allAppts = (rawAppts ?? [])
+    .filter((a) => !excludeAppointmentId || a.id !== excludeAppointmentId)
+    .map((a: unknown) => {
+      const r = a as {
+        id: string; salesperson_id: string; scheduled_date: string; start_time: string;
+        client_lat: number | null; client_lng: number | null;
+        clients: { name: string | null; address_formatted: string | null } | null;
+      };
+      const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
+      return { ...r, client_name: c?.name ?? null, client_address: c?.address_formatted ?? null };
+    });
 
   const base = new Date(2000, 0, 1);
 
@@ -1137,7 +1174,7 @@ export async function getSlotsForWeekWithScores(
     spQuery,
     supabase
       .from("sales_appointments")
-      .select("id, salesperson_id, scheduled_date, start_time, client_name, client_address, client_lat, client_lng")
+      .select("id, salesperson_id, scheduled_date, start_time, client_lat, client_lng, clients ( name, address_formatted )")
       .neq("status", "cancelled")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekEnd)
@@ -1145,9 +1182,17 @@ export async function getSlotsForWeekWithScores(
       .order("start_time"),
   ]);
 
-  const weekAppts = (rawWeekAppts ?? []).filter(
-    (a) => !excludeAppointmentId || a.id !== excludeAppointmentId
-  );
+  const weekAppts = (rawWeekAppts ?? [])
+    .filter((a) => !excludeAppointmentId || (a as { id: string }).id !== excludeAppointmentId)
+    .map((a: unknown) => {
+      const r = a as {
+        id: string; salesperson_id: string; scheduled_date: string; start_time: string;
+        client_lat: number | null; client_lng: number | null;
+        clients: { name: string | null; address_formatted: string | null } | null;
+      };
+      const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
+      return { ...r, client_name: c?.name ?? null, client_address: c?.address_formatted ?? null };
+    });
 
   if (!salespeople?.length) return { ok: true, data: [] };
 
@@ -1302,7 +1347,7 @@ export async function getProspectsForSlot(
   // 2. RDV précédent ce jour-là (avant le créneau)
   const { data: dayAppts } = await supabase
     .from("sales_appointments")
-    .select("start_time, client_name, client_lat, client_lng")
+    .select("start_time, client_lat, client_lng, clients ( name )")
     .eq("salesperson_id", salespersonId)
     .eq("scheduled_date", date)
     .neq("status", "cancelled")
@@ -1310,11 +1355,17 @@ export async function getProspectsForSlot(
     .order("start_time", { ascending: false })
     .limit(1);
 
-  const prevAppt = dayAppts?.[0] ?? null;
+  const prevRaw = dayAppts?.[0] ?? null;
+  const prevApptName = prevRaw
+    ? ((Array.isArray((prevRaw as unknown as { clients: unknown }).clients)
+        ? (prevRaw as unknown as { clients: { name: string }[] }).clients[0]
+        : (prevRaw as unknown as { clients: { name: string } | null }).clients)?.name ?? "—")
+    : null;
+  const prevAppt = prevRaw as { client_lat: number | null; client_lng: number | null } | null;
   const originLat: number | null = prevAppt?.client_lat ?? (sp.home_lat as number | null);
   const originLng: number | null = prevAppt?.client_lng ?? (sp.home_lng as number | null);
-  const prevLabel = prevAppt
-    ? `après ${prevAppt.client_name}`
+  const prevLabel = prevApptName
+    ? `après ${prevApptName}`
     : `départ domicile (${(sp as { name: string }).name})`;
 
   // 3. Prospects du pipeline avec GPS

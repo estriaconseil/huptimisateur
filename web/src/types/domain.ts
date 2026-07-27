@@ -9,7 +9,6 @@ export type JobStatus =
   | "a_planifier"
   | "reparti"
   | "retour_a_faire"
-  | "facturation"
   | "complete"
   | "termine"
   | "annule";
@@ -140,7 +139,7 @@ export const INSTALL_STATUSES: JobStatus[] = [
 ];
 
 /** Statut archivé — caché par défaut, visible sur demande dans le dispatch */
-export const ARCHIVED_STATUSES: JobStatus[] = ["termine", "annule", "complete", "facturation"];
+export const ARCHIVED_STATUSES: JobStatus[] = ["termine", "annule", "complete"];
 
 /** Statuts visibles dans la liste "à planifier" (attendent un créneau) */
 export const DISPATCH_STATUSES: JobStatus[] = ["a_planifier"];
@@ -192,9 +191,10 @@ export interface TeamBlock {
 export interface SalesAppointment {
   id: string;
   salesperson_id: string;
-  client_name: string;
-  client_phone: string | null;
-  client_address: string | null;
+  client_id: string;
+  /** Coordonnées géocodées au moment du RDV (peuvent différer de clients.lat/lng). */
+  client_lat: number | null;
+  client_lng: number | null;
   scheduled_date: string;
   start_time: string;
   status: AppointmentStatus;

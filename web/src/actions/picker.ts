@@ -46,9 +46,14 @@ export async function rankJobsFromOrigin(
   }));
 
   ranked.sort((a, b) => {
-    if (a.distanceMeters == null) return 1;
-    if (b.distanceMeters == null) return -1;
-    return a.distanceMeters - b.distanceMeters;
+    if (a.durationSeconds == null && b.durationSeconds == null) {
+      if (a.distanceMeters == null) return 1;
+      if (b.distanceMeters == null) return -1;
+      return a.distanceMeters - b.distanceMeters;
+    }
+    if (a.durationSeconds == null) return 1;
+    if (b.durationSeconds == null) return -1;
+    return a.durationSeconds - b.durationSeconds;
   });
 
   return { ok: true, ranked };

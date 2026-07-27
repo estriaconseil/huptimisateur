@@ -6,6 +6,7 @@ import { addWeeks, subWeeks, format, getISODay, parse, parseISO } from "date-fns
 import { fr } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Plus, Clock, RefreshCw } from "lucide-react";
 
+import { cityFromAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
 import { SlotActionModal } from "./slot-action-modal";
 import { AppointmentActionModal } from "./appointment-action-modal";
@@ -140,17 +141,17 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
       )}
 
       {salespeople.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border bg-background shadow-sm">
-          <table className="w-full border-collapse text-sm">
+        <div className="max-h-[calc(100dvh-11rem)] overflow-auto rounded-xl border bg-background shadow-sm">
+          <table className="w-full min-w-[800px] border-collapse text-sm">
             <thead>
               <tr className="bg-muted/50">
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-32 border-b border-r">
+                <th className="sticky top-0 left-0 z-30 px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-32 border-b border-r bg-muted shadow-[1px_1px_0_0_hsl(var(--border))]">
                   Vendeur / Heure
                 </th>
                 {weekDates.map((date, i) => (
                   <th
                     key={date}
-                    className="px-2 py-2.5 text-center text-xs font-semibold text-muted-foreground border-b border-r last:border-r-0 min-w-[140px]"
+                    className="sticky top-0 z-20 px-2 py-2.5 text-center text-xs font-semibold text-muted-foreground border-b border-r last:border-r-0 min-w-[140px] bg-muted shadow-[0_1px_0_0_hsl(var(--border))]"
                   >
                     <div className="text-muted-foreground/70">{DAY_NAMES[i]}</div>
                     <div className="text-foreground font-bold">
@@ -166,13 +167,13 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
 
                 return (
                   <React.Fragment key={sp.id}>
-                    {/* Séparateur + nom vendeur */}
+                    {/* Séparateur + nom vendeur — sticky sous l'en-tête des jours */}
                     <tr className={cn("border-b", spIdx > 0 && "border-t-2 border-t-border")}>
                       <td
                         colSpan={weekDates.length + 1}
                         className={cn(
-                          "px-3 py-1.5 text-xs font-semibold",
-                          sp.active ? "bg-muted/40" : "bg-orange-50 text-orange-800"
+                          "sticky top-[3.25rem] z-10 px-3 py-1.5 text-xs font-semibold shadow-[0_1px_0_0_hsl(var(--border))]",
+                          sp.active ? "bg-muted text-foreground" : "bg-orange-50 text-orange-800"
                         )}
                       >
                         {sp.name}
@@ -195,7 +196,7 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                         key={`${sp.id}-${slot}`}
                         className="border-b last:border-b-0 hover:bg-muted/10"
                       >
-                        <td className="px-3 py-1 text-xs text-muted-foreground border-r whitespace-nowrap">
+                        <td className="sticky left-0 z-[5] px-3 py-1 text-xs text-muted-foreground border-r whitespace-nowrap bg-background shadow-[1px_0_0_0_hsl(var(--border))]">
                           <div className="flex items-center gap-1">
                             <Clock className="size-3 opacity-50" />
                             {slot}
@@ -255,13 +256,18 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                                 <button
                                   onClick={() => setActiveAppt(appt)}
                                   className={cn(
-                                    "w-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80",
+                                    "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
                                     STATUS_COLORS[appt.status] ?? "bg-muted border-border"
                                   )}
                                 >
-                                  <div className="font-semibold truncate">{appt.client_name}</div>
-                                  <div className="opacity-70">{STATUS_LABELS[appt.status] ?? appt.status}</div>
-                                  {appt.quote_id && <div className="opacity-60 text-[10px]">📄 Soumission</div>}
+                                  <div className="font-semibold truncate flex items-center gap-1">
+                                    <span className="truncate">{appt.client_name}</span>
+                                    {appt.quote_id && <span className="shrink-0 opacity-60" title="Soumission">📄</span>}
+                                  </div>
+                                  <div className="opacity-70 truncate">
+                                    {cityFromAddress(appt.client_address) ??
+                                      (STATUS_LABELS[appt.status] ?? appt.status)}
+                                  </div>
                                 </button>
                               ) : !sp.active ? null : (
                                 <button

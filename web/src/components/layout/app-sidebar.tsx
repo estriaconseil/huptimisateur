@@ -27,7 +27,7 @@ type NavItem = { href: string; label: string; icon: React.ElementType };
 type SectionId = "ventes" | "installations" | "clients" | "equipes" | "systeme" | "admin";
 
 const installationItems: NavItem[] = [
-  { href: "/a-planifier", label: "Jobs à placer",        icon: ListTodo },
+  { href: "/a-planifier", label: "Dashboard installation", icon: ListTodo },
   { href: "/dispatch",    label: "Calendrier",          icon: CalendarDays },
   { href: "/nouveau",     label: "Nouveau client / job", icon: ClipboardList },
 ];

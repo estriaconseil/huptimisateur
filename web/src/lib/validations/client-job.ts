@@ -7,7 +7,7 @@ const JOB_STATUS_ENUM = [
   "a_planifier",
   "reparti",
   "retour_a_faire",
-  "facturation",
+
   "complete",
   "termine",
   "annule",

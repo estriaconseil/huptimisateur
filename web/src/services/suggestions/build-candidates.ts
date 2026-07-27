@@ -65,28 +65,43 @@ export function buildAssignmentCandidates(
   return candidates;
 }
 
-/** Point de départ pour distance : bureau (AM / journée) ou job AM du même jour (PM). */
+function clientCoords(
+  row: EnrichedScheduleRow | undefined
+): { lat: number; lng: number } | null {
+  const lat = row?.job?.clients?.lat;
+  const lng = row?.job?.clients?.lng;
+  if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) {
+    return null;
+  }
+  return { lat, lng };
+}
+
+/**
+ * Point de référence pour le score distance :
+ * - AM libre + job PM le même jour → coords de la job PM (cohérence de journée)
+ * - PM libre + job AM le même jour → coords de la job AM
+ * - sinon → bureau (départ de journée / journée complète)
+ */
 export function resolveOriginLatLng(
   candidate: CandidateSlot,
   schedules: EnrichedScheduleRow[],
   office: { lat: number; lng: number }
 ): { lat: number; lng: number } {
-  if (candidate.slot === "am" || candidate.slot === "full_day") {
-    return office;
+  const sameDay = (slotType: EnrichedScheduleRow["slot_type"]) =>
+    schedules.find(
+      (s) =>
+        s.status === "planned" &&
+        s.team_id === candidate.teamId &&
+        s.scheduled_date === candidate.date &&
+        s.slot_type === slotType
+    );
+
+  if (candidate.slot === "am") {
+    return clientCoords(sameDay("pm")) ?? office;
   }
 
-  const amRow = schedules.find(
-    (s) =>
-      s.status === "planned" &&
-      s.team_id === candidate.teamId &&
-      s.scheduled_date === candidate.date &&
-      s.slot_type === "am"
-  );
-
-  const lat = amRow?.job?.clients?.lat;
-  const lng = amRow?.job?.clients?.lng;
-  if (lat != null && lng != null && !Number.isNaN(lat) && !Number.isNaN(lng)) {
-    return { lat, lng };
+  if (candidate.slot === "pm") {
+    return clientCoords(sameDay("am")) ?? office;
   }
 
   return office;

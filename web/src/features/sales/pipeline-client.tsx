@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation";
 import {
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FileText,
+  History,
   Loader2,
   MapPin,
+  MessageSquare,
   Pencil,
   Phone,
   Plus,
@@ -16,7 +19,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { addWeeks, format, parseISO, startOfWeek, subWeeks } from "date-fns";
+import { addDays, addWeeks, format, parseISO, startOfWeek, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 
 import { Badge } from "@/components/ui/badge";
@@ -38,8 +41,11 @@ import {
 } from "@/actions/sales";
 import { createProspect } from "@/actions/prospects";
 import { updateClient, updateJob } from "@/actions/clients";
-import { updateJobStatus, updateJobFlag } from "@/actions/jobs";
+import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
+import { isPastYmd, todayYmd } from "@/lib/address";
+import { updateJobStatus, updateJobFlag, acceptJobAsPlanifier } from "@/actions/jobs";
 import { statusLabel, statusColor, flagColor, flagLabel } from "@/lib/job-status";
+import { JobTimeline } from "@/features/jobs/job-timeline";
 import { CANCELLATION_REASONS } from "@/types/domain";
 import type { JobStatus, FollowUpFlag, Salesperson } from "@/types/domain";
 
@@ -72,11 +78,6 @@ export type PipelineJob = {
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function fmtTravelMin(seconds: number | null): string {
-  if (seconds === null) return "—";
-  return `${Math.round(seconds / 60)} min`;
-}
 
 const DAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
@@ -778,7 +779,9 @@ function OptimizedList({
             <div className="shrink-0 text-right">
               <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
               {s.travel_seconds !== null && (
-                <div className="text-[10px] text-muted-foreground">{fmtTravelMin(s.travel_seconds)}</div>
+                <div className="text-[10px] text-muted-foreground">
+                  <TravelDuration seconds={s.travel_seconds} />
+                </div>
               )}
             </div>
             {isLoading
@@ -795,20 +798,31 @@ function OptimizedList({
 
 // ── Mode Calendrier : grille semaine ──────────────────────────────────────────
 
-function WeekCalendar({
+export type WeekSlotPick = {
+  salespersonId: string;
+  salespersonName: string;
+  date: string;
+  startTime: string;
+};
+
+/** Grille semaine pour booker un prospect OU sélectionner un créneau (déplacement). */
+export function WeekCalendar({
   jobId,
   prospectLat,
   prospectLng,
   salespersonId = null,
   excludeAppointmentId = null,
   onBooked,
+  onSelectSlot,
 }: {
-  jobId: string;
+  jobId?: string;
   prospectLat: number;
   prospectLng: number;
   salespersonId?: string | null;
   excludeAppointmentId?: string | null;
-  onBooked: (msg: string) => void;
+  onBooked?: (msg: string) => void;
+  /** Si fourni, remplace le booking (ex. déplacement de RDV). */
+  onSelectSlot?: (pick: WeekSlotPick) => void | Promise<void>;
 }) {
   const [monday, setMonday] = useState<Date>(() =>
     startOfWeek(new Date(), { weekStartsOn: 1 })
@@ -819,7 +833,9 @@ function WeekCalendar({
   const [bookingKey, setBookingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const weekStr = format(monday, "yyyy-MM-dd");
+  const todayStr = todayYmd();
+  const prevWeekFriday = format(addDays(subWeeks(monday, 1), 4), "yyyy-MM-dd");
+  const canGoPrev = prevWeekFriday >= todayStr;
 
   const loadWeek = (newMonday: Date) => {
     setMonday(newMonday);
@@ -845,10 +861,36 @@ function WeekCalendar({
   }, []);
 
   const book = (sp: SalespersonWeekData, dateStr: string, slot: string) => {
+    if (isPastYmd(dateStr, todayStr)) {
+      setError("Impossible de réserver un créneau déjà passé.");
+      return;
+    }
     const key = `${sp.salesperson_id}|${dateStr}|${slot}`;
     setBookingKey(key);
     setError(null);
     startBook(async () => {
+      if (onSelectSlot) {
+        try {
+          await onSelectSlot({
+            salespersonId: sp.salesperson_id,
+            salespersonName: sp.salesperson_name,
+            date: dateStr,
+            startTime: slot,
+          });
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Erreur");
+        } finally {
+          setBookingKey(null);
+        }
+        return;
+      }
+
+      if (!jobId || !onBooked) {
+        setBookingKey(null);
+        setError("Configuration de réservation manquante.");
+        return;
+      }
+
       const res = await bookProspectToSlot({
         jobId,
         salespersonId: sp.salesperson_id,
@@ -868,7 +910,7 @@ function WeekCalendar({
       <div className="flex items-center gap-2">
         <button
           onClick={() => loadWeek(subWeeks(monday, 1))}
-          disabled={loading || booking}
+          disabled={loading || booking || !canGoPrev}
           className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
         >
           <ChevronLeft className="size-4" />
@@ -944,6 +986,14 @@ function WeekCalendar({
                         );
                       }
 
+                      if (isPastYmd(day.date, todayStr)) {
+                        return (
+                          <td key={day.date} className="px-1 py-1 border-r last:border-r-0 h-10 bg-muted/15 align-middle text-center">
+                            <span className="text-[10px] text-muted-foreground">Passé</span>
+                          </td>
+                        );
+                      }
+
                       const bKey = `${sp.salesperson_id}|${day.date}|${slot}`;
                       const isBooking = booking && bookingKey === bKey;
 
@@ -953,13 +1003,15 @@ function WeekCalendar({
                             onClick={() => book(sp, day.date, slot)}
                             disabled={booking}
                             className="w-full h-full rounded flex flex-col items-center justify-center gap-0.5 hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-50 group"
-                            title={`${cell.prevLabel} · ${fmtTravelMin(cell.travelSeconds)}`}
+                            title={`${cell.prevLabel} · ${formatTravelDurationLabel(cell.travelSeconds)}`}
                           >
                             {isBooking ? (
                               <Loader2 className="size-3 animate-spin" />
                             ) : (
                               <>
-                                <span className="text-[10px] text-emerald-600 font-medium">{fmtTravelMin(cell.travelSeconds)}</span>
+                                <span className="text-[10px] font-medium">
+                                  <TravelDuration seconds={cell.travelSeconds} numberClassName="font-medium" />
+                                </span>
                                 <span className="text-[9px] text-muted-foreground group-hover:text-primary/70 leading-tight text-center truncate w-full px-1">
                                   {cell.prevLabel}
                                 </span>
@@ -1021,7 +1073,7 @@ function SlotChooser({
           }`}
         >
           <CalendarDays className="size-3" />
-          Par semaine
+          Par calendrier
         </button>
       </div>
 
@@ -1091,60 +1143,69 @@ function ProspectOptimizer({
   }, []);
 
   return (
-    <div className="mt-3 border rounded-xl bg-muted/5 p-4 space-y-3">
-      {/* En-tête */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold flex items-center gap-1.5">
-          <Sparkles className="size-4 text-primary" />
+    <div className="mt-3 border rounded-xl bg-muted/5 overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
+        <p className="text-sm font-semibold flex items-center gap-1.5 min-w-0">
+          <Sparkles className="size-4 text-primary shrink-0" />
           Trouver un créneau
         </p>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-4" /></button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground shrink-0 p-1 rounded-md hover:bg-muted"
+          aria-label="Fermer"
+        >
+          <X className="size-4" />
+        </button>
       </div>
 
-      {noGps ? (
-        <p className="text-xs text-amber-600">
-          Adresse non géolocalisée — modifiez la fiche client pour ajouter une adresse Google.
-        </p>
-      ) : (
-        <>
-          {/* Toggle mode */}
-          <div className="flex rounded-lg border overflow-hidden text-xs">
-            <button
-              onClick={() => setMode("list")}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors ${mode === "list" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-            >
-              <Sparkles className="size-3" />
-              Meilleur créneau
-            </button>
-            <button
-              onClick={() => setMode("calendar")}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors border-l ${mode === "calendar" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
-            >
-              <CalendarDays className="size-3" />
-              Par calendrier
-            </button>
-          </div>
+      <div className="px-4 pb-4 space-y-3">
+        {noGps ? (
+          <p className="text-xs text-amber-600">
+            Adresse non géolocalisée — modifiez la fiche client pour ajouter une adresse Google.
+          </p>
+        ) : (
+          <>
+            <div className="flex rounded-lg border overflow-hidden text-xs isolate">
+              <button
+                type="button"
+                onClick={() => setMode("list")}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 font-medium transition-colors ${mode === "list" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+              >
+                <Sparkles className="size-3" />
+                Meilleur créneau
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("calendar")}
+                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 font-medium transition-colors border-l ${mode === "calendar" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+              >
+                <CalendarDays className="size-3" />
+                Par calendrier
+              </button>
+            </div>
 
-          {error && <p className="text-destructive text-sm">{error}</p>}
+            {error && <p className="text-destructive text-sm">{error}</p>}
 
-          {mode === "list" && (
-            loading
-              ? <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="size-4 animate-spin" />Calcul en cours…</div>
-              : <OptimizedList jobId={job.id} slots={slots} onBooked={onBooked} />
-          )}
+            {mode === "list" && (
+              loading
+                ? <div className="flex items-center gap-2 text-sm text-muted-foreground py-2"><Loader2 className="size-4 animate-spin" />Calcul en cours…</div>
+                : <OptimizedList jobId={job.id} slots={slots} onBooked={onBooked} />
+            )}
 
-          {mode === "calendar" && (
-            <WeekCalendar
-              jobId={job.id}
-              prospectLat={lat}
-              prospectLng={lng}
-              salespersonId={job.salesperson_id}
-              excludeAppointmentId={job.appointment_id}
-              onBooked={onBooked}
-            />
-          )}
-        </>
-      )}
+            {mode === "calendar" && (
+              <WeekCalendar
+                jobId={job.id}
+                prospectLat={lat}
+                prospectLng={lng}
+                salespersonId={job.salesperson_id}
+                excludeAppointmentId={job.appointment_id}
+                onBooked={onBooked}
+              />
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -1164,8 +1225,12 @@ function ProspectCard({
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
+  const [pendingDowngradeStatus, setPendingDowngradeStatus] = useState<string | null>(null);
   const [statusPending, startStatus] = useTransition();
   const [flagPending, startFlag] = useTransition();
+  const [acceptPending, startAccept] = useTransition();
   const client = job.clients;
 
   const createdAt = format(new Date(job.created_at), "d MMM yyyy", { locale: fr });
@@ -1183,11 +1248,31 @@ function ProspectCard({
   const handleStatusChange = (newStatus: string) => {
     if (newStatus === "annule") { setShowCancelModal(true); return; }
     if (newStatus === "soumission_repartie" && !job.appointment_id) {
-      // Visite planifiée uniquement via booking d'un créneau
+      return;
+    }
+    // Si on quitte « Visite planifiée » et qu'il y a un RDV actif → confirmation
+    if (
+      job.status === "soumission_repartie" &&
+      job.appointment_id &&
+      newStatus !== "soumission_repartie"
+    ) {
+      setPendingDowngradeStatus(newStatus);
+      setShowDowngradeConfirm(true);
       return;
     }
     startStatus(async () => {
       await updateJobStatus(job.id, newStatus);
+      router.refresh();
+    });
+  };
+
+  const handleDowngradeConfirm = () => {
+    if (!pendingDowngradeStatus) return;
+    const targetStatus = pendingDowngradeStatus;
+    setShowDowngradeConfirm(false);
+    setPendingDowngradeStatus(null);
+    startStatus(async () => {
+      await updateJobStatus(job.id, targetStatus, undefined, { cancelLinkedAppointment: true });
       router.refresh();
     });
   };
@@ -1207,6 +1292,16 @@ function ProspectCard({
     });
   };
 
+  const handleAccept = () => {
+    startAccept(async () => {
+      const res = await acceptJobAsPlanifier(job.id);
+      if (res.ok) {
+        onBooked(res.message);
+        router.refresh();
+      }
+    });
+  };
+
   return (
     <Card className="hover:shadow-sm transition-shadow">
       <CancelModal
@@ -1215,6 +1310,50 @@ function ProspectCard({
         onConfirm={handleCancelConfirm}
         onCancel={() => setShowCancelModal(false)}
       />
+
+      {/* Confirmation de retrait de RDV lors du changement de statut */}
+      {showDowngradeConfirm && (
+        <Dialog open onOpenChange={(o) => { if (!o) { setShowDowngradeConfirm(false); setPendingDowngradeStatus(null); } }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Retirer le rendez-vous ?</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p>
+                Ce dossier a un rendez-vous
+                {job.appointment_date
+                  ? ` prévu le ${format(new Date(job.appointment_date + "T12:00:00"), "d MMMM yyyy", { locale: fr })}`
+                  : ""}.
+              </p>
+              <p className="text-muted-foreground">
+                Voulez-vous annuler ce rendez-vous et libérer le créneau dans le calendrier ?
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => handleDowngradeConfirm()}
+                disabled={statusPending}
+                className="flex-1 h-9 rounded-lg bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 disabled:opacity-50"
+              >
+                {statusPending ? "En cours…" : "Oui, retirer le RDV"}
+              </button>
+              <button
+                onClick={() => { setShowDowngradeConfirm(false); setPendingDowngradeStatus(null); }}
+                disabled={statusPending}
+                className="flex-1 h-9 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Annuler
+              </button>
+            </div>
+            <button
+              onClick={() => { setShowDowngradeConfirm(false); setPendingDowngradeStatus(null); }}
+              className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </DialogContent>
+        </Dialog>
+      )}
       <CardContent className="p-4 space-y-3">
         {/* Ligne 1 : nom + vendeur + GPS + drapeau */}
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -1250,7 +1389,7 @@ function ProspectCard({
           </div>
 
           {/* Actions */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
             {/* Sélecteur drapeau */}
             {(flagPending)
               ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
@@ -1277,7 +1416,31 @@ function ProspectCard({
             >
               <Pencil className="size-3.5" />
             </Button>
-            <a href={job.appointment_id ? `/ventes/rdv/${job.appointment_id}` : `/ventes/soumission/${job.id}`}>
+            {/* Notes / Historique */}
+            <Button
+              size="sm"
+              variant={showTimeline ? "secondary" : "ghost"}
+              onClick={() => setShowTimeline((s) => !s)}
+              className="h-8 px-2 gap-1"
+              title="Notes et historique"
+            >
+              <MessageSquare className="size-3.5" />
+            </Button>
+            {/* Bouton Accepter — uniquement pour en_attente avec soumission */}
+            {job.status === "en_attente" && job.has_quote && (
+              <Button
+                size="sm"
+                variant="default"
+                onClick={handleAccept}
+                disabled={acceptPending}
+                className="gap-1.5 h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                title="Accepter la soumission et transférer en installation"
+              >
+                {acceptPending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
+                Accepter
+              </Button>
+            )}
+            <a href={`/ventes/soumission/${job.id}`}>
               <Button
                 size="sm"
                 variant={job.has_quote ? "default" : "secondary"}
@@ -1347,6 +1510,16 @@ function ProspectCard({
               onBooked(msg);
             }}
           />
+        )}
+
+        {showTimeline && (
+          <div className="border-t pt-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
+              <History className="size-3.5" />
+              Notes et historique
+            </p>
+            <JobTimeline jobId={job.id} />
+          </div>
         )}
       </CardContent>
 

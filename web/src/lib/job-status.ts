@@ -8,7 +8,6 @@ export function statusLabel(s: string): string {
     case "a_planifier":           return "À planifier";
     case "reparti":               return "Réparti";
     case "retour_a_faire":        return "Retour à faire";
-    case "facturation":           return "Facturation";
     case "complete":              return "Complété";
     case "termine":               return "Terminé";
     case "annule":                return "Annulé";
@@ -25,7 +24,6 @@ export function statusVariant(
 ): "secondary" | "default" | "outline" | "destructive" {
   switch (s) {
     case "reparti":
-    case "facturation":
       return "default";
     case "annule":
       return "destructive";
@@ -46,7 +44,6 @@ export function statusColor(s: string): string {
     case "a_planifier":           return "bg-emerald-100 text-emerald-800";
     case "reparti":               return "bg-green-200 text-green-900";
     case "retour_a_faire":        return "bg-orange-100 text-orange-800";
-    case "facturation":           return "bg-orange-100 text-orange-800";
     case "complete":              return "bg-gray-100 text-gray-600";
     case "termine":               return "bg-gray-100 text-gray-600";
     case "annule":                return "bg-red-100 text-red-700";
