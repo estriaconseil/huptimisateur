@@ -45,14 +45,23 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
-  // Charger le rendez-vous
+  // Charger le rendez-vous avec les données client via JOIN
   const { data: appt } = await supabase
     .from("sales_appointments")
-    .select("*, salespeople!salesperson_id(id, name)")
+    .select("*, salespeople!salesperson_id(id, name), clients!client_id(name, phone, email, address_formatted)")
     .eq("id", id)
     .maybeSingle();
 
   if (!appt) notFound();
+
+  // Extraire les données client depuis le JOIN
+  const clientRaw = (appt as unknown as { clients: unknown }).clients;
+  const apptClient = (Array.isArray(clientRaw) ? clientRaw[0] : clientRaw) as {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    address_formatted: string | null;
+  } | null;
 
   // Charger la soumission liée (si elle existe)
   let quote: Quote | null = null;
@@ -103,10 +112,10 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const spName = (salesperson as { name?: string } | null)?.name ?? "—";
 
   const defaultClient = {
-    name: appt.client_name ?? "",
-    phone: appt.client_phone ?? null,
-    email: appt.client_email ?? null,
-    address: appt.client_address ?? null,
+    name: apptClient?.name ?? "",
+    phone: apptClient?.phone ?? null,
+    email: apptClient?.email ?? null,
+    address: apptClient?.address_formatted ?? null,
     salesperson_id: spId,
   };
 
@@ -128,7 +137,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
       <div className="bg-background rounded-xl border p-5 mb-6 print:hidden">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold">{appt.client_name}</h1>
+            <h1 className="text-xl font-bold">{apptClient?.name ?? "—"}</h1>
             <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
               <span className="flex items-center gap-1">
                 <CalendarDays className="size-3.5" />
@@ -138,16 +147,16 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
                 <Clock className="size-3.5" />
                 {formatTime(appt.start_time)} – {formatEndTime(appt.start_time)}
               </span>
-              {appt.client_phone && (
+              {apptClient?.phone && (
                 <span className="flex items-center gap-1">
                   <Phone className="size-3.5" />
-                  {appt.client_phone}
+                  {apptClient.phone}
                 </span>
               )}
-              {appt.client_address && (
+              {apptClient?.address_formatted && (
                 <span className="flex items-center gap-1">
                   <MapPin className="size-3.5" />
-                  {appt.client_address}
+                  {apptClient.address_formatted}
                 </span>
               )}
             </div>

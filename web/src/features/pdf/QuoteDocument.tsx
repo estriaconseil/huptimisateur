@@ -217,9 +217,6 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
           <View style={s.titleBlock}>
             <Text style={s.mainTitle}>SOUMISSION</Text>
             <Text style={s.quoteNum}>N° {quote.quote_number}</Text>
-            <View style={s.statusPill}>
-              <Text style={s.statusText}>{STATUS_LABELS[quote.status] ?? quote.status}</Text>
-            </View>
           </View>
         </View>
 
