@@ -68,8 +68,8 @@ export function buildAssignmentCandidates(
 function clientCoords(
   row: EnrichedScheduleRow | undefined
 ): { lat: number; lng: number } | null {
-  const lat = row?.job?.clients?.lat;
-  const lng = row?.job?.clients?.lng;
+  const lat = row?.job?.installation_address?.lat;
+  const lng = row?.job?.installation_address?.lng;
   if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) {
     return null;
   }

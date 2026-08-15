@@ -4,14 +4,24 @@ import React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ChevronDown, ChevronRight, Pencil, Search, X } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  FileText,
+  MapPin,
+  Pencil,
+  Phone,
+  Search,
+  X,
+} from "lucide-react";
+import Link from "next/link";
 import { useCallback, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter } from "next/navigation";
 
 import { AddressAutocomplete } from "@/components/maps/address-autocomplete";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -24,36 +34,49 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { updateClient, updateJob } from "@/actions/clients";
-import { statusLabel, statusVariant } from "@/lib/job-status";
+import { updateClient } from "@/actions/clients";
+import { statusColor, statusLabel } from "@/lib/job-status";
 import { selectClass } from "@/lib/ui/form-styles";
+import { cn } from "@/lib/utils";
 import {
   editClientSchema,
-  editJobSchema,
   type EditClientFormValues,
-  type EditJobFormValues,
 } from "@/lib/validations/client-job";
+
+export type ClientJobRow = {
+  id: string;
+  status: string;
+  estimated_duration_hours: number;
+  preferred_date: string | null;
+  installation_info: string | null;
+  internal_notes: string | null;
+  installation_address_id: string | null;
+  quote_id?: string | null;
+  quote_number?: number | null;
+};
+
+export type InstallationAddressRow = {
+  id: string;
+  label: string | null;
+  address_formatted: string | null;
+  city: string | null;
+  postal_code: string | null;
+  lat: number | null;
+  lng: number | null;
+  installation_info: string | null;
+};
 
 export type ClientRow = {
   id: string;
   name: string;
   phone: string | null;
   email: string | null;
-  city: string | null;
-  address_formatted: string | null;
-  postal_code: string | null;
-  lat: number | null;
-  lng: number | null;
+  billing_address: string | null;
+  billing_city: string | null;
+  billing_postal: string | null;
   created_at: string;
-  jobs: {
-    id: string;
-    status: string;
-    estimated_duration_hours: number;
-    preferred_date: string | null;
-    installation_info: string | null;
-    internal_notes: string | null;
-  }[];
+  installation_addresses: InstallationAddressRow[];
+  jobs: ClientJobRow[];
 };
 
 const JOB_STATUSES = [
@@ -70,6 +93,45 @@ const JOB_STATUSES = [
   { value: "annule",                label: "Annulé" },
 ] as const;
 
+/** Priorité pour afficher le statut « chaud » sur la ligne fermée */
+const STATUS_PRIORITY: string[] = [
+  "retour_a_faire",
+  "a_planifier",
+  "soumission_repartie",
+  "soumission_en_attente",
+  "en_attente",
+  "reparti",
+  "facturation",
+  "complete",
+  "termine",
+  "annule",
+];
+
+function hotStatuses(jobs: { status: string }[], limit = 2): string[] {
+  const unique = [...new Set(jobs.map((j) => j.status))];
+  return unique
+    .sort((a, b) => {
+      const ia = STATUS_PRIORITY.indexOf(a);
+      const ib = STATUS_PRIORITY.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    })
+    .slice(0, limit);
+}
+
+function accentBarForJobs(jobs: { status: string }[]): string {
+  const hot = hotStatuses(jobs, 1)[0];
+  switch (hot) {
+    case "soumission_en_attente": return "bg-amber-400";
+    case "soumission_repartie":   return "bg-blue-500";
+    case "en_attente":            return "bg-violet-400";
+    case "a_planifier":           return "bg-emerald-500";
+    case "reparti":               return "bg-green-500";
+    case "retour_a_faire":        return "bg-orange-500";
+    case "annule":                return "bg-red-400";
+    default:                      return "bg-slate-300";
+  }
+}
+
 /* ─── Dialog : édition client ─── */
 function EditClientDialog({ client }: { client: ClientRow }) {
   const router = useRouter();
@@ -82,17 +144,15 @@ function EditClientDialog({ client }: { client: ClientRow }) {
       name: client.name,
       email: client.email ?? "",
       phone: client.phone ?? "",
-      address_formatted: client.address_formatted ?? "",
-      city: client.city ?? "",
-      postal_code: client.postal_code ?? "",
-      lat: client.lat,
-      lng: client.lng,
+      billing_address: client.billing_address ?? "",
+      billing_city: client.billing_city ?? "",
+      billing_postal: client.billing_postal ?? "",
     },
   });
 
-  const { register, handleSubmit, formState, setValue, watch } = form;
+  const { register, handleSubmit, formState, setValue } = form;
 
-  const onPlaceResolved = useCallback(
+  const onBillingResolved = useCallback(
     (p: {
       address_raw: string;
       address_formatted: string;
@@ -101,18 +161,12 @@ function EditClientDialog({ client }: { client: ClientRow }) {
       lat: number | null;
       lng: number | null;
     }) => {
-      setValue("address_formatted", p.address_formatted, { shouldValidate: true });
-      setValue("city", p.city, { shouldValidate: true });
-      setValue("postal_code", p.postal_code, { shouldValidate: true });
-      setValue("lat", p.lat, { shouldValidate: true });
-      setValue("lng", p.lng, { shouldValidate: true });
+      setValue("billing_address", p.address_formatted || p.address_raw, { shouldValidate: true });
+      setValue("billing_city", p.city, { shouldValidate: true });
+      setValue("billing_postal", p.postal_code, { shouldValidate: true });
     },
     [setValue]
   );
-
-  function onAddressChange(v: string) {
-    setValue("address_formatted", v, { shouldDirty: true });
-  }
 
   function submit(data: EditClientFormValues) {
     setSaveError(null);
@@ -125,9 +179,6 @@ function EditClientDialog({ client }: { client: ClientRow }) {
       }
     });
   }
-
-  const latVal = watch("lat");
-  const addrVal = watch("address_formatted");
 
   return (
     <Dialog>
@@ -160,28 +211,24 @@ function EditClientDialog({ client }: { client: ClientRow }) {
           </div>
 
           <div className="space-y-1.5">
-            <Label>Adresse</Label>
+            <Label>Adresse de facturation</Label>
             <AddressAutocomplete
-              id={`addr-${client.id}`}
-              value={addrVal ?? ""}
-              onChange={onAddressChange}
-              onResolved={onPlaceResolved}
+              id={`billing-addr-${client.id}`}
+              value={form.watch("billing_address") ?? ""}
+              onChange={(v) => setValue("billing_address", v, { shouldDirty: true })}
+              onResolved={onBillingResolved}
               disabled={pending}
             />
-            {latVal != null
-              ? <p className="text-[11px] text-emerald-600">✓ Coordonnées GPS enregistrées</p>
-              : <p className="text-[11px] text-muted-foreground">Sélectionner dans la liste Google pour mettre à jour les coordonnées GPS.</p>
-            }
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor={`city-${client.id}`}>Ville</Label>
-              <Input id={`city-${client.id}`} {...register("city")} />
+              <Label htmlFor={`billing-city-${client.id}`}>Ville</Label>
+              <Input id={`billing-city-${client.id}`} {...register("billing_city")} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor={`postal-${client.id}`}>Code postal</Label>
-              <Input id={`postal-${client.id}`} {...register("postal_code")} />
+              <Label htmlFor={`billing-postal-${client.id}`}>Code postal</Label>
+              <Input id={`billing-postal-${client.id}`} {...register("billing_postal")} />
             </div>
           </div>
 
@@ -197,119 +244,69 @@ function EditClientDialog({ client }: { client: ClientRow }) {
   );
 }
 
-/* ─── Dialog : édition job ─── */
-function EditJobDialog({ job, clientName }: { job: ClientRow["jobs"][number]; clientName: string }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  const [saveError, setSaveError] = React.useState<string | null>(null);
-
-  const form = useForm<EditJobFormValues>({
-    resolver: zodResolver(editJobSchema),
-    defaultValues: {
-      status: job.status as EditJobFormValues["status"],
-      estimated_duration_hours: (job.estimated_duration_hours === 4 ? 4 : 8),
-      preferred_date: job.preferred_date ?? "",
-      installation_info: job.installation_info ?? "",
-      internal_notes: job.internal_notes ?? "",
-    },
-  });
-
-  const { register, handleSubmit, formState } = form;
-
-  function submit(data: EditJobFormValues) {
-    setSaveError(null);
-    startTransition(async () => {
-      const res = await updateJob(job.id, data);
-      if (res.ok) {
-        router.refresh();
-      } else {
-        setSaveError(res.message);
-      }
-    });
-  }
-
-  return (
-    <Dialog>
-      <DialogTrigger render={<Button variant="ghost" size="icon" className="size-6 shrink-0" title="Modifier la job" />}>
-        <Pencil className="size-3" />
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Modifier la job</DialogTitle>
-          <DialogDescription>{clientName}</DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={(e) => { e.preventDefault(); void handleSubmit(submit)(); }} className="space-y-4 py-2">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor={`status-${job.id}`}>Statut</Label>
-              <select id={`status-${job.id}`} className={selectClass} {...register("status")}>
-                <option value="soumission_en_attente">Prospect</option>
-                <option value="soumission_repartie">Visite planifiée</option>
-                <option value="en_attente">En attente</option>
-                <option value="a_planifier">À planifier</option>
-                <option value="reparti">Réparti</option>
-                <option value="retour_a_faire">Retour à faire</option>
-                <option value="facturation">Facturation</option>
-                <option value="complete">Complété</option>
-                <option value="termine">Terminé</option>
-                <option value="annule">Annulé</option>
-              </select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`dur-${job.id}`}>Durée</Label>
-              <select
-                id={`dur-${job.id}`}
-                className={selectClass}
-                {...register("estimated_duration_hours", { valueAsNumber: true })}
-              >
-                <option value={4}>4 h — Demi-journée</option>
-                <option value={8}>8 h — Journée complète</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor={`date-${job.id}`}>Date souhaitée (optionnel)</Label>
-            <Input id={`date-${job.id}`} type="date" {...register("preferred_date")} />
-            {formState.errors.preferred_date && (
-              <p className="text-destructive text-xs">{formState.errors.preferred_date.message}</p>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor={`info-${job.id}`}>Information sur l&apos;installation</Label>
-            <Textarea id={`info-${job.id}`} rows={3} {...register("installation_info")} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor={`notes-${job.id}`}>Notes internes</Label>
-            <Textarea id={`notes-${job.id}`} rows={2} {...register("internal_notes")} />
-          </div>
-
-          {saveError && <p className="text-destructive text-sm">{saveError}</p>}
-          <DialogFooter>
-            <Button type="submit" disabled={pending}>
-              {pending ? "Enregistrement…" : "Enregistrer"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
+/* ─── Helpers consolidation ─── */
+function normalizeAddress(addr: string | null | undefined): string {
+  return (addr ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/,?\s*canada\s*$/i, "")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
 }
 
-/* ─── Liste principale avec recherche + accordéon ─── */
+function digitsOnly(s: string | null | undefined): string {
+  return (s ?? "").replace(/\D/g, "");
+}
+
+function formatBillingLine(address: string | null, city: string | null, postal: string | null): string {
+  if (!address) return "Aucune adresse de facturation";
+  const lower = address.toLowerCase();
+  const extras: string[] = [];
+  if (city && !lower.includes(city.toLowerCase())) extras.push(city);
+  if (postal && !lower.includes(postal.toLowerCase().replace(/\s/g, ""))) extras.push(postal);
+  return extras.length ? `${address} — ${extras.join(" ")}` : address;
+}
+
+type Contact = {
+  key: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  /** Client le plus « riche » pour ce contact (édition) */
+  primary: ClientRow;
+};
+
+type InstallBlock = {
+  key: string;
+  address: InstallationAddressRow;
+  ids: string[];
+  jobs: Array<ClientJobRow & { clientName: string }>;
+};
+
+type BillingGroup = {
+  groupKey: string;
+  billingAddress: string | null;
+  billingCity: string | null;
+  billingPostal: string | null;
+  contacts: Contact[];
+  /** Client principal du compte (édition facturation) */
+  primaryClient: ClientRow;
+  installBlocks: InstallBlock[];
+  jobs: Array<ClientJobRow & { clientName: string }>;
+};
+
+/* ─── Liste principale — 1 ligne = 1 adresse de facturation ─── */
 export function ClientsList({ clients }: { clients: ClientRow[] }) {
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState("all");
   const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
 
-  function toggleExpand(id: string) {
+  function toggleExpand(key: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -317,21 +314,114 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
   const filtered = React.useMemo(() => {
     const q = search.toLowerCase().trim();
     return clients.filter((c) => {
-      /* Recherche : nom, ville, téléphone, courriel */
       if (q) {
-        const haystack = [c.name, c.city, c.phone, c.email]
+        const installHay = c.installation_addresses
+          .flatMap((a) => [a.address_formatted, a.city, a.postal_code, a.label])
+          .filter(Boolean)
+          .join(" ");
+        const haystack = [c.name, c.billing_city, c.billing_address, c.billing_postal, c.phone, c.email, installHay]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
         if (!haystack.includes(q)) return false;
       }
-      /* Filtre statut : garder le client si AU MOINS une de ses jobs correspond */
       if (statusFilter !== "all") {
         if (!c.jobs.some((j) => j.status === statusFilter)) return false;
       }
       return true;
     });
   }, [clients, search, statusFilter]);
+
+  const groups = React.useMemo<BillingGroup[]>(() => {
+    // 1. Regrouper les fiches client par adresse de facturation normalisée
+    const byBilling = new Map<string, ClientRow[]>();
+    for (const c of filtered) {
+      const key = c.billing_address
+        ? normalizeAddress(c.billing_address)
+        : `__solo__${c.id}`;
+      if (!key) {
+        const solo = `__solo__${c.id}`;
+        byBilling.set(solo, [...(byBilling.get(solo) ?? []), c]);
+        continue;
+      }
+      byBilling.set(key, [...(byBilling.get(key) ?? []), c]);
+    }
+
+    return Array.from(byBilling.entries()).map(([groupKey, rows]) => {
+      // Contact unique = nom + téléphone (évite Ex2 : mêmes noms listés 2×)
+      const contactMap = new Map<string, Contact>();
+      for (const c of rows) {
+        const key = `${c.name.toLowerCase().trim()}|${digitsOnly(c.phone)}`;
+        const existing = contactMap.get(key);
+        if (!existing) {
+          contactMap.set(key, {
+            key,
+            name: c.name,
+            phone: c.phone,
+            email: c.email,
+            primary: c,
+          });
+        } else {
+          // Enrichir téléphone / courriel manquants ; garder la fiche la plus ancienne comme primaire
+          if (!existing.phone && c.phone) existing.phone = c.phone;
+          if (!existing.email && c.email) existing.email = c.email;
+          if (c.created_at < existing.primary.created_at) existing.primary = c;
+          else if ((c.email || c.phone) && !existing.primary.email && !existing.primary.phone) {
+            existing.primary = c;
+          }
+        }
+      }
+      const contacts = Array.from(contactMap.values());
+
+      // Client principal = celui avec le plus de jobs, sinon le plus ancien
+      const primaryClient = [...rows].sort((a, b) => {
+        if (b.jobs.length !== a.jobs.length) return b.jobs.length - a.jobs.length;
+        return a.created_at.localeCompare(b.created_at);
+      })[0]!;
+
+      const jobs = rows.flatMap((c) =>
+        c.jobs.map((j) => ({ ...j, clientName: c.name }))
+      );
+
+      // Installations dédoublonnées par texte d'adresse (évite 151 Bertrand × 4)
+      const installMap = new Map<string, InstallBlock>();
+      for (const c of rows) {
+        for (const a of c.installation_addresses) {
+          const key = normalizeAddress(a.address_formatted) || a.id;
+          const existing = installMap.get(key);
+          if (!existing) {
+            installMap.set(key, { key, address: a, ids: [a.id], jobs: [] });
+          } else {
+            if (!existing.ids.includes(a.id)) existing.ids.push(a.id);
+            // Préférer la version avec GPS
+            if (existing.address.lat == null && a.lat != null) existing.address = a;
+          }
+        }
+      }
+
+      const installBlocks = Array.from(installMap.values()).map((block) => ({
+        ...block,
+        jobs: jobs.filter(
+          (j) => j.installation_address_id != null && block.ids.includes(j.installation_address_id)
+        ),
+      }));
+
+      // Masquer les adresses d'install sans job si une autre copie fusionnée a déjà les jobs
+      // (on garde toutes les blocs uniques ; les 0-job orphelins purs restent visibles)
+
+      const first = rows[0]!;
+      return {
+        groupKey,
+        billingAddress: first.billing_address,
+        billingCity: first.billing_city,
+        billingPostal: first.billing_postal,
+        contacts,
+        primaryClient,
+        installBlocks,
+        jobs,
+      };
+    });
+  }, [filtered]);
 
   if (clients.length === 0) {
     return (
@@ -345,12 +435,11 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
 
   return (
     <div className="space-y-4">
-      {/* Barre de recherche + filtre */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Rechercher un client, ville, téléphone…"
+            placeholder="Rechercher client, facturation, installation…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-8 h-8 text-sm"
@@ -376,14 +465,12 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
         </select>
       </div>
 
-      {/* Résumé */}
       <p className="text-xs text-muted-foreground">
-        {filtered.length === clients.length
-          ? `${clients.length} client${clients.length > 1 ? "s" : ""}`
-          : `${filtered.length} résultat${filtered.length > 1 ? "s" : ""} sur ${clients.length}`}
+        {groups.length} compte{groups.length > 1 ? "s" : ""} (par adresse de facturation)
+        {filtered.length !== clients.length ? ` — ${filtered.length} fiche${filtered.length > 1 ? "s" : ""} filtrée${filtered.length > 1 ? "s" : ""}` : ""}
       </p>
 
-      {filtered.length === 0 && (
+      {groups.length === 0 && (
         <Card>
           <CardContent className="py-10 text-center">
             <p className="text-muted-foreground text-sm">Aucun client ne correspond à la recherche.</p>
@@ -391,114 +478,264 @@ export function ClientsList({ clients }: { clients: ClientRow[] }) {
         </Card>
       )}
 
-      {/* Liste accordéon */}
-      <div className="overflow-hidden rounded-lg border border-border divide-y divide-border">
-        {filtered.map((client) => {
-          const isOpen = expanded.has(client.id);
-          const jobsToShow = statusFilter === "all"
-            ? client.jobs
-            : client.jobs.filter((j) => j.status === statusFilter);
+      <div className="space-y-2">
+        {groups.map((group) => {
+          const isOpen = expanded.has(group.groupKey);
+          const jobsMatching = statusFilter === "all"
+            ? group.jobs
+            : group.jobs.filter((j) => j.status === statusFilter);
+
+          const addrBlocks = group.installBlocks
+            .map((block) => ({
+              ...block,
+              jobs: statusFilter === "all"
+                ? block.jobs
+                : block.jobs.filter((j) => j.status === statusFilter),
+            }))
+            .filter((b) => statusFilter === "all" || b.jobs.length > 0);
+
+          const linkedIds = new Set(group.installBlocks.flatMap((b) => b.ids));
+          const orphanJobs = jobsMatching.filter(
+            (j) => !j.installation_address_id || !linkedIds.has(j.installation_address_id)
+          );
+
+          const billingLine = formatBillingLine(
+            group.billingAddress,
+            group.billingCity,
+            group.billingPostal
+          );
+          const contactNames = group.contacts.map((c) => c.name).join(", ");
+          const installCount = group.installBlocks.filter(
+            (b) => b.jobs.length > 0 || statusFilter === "all"
+          ).length;
+          const statuses = hotStatuses(group.jobs);
+          const accent = accentBarForJobs(group.jobs);
+          const primaryPhone = group.contacts.find((c) => c.phone)?.phone;
 
           return (
-            <div key={client.id} className="bg-white dark:bg-card">
-              {/* En-tête : zone accordéon + bouton modifier côte à côte */}
-              <div className="flex items-center transition-colors hover:bg-muted/40">
-                {/* Zone cliquable pour l'accordéon */}
+            <div
+              key={group.groupKey}
+              className={cn(
+                "overflow-hidden rounded-xl border bg-white dark:bg-card shadow-sm",
+                isOpen ? "border-slate-300 ring-1 ring-slate-200/80" : "border-border"
+              )}
+            >
+              {/* Ligne compte */}
+              <div className="flex items-stretch">
+                <div className={cn("w-1 shrink-0", accent)} aria-hidden />
                 <button
                   type="button"
-                  onClick={() => toggleExpand(client.id)}
-                  className="flex flex-1 min-w-0 items-center gap-3 px-4 py-3 text-left"
+                  onClick={() => toggleExpand(group.groupKey)}
+                  className="flex flex-1 min-w-0 items-center gap-3 px-3 py-3 text-left hover:bg-slate-50/80 dark:hover:bg-muted/40 transition-colors"
                 >
-                  {/* Chevron */}
-                  <span className="shrink-0 text-muted-foreground">
-                    {isOpen
-                      ? <ChevronDown className="size-4" />
-                      : <ChevronRight className="size-4" />
-                    }
+                  <span className="shrink-0 text-slate-400">
+                    {isOpen ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
                   </span>
-
-                  {/* Nom */}
-                  <span className="flex-1 min-w-0 font-medium text-sm truncate">{client.name}</span>
-
-                  {/* Ville */}
-                  {client.city && (
-                    <span className="hidden sm:block text-xs text-muted-foreground shrink-0">
-                      📍 {client.city}
-                    </span>
-                  )}
-
-                  {/* GPS */}
-                  {client.lat != null && (
-                    <span className="hidden sm:block text-[10px] text-emerald-600 font-medium shrink-0">✓ GPS</span>
-                  )}
-
-                  {/* Nb jobs */}
-                  <Badge variant="secondary" className="text-[10px] shrink-0">
-                    {client.jobs.length} job{client.jobs.length > 1 ? "s" : ""}
-                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm truncate text-foreground">
+                      {group.billingAddress
+                        ? (group.billingCity
+                          ? `${group.billingAddress.split(",")[0]}, ${group.billingCity}`
+                          : group.billingAddress.split(",")[0])
+                        : contactNames || "Sans adresse"}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5 flex items-center gap-2">
+                      <span className="truncate">{contactNames || "—"}</span>
+                      {primaryPhone && (
+                        <span className="hidden sm:inline-flex items-center gap-1 shrink-0 text-slate-500">
+                          <Phone className="size-3" />
+                          {primaryPhone}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="hidden sm:flex items-center gap-1.5 shrink-0">
+                    {statuses.map((s) => (
+                      <span
+                        key={s}
+                        className={cn(
+                          "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                          statusColor(s)
+                        )}
+                      >
+                        {statusLabel(s)}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="text-[11px] text-slate-500 shrink-0 tabular-nums">
+                    {installCount} inst. · {group.jobs.length} job{group.jobs.length > 1 ? "s" : ""}
+                  </span>
                 </button>
-
-                {/* Bouton modifier — en dehors du <button> accordéon */}
-                <div className="shrink-0 pr-3">
-                  <EditClientDialog client={client} />
+                <div className="shrink-0 flex items-center pr-2">
+                  <EditClientDialog client={group.primaryClient} />
                 </div>
               </div>
 
-              {/* Contenu accordéon */}
               {isOpen && (
-                <div className="border-t border-border bg-muted/20 px-4 py-3 space-y-3">
-                  {/* Infos client */}
-                  <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                    {client.phone && <span>📞 {client.phone}</span>}
-                    {client.email && <span>✉ {client.email}</span>}
-                    {client.address_formatted && <span>🏠 {client.address_formatted}</span>}
-                    <span className="text-xs">
-                      Créé le {format(parseISO(client.created_at), "d MMM yyyy", { locale: fr })}
-                    </span>
-                  </div>
-
-                  {/* Jobs */}
-                  {jobsToShow.length > 0 && (
-                    <div className="space-y-1.5">
-                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        Jobs
-                      </p>
-                      {jobsToShow.map((job) => (
+                <div className="border-t border-border space-y-3 p-3 bg-slate-50/60 dark:bg-muted/20">
+                  {/* Facturation */}
+                  <div className="rounded-lg border border-sky-200/80 bg-sky-50/70 dark:bg-sky-950/20 px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400 mb-1.5">
+                      Facturation
+                    </p>
+                    <p className="text-sm font-medium text-foreground">{billingLine}</p>
+                    <div className="mt-2 space-y-1">
+                      {group.contacts.map((c) => (
                         <div
-                          key={job.id}
-                          className="flex flex-wrap items-center gap-2 rounded-md bg-white border border-border px-3 py-1.5 dark:bg-card"
+                          key={c.key}
+                          className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-slate-600 dark:text-muted-foreground"
                         >
-                          <Badge variant={statusVariant(job.status)} className="text-[10px]">
-                            {statusLabel(job.status)}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground">{job.estimated_duration_hours} h</span>
-                          {job.preferred_date && (
-                            <span className="text-xs text-muted-foreground">
-                              Souhaitée : {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
-                            </span>
+                          <span className="font-medium text-foreground">{c.name}</span>
+                          {c.phone && (
+                            <a href={`tel:${c.phone}`} className="inline-flex items-center gap-1 hover:text-sky-700 hover:underline">
+                              <Phone className="size-3" />
+                              {c.phone}
+                            </a>
                           )}
-                          {job.installation_info && (
-                            <span className="truncate text-xs text-muted-foreground max-w-xs">
-                              {job.installation_info.slice(0, 80)}
-                              {job.installation_info.length > 80 ? "…" : ""}
-                            </span>
-                          )}
-                          <span className="ml-auto">
-                            <EditJobDialog job={job} clientName={client.name} />
-                          </span>
+                          {c.email && <span>{c.email}</span>}
                         </div>
                       ))}
                     </div>
-                  )}
+                  </div>
 
-                  {jobsToShow.length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">Aucune job avec ce statut.</p>
-                  )}
+                  {/* Installations */}
+                  <div className="space-y-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400 px-0.5">
+                      Adresses d&apos;installation
+                    </p>
+
+                    {addrBlocks.length === 0 && orphanJobs.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic px-0.5">Aucune adresse d&apos;installation.</p>
+                    )}
+
+                    {addrBlocks.map((block) => {
+                      if (block.jobs.length === 0 && group.installBlocks.some((b) => b.jobs.length > 0)) {
+                        return null;
+                      }
+                      const addr = block.address;
+                      return (
+                        <div
+                          key={block.key}
+                          className="rounded-lg border border-emerald-200/70 bg-white dark:bg-card overflow-hidden shadow-sm"
+                        >
+                          <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-emerald-50/80 dark:bg-emerald-950/20 border-b border-emerald-100 dark:border-emerald-900/40">
+                            <MapPin className="size-3.5 text-emerald-600 shrink-0" />
+                            <span className="text-sm font-medium truncate flex-1 min-w-0">
+                              {addr.address_formatted || addr.label || "Adresse sans nom"}
+                            </span>
+                            {addr.lat != null && (
+                              <span className="text-[10px] text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-1.5 py-0.5 font-medium">
+                                ✓ GPS
+                              </span>
+                            )}
+                            <span className="text-[11px] text-emerald-800/70 tabular-nums ml-auto">
+                              {block.jobs.length} job{block.jobs.length !== 1 ? "s" : ""}
+                            </span>
+                          </div>
+                          {block.jobs.length > 0 ? (
+                            <div className="divide-y divide-border">
+                              {block.jobs.map((job) => (
+                                <JobRow key={job.id} job={job} />
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="px-3 py-2 text-xs text-muted-foreground italic">
+                              Aucune job liée à cette adresse.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {orphanJobs.length > 0 && (
+                      <div className="rounded-lg border border-dashed border-slate-300 bg-white dark:bg-card overflow-hidden">
+                        <div className="px-3 py-2 bg-slate-100/80 border-b border-border">
+                          <span className="text-sm font-medium text-muted-foreground">
+                            Jobs sans adresse d&apos;installation
+                          </span>
+                        </div>
+                        <div className="divide-y divide-border">
+                          {orphanJobs.map((job) => (
+                            <JobRow key={job.id} job={job} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function jobFicheLink(status: string, jobId: string): { href: string; label: string } {
+  if (
+    status === "soumission_en_attente" ||
+    status === "soumission_repartie" ||
+    status === "en_attente"
+  ) {
+    return { href: `/ventes/pipeline?job=${jobId}`, label: "Fiche prospect" };
+  }
+  if (status === "a_planifier" || status === "reparti" || status === "retour_a_faire") {
+    return { href: `/a-planifier?job=${jobId}`, label: "Fiche installation" };
+  }
+  return { href: `/ventes/soumission/${jobId}`, label: "Voir la job" };
+}
+
+function JobRow({ job }: { job: ClientJobRow & { clientName?: string }; clientName?: string }) {
+  const hasQuote = !!job.quote_id || !!job.quote_number;
+  const fiche = jobFicheLink(job.status, job.id);
+  return (
+    <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+      <span
+        className={cn(
+          "rounded-full px-2 py-0.5 text-[10px] font-medium",
+          statusColor(job.status)
+        )}
+      >
+        {statusLabel(job.status)}
+      </span>
+      <span className="text-xs text-muted-foreground tabular-nums">{job.estimated_duration_hours} h</span>
+      {job.preferred_date && (
+        <span className="text-xs text-muted-foreground">
+          Souhaitée : {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
+        </span>
+      )}
+      {job.installation_info && (
+        <span className="truncate text-xs text-muted-foreground max-w-[12rem] sm:max-w-xs">
+          {job.installation_info.slice(0, 80)}
+          {job.installation_info.length > 80 ? "…" : ""}
+        </span>
+      )}
+      <div className="ml-auto flex items-center gap-1">
+        <Link
+          href={fiche.href}
+          className={cn(
+            buttonVariants({ variant: "default", size: "sm" }),
+            "h-7 gap-1 text-xs"
+          )}
+        >
+          <ExternalLink className="size-3.5" />
+          {fiche.label}
+        </Link>
+        <Link
+          href={`/ventes/soumission/${job.id}`}
+          className={cn(
+            buttonVariants({ variant: hasQuote ? "secondary" : "outline", size: "sm" }),
+            "h-7 gap-1 text-xs"
+          )}
+        >
+          <FileText className="size-3.5" />
+          {hasQuote && job.quote_number
+            ? `#${job.quote_number}`
+            : hasQuote
+              ? "Soumission"
+              : "Créer soumission"}
+        </Link>
       </div>
     </div>
   );

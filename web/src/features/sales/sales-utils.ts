@@ -39,6 +39,16 @@ export type AppointmentRow = {
   status: string;
   notes: string | null;
   quote_id: string | null;
+  /**
+   * Ownership volontaire du dossier lié (jobs.salesperson_locked).
+   * false → déplacer / optimiser parmi tous les vendeurs.
+   */
+  salesperson_locked: boolean;
+  /**
+   * true si la soumission liée contient des unités sans # série (sans bypass activé).
+   * Affiché visuellement dans le calendrier.
+   */
+  missing_serial: boolean;
 };
 
 export type BlockRow = {

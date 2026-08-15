@@ -511,13 +511,42 @@ export function InstallJobsClient({
   const [optimizerJob, setOptimizerJob] = useState<InstallJob | null>(null);
   const [editJob, setEditJob] = useState<InstallJob | null>(null);
   const [timelineJobId, setTimelineJobId] = useState<string | null>(null);
+  const [deepLinkToast, setDeepLinkToast] = useState<string | null>(null);
   const highlightRef = useRef<HTMLLIElement | null>(null);
+  const deepLinkOpenedFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (highlightJobId && highlightRef.current) {
       highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [highlightJobId]);
+
+  // Deep-link ?job= / ?highlight= → ouvrir la fiche installation
+  useEffect(() => {
+    if (!highlightJobId) {
+      deepLinkOpenedFor.current = null;
+      return;
+    }
+    if (deepLinkOpenedFor.current === highlightJobId) return;
+    const found = jobs.find((j) => j.id === highlightJobId) ?? null;
+    deepLinkOpenedFor.current = highlightJobId;
+    if (found) {
+      setEditJob(found);
+    } else {
+      setDeepLinkToast("Cette job n'est plus sur le dashboard installation (statut changé).");
+      router.replace("/a-planifier");
+      const t = setTimeout(() => setDeepLinkToast(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [highlightJobId, jobs, router]);
+
+  function clearDeepLinkEdit() {
+    setEditJob(null);
+    if (highlightJobId) {
+      deepLinkOpenedFor.current = null;
+      router.replace("/a-planifier");
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -829,12 +858,18 @@ export function InstallJobsClient({
       {editJob && (
         <EditModal
           job={editJob}
-          onClose={() => setEditJob(null)}
+          onClose={clearDeepLinkEdit}
           onSaved={() => {
-            setEditJob(null);
+            clearDeepLinkEdit();
             router.refresh();
           }}
         />
+      )}
+
+      {deepLinkToast && (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 rounded-lg border bg-background px-4 py-2 text-sm shadow-lg">
+          {deepLinkToast}
+        </div>
       )}
     </>
   );

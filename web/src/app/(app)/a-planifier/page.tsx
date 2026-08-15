@@ -40,10 +40,10 @@ function weekMondayIso(): string {
 export default async function APlanifierPage({
   searchParams,
 }: {
-  searchParams: Promise<{ highlight?: string }>;
+  searchParams: Promise<{ highlight?: string; job?: string }>;
 }) {
   const sp = await searchParams;
-  const highlight = sp.highlight ?? null;
+  const highlight = sp.job ?? sp.highlight ?? null;
 
   const supabase = await createServerSupabaseClient();
 

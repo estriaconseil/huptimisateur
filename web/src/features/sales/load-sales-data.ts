@@ -68,6 +68,60 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
     ...inactiveSalespeople,
   ];
 
+  // Ownership lock + missing_serial depuis les jobs/quotes liés
+  const apptIds = (appointments ?? []).map((a) => a.id as string);
+  const lockByAppt = new Map<string, boolean>();
+  const missingSerialByAppt = new Map<string, boolean>();
+
+  if (apptIds.length > 0) {
+    const { data: linkedJobs } = await supabase
+      .from("jobs")
+      .select("appointment_id, salesperson_locked")
+      .in("appointment_id", apptIds);
+    for (const j of linkedJobs ?? []) {
+      const row = j as { appointment_id: string | null; salesperson_locked: boolean | null };
+      if (row.appointment_id) lockByAppt.set(row.appointment_id, row.salesperson_locked ?? false);
+    }
+  }
+
+  // Vérifier les # de série manquants via les soumissions liées aux RDV
+  const quoteIds = (appointments ?? [])
+    .map((a) => (a as unknown as { quote_id: string | null }).quote_id)
+    .filter(Boolean) as string[];
+  const quoteToAppt = new Map<string, string>();
+  for (const a of appointments ?? []) {
+    const raw = a as unknown as { id: string; quote_id: string | null };
+    if (raw.quote_id) quoteToAppt.set(raw.quote_id, raw.id);
+  }
+  if (quoteIds.length > 0) {
+    const { data: unitRows } = await supabase
+      .from("quote_units")
+      .select("quote_id, brand, model, description, unit_subtotal, serial_number, serial_bypass")
+      .in("quote_id", quoteIds);
+    // Par quote : y a-t-il une unité remplie sans # série et sans bypass ?
+    const quoteHasMissing = new Map<string, boolean>();
+    for (const u of unitRows ?? []) {
+      const row = u as {
+        quote_id: string;
+        brand: string | null;
+        model: string | null;
+        description: string | null;
+        unit_subtotal: number | null;
+        serial_number: string | null;
+        serial_bypass: boolean | null;
+      };
+      const filled = !!(row.brand?.trim() || row.model?.trim() || row.description?.trim() || (row.unit_subtotal ?? 0) > 0);
+      if (!filled) continue;
+      if (!row.serial_number?.trim() && !row.serial_bypass) {
+        quoteHasMissing.set(row.quote_id, true);
+      }
+    }
+    for (const [qId, hasMissing] of quoteHasMissing) {
+      const apptId = quoteToAppt.get(qId);
+      if (apptId) missingSerialByAppt.set(apptId, hasMissing);
+    }
+  }
+
   return {
     salespeople,
     appointments: (appointments ?? []).map((a) => {
@@ -99,6 +153,8 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         status: raw.status,
         notes: raw.notes,
         quote_id: raw.quote_id,
+        salesperson_locked: lockByAppt.get(raw.id) ?? false,
+        missing_serial: missingSerialByAppt.get(raw.id) ?? false,
       };
     }),
     blocks: (rawBlocks ?? []) as BlockRow[],

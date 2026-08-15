@@ -1,3 +1,4 @@
+import React from "react";
 import {
   Document,
   Font,
@@ -118,6 +119,13 @@ const s = StyleSheet.create({
   sigImage: { width: 200, height: 60, marginTop: 4, border: `1px solid ${C.border}` },
   sigNotice: { fontSize: 7, color: C.muted, marginTop: 4, fontStyle: "italic" },
 
+  // Croquis
+  sketchImage: { width: "100%", maxHeight: 200, objectFit: "contain", marginTop: 4 },
+
+  // Page alternative
+  altBanner: { backgroundColor: "#fffbeb", borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 10, borderWidth: 1, borderColor: "#fcd34d" },
+  altBannerText: { fontSize: 9, fontWeight: "bold", color: "#92400e" },
+
   // Checkbox list
   checkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
   checkItem: { flexDirection: "row", alignItems: "center", gap: 3, width: "22%" },
@@ -168,23 +176,195 @@ function TagGroup({ label, options, value }: { label: string; options: { v: stri
   );
 }
 
+// ── Cellule de grille (marginRight explicite, pas de gap) ────────────────────
+const cell = { flex: 1, marginRight: 6 } as const;
+const cellHalf = { flex: 2, marginRight: 6 } as const;
+const cellFull = { flex: 1 } as const; // dernière cellule de la rangée, pas de marginRight
+
+// ── Rangée de champs ─────────────────────────────────────────────────────────
+function FieldRow({ children }: { children: React.ReactNode }) {
+  return <View style={{ flexDirection: "row", marginBottom: 5 }}>{children}</View>;
+}
+
+// ── Bloc unité (réutilisable principal / alternatif) ─────────────────────────
+function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
+  const hasSpecs = u.capacity_btu || u.heating_capacity_25 || u.warranty_parts || u.warranty_months;
+  const hasPiping = u.evaporator || u.pipe_feet || u.cap_long1_length || u.cap_long1_color || u.cap_long2_length || u.cap_long2_color;
+  const unitNet = Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0));
+  // Numéro d'unité dans l'option (1–3) : Option A = unit_order 1–3, Option B = 4–6 → 1–3
+  const unitNum = u.is_alternative
+    ? Math.max(1, (u.unit_order ?? 4) - 3)
+    : Math.max(1, Math.min(u.unit_order ?? idx + 1, 3));
+
+  return (
+    <View wrap={false}>
+      {idx > 0 && <View style={s.unitSep} />}
+      <Text style={s.unitTitle}>
+        Unité {unitNum}
+        {u.brand || u.model ? `  —  ${[u.brand, u.model].filter(Boolean).join(" / ")}` : ""}
+      </Text>
+
+      {/* Description */}
+      {u.description && (
+        <View style={{ marginBottom: 5 }}>
+          <Text style={s.colLabel}>Description / Emplacement</Text>
+          <Text style={s.colValue}>{u.description}</Text>
+        </View>
+      )}
+
+      {/* Marque + Modèle */}
+      {(u.brand || u.model) && (
+        <FieldRow>
+          <View style={cell}>
+            <Text style={s.colLabel}>Marque</Text>
+            <Text style={s.colValue}>{u.brand ?? "—"}</Text>
+          </View>
+          <View style={cellFull}>
+            <Text style={s.colLabel}>Modèle</Text>
+            <Text style={s.colValue}>{u.model ?? "—"}</Text>
+          </View>
+        </FieldRow>
+      )}
+
+      {/* Spécifications techniques */}
+      {hasSpecs && (
+        <FieldRow>
+          {u.capacity_btu ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Capacité (BTU)</Text>
+              <Text style={s.colValue}>{u.capacity_btu}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {u.heating_capacity_25 ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Cap. Chauf. -25°C</Text>
+              <Text style={s.colValue}>{u.heating_capacity_25}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {u.warranty_parts ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Garantie pièces</Text>
+              <Text style={s.colValue}>{u.warranty_parts}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {u.warranty_months ? (
+            <View style={cellFull}>
+              <Text style={s.colLabel}>Garantie M-O</Text>
+              <Text style={s.colValue}>{u.warranty_months}</Text>
+            </View>
+          ) : <View style={cellFull} />}
+        </FieldRow>
+      )}
+
+      {/* Tuyauterie */}
+      {hasPiping && (
+        <FieldRow>
+          {u.evaporator ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Évaporateur</Text>
+              <Text style={s.colValue}>{u.evaporator}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {u.pipe_feet ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Pieds tuyaux</Text>
+              <Text style={s.colValue}>{u.pipe_feet}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {(u.cap_long1_length || u.cap_long1_color) ? (
+            <View style={cell}>
+              <Text style={s.colLabel}>Cap Long 1</Text>
+              <Text style={s.colValue}>{[u.cap_long1_length, u.cap_long1_color].filter(Boolean).join(" — ")}</Text>
+            </View>
+          ) : <View style={cell} />}
+          {(u.cap_long2_length || u.cap_long2_color) ? (
+            <View style={cellFull}>
+              <Text style={s.colLabel}>Cap Long 2</Text>
+              <Text style={s.colValue}>{[u.cap_long2_length, u.cap_long2_color].filter(Boolean).join(" — ")}</Text>
+            </View>
+          ) : <View style={cellFull} />}
+        </FieldRow>
+      )}
+
+      {/* Support + Au sol */}
+      {(u.support_type || u.floor_mount_type) && (
+        <FieldRow>
+          {u.support_type && (
+            <View style={cell}>
+              <TagGroup label="Support" value={u.support_type} options={Object.entries(SUPPORT_LABELS).map(([v, l]) => ({ v, l }))} />
+            </View>
+          )}
+          {u.floor_mount_type && (
+            <View style={cellFull}>
+              <TagGroup label="Au sol" value={u.floor_mount_type} options={Object.entries(FLOOR_LABELS).map(([v, l]) => ({ v, l }))} />
+            </View>
+          )}
+        </FieldRow>
+      )}
+
+      {/* Total − Subvention = Net + # Série */}
+      <FieldRow>
+        {(u.unit_subtotal ?? 0) > 0 && (
+          <View style={cell}>
+            <Text style={s.colLabel}>Total unité</Text>
+            <Text style={[s.colValue, { fontWeight: "bold", color: C.accent }]}>{fmt(u.unit_subtotal ?? 0)} $</Text>
+          </View>
+        )}
+        <View style={cell}>
+          <Text style={s.colLabel}>Subvention</Text>
+          <Text style={[s.colValue, { color: C.green }]}>
+            {(u.subsidy_amount ?? 0) > 0 ? `−${fmt(u.subsidy_amount ?? 0)} $` : "0.00 $"}
+          </Text>
+        </View>
+        {(u.unit_subtotal ?? 0) > 0 && (
+          <View style={cell}>
+            <Text style={s.colLabel}>Net unité</Text>
+            <Text style={[s.colValue, { fontWeight: "bold", color: C.green }]}>{fmt(unitNet)} $</Text>
+          </View>
+        )}
+        {u.serial_number ? (
+          <View style={cellFull}>
+            <Text style={s.colLabel}># Série</Text>
+            <Text style={s.colValue}>{u.serial_number}</Text>
+          </View>
+        ) : <View style={cellFull} />}
+      </FieldRow>
+    </View>
+  );
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 export type QuoteDocumentProps = {
   quote: Quote;
   units: QuoteUnit[];
   salespersonName?: string | null;
   logoBase64?: string | null;
+  /** Adresse d'installation (chantier) — pour affichage distinct si différente de la facturation */
+  installAddress?: string | null;
 };
 
 // ── Document ──────────────────────────────────────────────────────────────────
-export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: QuoteDocumentProps) {
+export function QuoteDocument({ quote, units, salespersonName, logoBase64, installAddress = null }: QuoteDocumentProps) {
   const sub = quote.subtotal ?? 0;
   const { tps, tvq, total } = calcTaxes(sub);
-  const deposit = quote.deposit ?? null;
-  const montantSubv = quote.montant_subvention ?? null;
-  const totalNet = quote.total_net ?? (montantSubv != null ? Math.max(0, sub - montantSubv) : null);
+  const deposit = quote.deposit ?? 0;
+  const computedTotalNet = Math.max(0, total - deposit);
 
-  const filledUnits = units.filter((u) => u.brand || u.model || u.description || (u.unit_subtotal ?? 0) > 0);
+  const isFilled = (u: QuoteUnit) => !!(u.brand || u.model || u.description || (u.unit_subtotal ?? 0) > 0);
+  const principalUnits = units
+    .filter((u) => !u.is_alternative && isFilled(u))
+    .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
+  const altUnits = units
+    .filter((u) => u.is_alternative && isFilled(u))
+    .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
+  // Sous-total Option B = somme des nets (total − subvention)
+  const altSub = altUnits.reduce(
+    (acc, u) => acc + Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0)),
+    0
+  );
+  const { tps: altTps, tvq: altTvq, total: altTotal } = calcTaxes(altSub);
+
+  const jobMetaUnit = principalUnits[0] ?? units.find((u) => u.difficulty || u.tech_count) ?? null;
 
   const instItems: { key: keyof Quote; label: string }[] = [
     { key: "inst_prepiping", label: "Prépiping" },
@@ -237,7 +417,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
         </View>
 
         {/* ── Client ─────────────────────────────────────────────── */}
-        <View style={s.section}>
+        <View style={s.section} wrap={false}>
           <View style={s.sectionHeader}><Text style={s.sectionTitle}>Informations client</Text></View>
           <View style={s.sectionBody}>
             <View style={s.row2}>
@@ -246,10 +426,42 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
                 <Text style={[s.colValue, { fontWeight: "bold" }]}>{quote.client_name}</Text>
               </View>
             </View>
-            <View style={s.row2}>
-              <Field label="Adresse domicile" value={quote.client_address} />
-              <Field label="Adresse travaux" value={quote.client_work_address} />
-            </View>
+            {(() => {
+              const billing = (quote.client_address ?? "").trim();
+              const install = (installAddress ?? "").trim();
+              const differ =
+                !!install &&
+                !!billing &&
+                install.toLowerCase() !== billing.toLowerCase();
+
+              if (differ) {
+                return (
+                  <>
+                    <View style={s.row2}>
+                      <Field label="Adresse de facturation" value={quote.client_address} />
+                    </View>
+                    <View style={s.row2}>
+                      <Field label="Adresse d'installation" value={installAddress} />
+                    </View>
+                  </>
+                );
+              }
+
+              return (
+                <>
+                  <View style={s.row2}>
+                    <Field label="Adresse" value={quote.client_address} />
+                  </View>
+                  {!!install && (
+                    <View style={{ marginBottom: 4 }}>
+                      <Text style={{ fontSize: 7, color: C.accent, fontStyle: "italic" }}>
+                        L'adresse de facturation est identique à l'adresse d'installation.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              );
+            })()}
             <View style={s.row2}>
               <Field label="Téléphone" value={quote.client_phone} />
               <Field label="Cellulaire" value={quote.client_cell} />
@@ -258,93 +470,15 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
           </View>
         </View>
 
-        {/* ── Unités ─────────────────────────────────────────────── */}
-        {filledUnits.length > 0 && (
+        {/* ── Équipements Option A ───────────────────────────────── */}
+        {principalUnits.length > 0 && (
           <View style={s.section}>
-            <View style={s.sectionHeader}><Text style={s.sectionTitle}>Équipements</Text></View>
+            <View style={s.sectionHeader} minPresenceAhead={100}>
+              <Text style={s.sectionTitle}>Équipements — Option A</Text>
+            </View>
             <View style={s.sectionBody}>
-              {filledUnits.map((u, idx) => (
-                <View key={u.id} wrap={false}>
-                  {idx > 0 && <View style={s.unitSep} />}
-                  <Text style={s.unitTitle}>
-                    Unité {u.unit_order}
-                    {u.brand || u.model ? `  —  ${[u.brand, u.model].filter(Boolean).join(" / ")}` : ""}
-                  </Text>
-
-                  {u.description && (
-                    <View style={{ marginBottom: 4 }}>
-                      <Text style={s.colLabel}>Description / Emplacement</Text>
-                      <Text style={s.colValue}>{u.description}</Text>
-                    </View>
-                  )}
-
-                  <View style={s.unitGrid}>
-                    {u.capacity_btu && (
-                      <View style={s.unitCell}><Field label="Capacité (BTU)" value={u.capacity_btu} /></View>
-                    )}
-                    {u.heating_capacity_25 && (
-                      <View style={s.unitCell}><Field label="Cap. Chauf. -25°C" value={u.heating_capacity_25} /></View>
-                    )}
-                    {u.warranty_parts && (
-                      <View style={s.unitCell}><Field label="Garantie pièces" value={u.warranty_parts} /></View>
-                    )}
-                    {u.warranty_months && (
-                      <View style={s.unitCell}><Field label="Garantie M-O" value={u.warranty_months} /></View>
-                    )}
-                    {u.evaporator && (
-                      <View style={s.unitCell}><Field label="Évaporateur" value={u.evaporator} /></View>
-                    )}
-                    {u.pipe_feet && (
-                      <View style={s.unitCell}><Field label="Nbre pieds tuyaux" value={u.pipe_feet} /></View>
-                    )}
-                    {(u.cap_long1_length || u.cap_long1_color) && (
-                      <View style={s.unitCellWide}>
-                        <Text style={s.colLabel}>Cap Long 1</Text>
-                        <Text style={s.colValue}>{[u.cap_long1_length, u.cap_long1_color].filter(Boolean).join(" — ")}</Text>
-                      </View>
-                    )}
-                    {(u.cap_long2_length || u.cap_long2_color) && (
-                      <View style={s.unitCellWide}>
-                        <Text style={s.colLabel}>Cap Long 2</Text>
-                        <Text style={s.colValue}>{[u.cap_long2_length, u.cap_long2_color].filter(Boolean).join(" — ")}</Text>
-                      </View>
-                    )}
-                  </View>
-
-                  <View style={s.row2}>
-                    {u.support_type && (
-                      <TagGroup
-                        label="Support"
-                        value={u.support_type}
-                        options={Object.entries(SUPPORT_LABELS).map(([v, l]) => ({ v, l }))}
-                      />
-                    )}
-                    {u.floor_mount_type && (
-                      <TagGroup
-                        label="Au sol"
-                        value={u.floor_mount_type}
-                        options={Object.entries(FLOOR_LABELS).map(([v, l]) => ({ v, l }))}
-                      />
-                    )}
-                  </View>
-
-                  <View style={[s.row2, { marginTop: 4 }]}>
-                    {(u.unit_subtotal ?? 0) > 0 && (
-                      <View style={s.col}>
-                        <Text style={s.colLabel}>Total unité</Text>
-                        <Text style={[s.colValue, { fontWeight: "bold", color: C.accent }]}>
-                          {fmt(u.unit_subtotal ?? 0)} $
-                        </Text>
-                      </View>
-                    )}
-                    {u.serial_number && (
-                      <View style={s.col}>
-                        <Text style={s.colLabel}># Série</Text>
-                        <Text style={s.colValue}>{u.serial_number}</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
+              {principalUnits.map((u, idx) => (
+                <UnitBlock key={u.id} u={u} idx={idx} />
               ))}
             </View>
           </View>
@@ -363,20 +497,20 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
                   </Text>
                 </View>
               )}
-              {(units[0]?.difficulty || units[0]?.tech_count) && (
+              {(jobMetaUnit?.difficulty || jobMetaUnit?.tech_count) && (
                 <View style={s.col}>
-                  {units[0]?.difficulty && (
+                  {jobMetaUnit?.difficulty && (
                     <>
                       <Text style={s.colLabel}>Niveau</Text>
-                      <Text style={s.colValue}>{DIFF_LABELS[units[0].difficulty] ?? units[0].difficulty}</Text>
+                      <Text style={s.colValue}>{DIFF_LABELS[jobMetaUnit.difficulty] ?? jobMetaUnit.difficulty}</Text>
                     </>
                   )}
                 </View>
               )}
-              {units[0]?.tech_count && (
+              {jobMetaUnit?.tech_count && (
                 <View style={s.col}>
                   <Text style={s.colLabel}>Techniciens</Text>
-                  <Text style={s.colValue}>{units[0].tech_count} tech.</Text>
+                  <Text style={s.colValue}>{jobMetaUnit.tech_count} tech.</Text>
                 </View>
               )}
             </View>
@@ -397,7 +531,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
         </View>
 
         {/* ── Électricité ────────────────────────────────────────── */}
-        {(quote.electrical_amperage || quote.electrical_panel || quote.electrical_included || quote.electrical_not_included || quote.electrical_to_schedule) && (
+        {(quote.electrical_amperage || quote.electrical_panel || quote.electrical_included || quote.electrical_not_included || quote.electrical_to_schedule || quote.electrical_initials) && (
           <View style={s.section} wrap={false}>
             <View style={s.sectionHeader}><Text style={s.sectionTitle}>Informations électriques</Text></View>
             <View style={s.sectionBody}>
@@ -415,73 +549,124 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64 }: Quo
           </View>
         )}
 
-        {/* ── Financiers ─────────────────────────────────────────── */}
+        {/* ── Financiers + signature ─────────────────────────────── */}
         <View style={s.section} wrap={false}>
           <View style={s.sectionHeader}><Text style={s.sectionTitle}>Financiers</Text></View>
           <View style={s.sectionBody}>
-            <View style={s.row2}>
-              {salespersonName && <Field label="Représentant" value={salespersonName} />}
-              {quote.approved_by && <Field label="Approuvé par (client)" value={quote.approved_by} />}
-            </View>
-            <View style={{ marginTop: 6, maxWidth: 220, marginLeft: "auto" }}>
-              <View style={s.finTable}>
-                <View style={s.finRow}>
-                  <Text style={s.finLabel}>Sous-total</Text>
-                  <Text style={s.finValue}>{fmt(sub)} $</Text>
+            <View style={{ flexDirection: "row", gap: 16 }}>
+              {/* Gauche : représentant + signature */}
+              <View style={{ flex: 1 }}>
+                <View style={s.row2}>
+                  {salespersonName && <Field label="Représentant" value={salespersonName} />}
+                  {quote.approved_by && <Field label="Approuvé par (client)" value={quote.approved_by} />}
                 </View>
-                <View style={s.finRow}>
-                  <Text style={s.finLabel}>TPS (5%)</Text>
-                  <Text style={s.finValue}>{fmt(tps)} $</Text>
+                <View style={{ marginTop: 8 }}>
+                  <Text style={s.colLabel}>Signature client</Text>
+                  {quote.signature_data ? (
+                    <Image src={quote.signature_data} style={s.sigImage} />
+                  ) : (
+                    <View style={{ width: 180, height: 50, borderBottomWidth: 1, borderBottomColor: C.border, marginTop: 4 }}>
+                      <Text style={[s.colLabel, { paddingTop: 34 }]}>Signature</Text>
+                    </View>
+                  )}
                 </View>
-                <View style={s.finRow}>
-                  <Text style={s.finLabel}>TVQ (9.975%)</Text>
-                  <Text style={s.finValue}>{fmt(tvq)} $</Text>
-                </View>
-                <View style={s.finRowDark}>
-                  <Text style={s.finLabelBold}>TOTAL</Text>
-                  <Text style={s.finValueBold}>{fmt(total)} $</Text>
-                </View>
-                {deposit != null && (
+              </View>
+              {/* Droite : prix + texte légal */}
+              <View style={{ width: 220 }}>
+                <View style={s.finTable}>
                   <View style={s.finRow}>
-                    <Text style={s.finLabel}>Dépôt</Text>
+                    <Text style={s.finLabel}>Sous-total (nets)</Text>
+                    <Text style={s.finValue}>{fmt(sub)} $</Text>
+                  </View>
+                  <View style={s.finRow}>
+                    <Text style={s.finLabel}>TPS (5%)</Text>
+                    <Text style={s.finValue}>{fmt(tps)} $</Text>
+                  </View>
+                  <View style={s.finRow}>
+                    <Text style={s.finLabel}>TVQ (9.975%)</Text>
+                    <Text style={s.finValue}>{fmt(tvq)} $</Text>
+                  </View>
+                  <View style={s.finRowDark}>
+                    <Text style={s.finLabelBold}>TOTAL</Text>
+                    <Text style={s.finValueBold}>{fmt(total)} $</Text>
+                  </View>
+                  <View style={s.finRow}>
+                    <Text style={s.finLabel}>− Dépôt</Text>
                     <Text style={s.finValue}>{fmt(deposit)} $</Text>
                   </View>
-                )}
-                {montantSubv != null && (
-                  <View style={s.finRow}>
-                    <Text style={s.finLabel}>Montant subvention</Text>
-                    <Text style={s.finValue}>{fmt(montantSubv)} $</Text>
-                  </View>
-                )}
-                {totalNet != null && (
                   <View style={s.finRowGreen}>
                     <Text style={s.finLabelGreen}>Total net</Text>
-                    <Text style={s.finValueGreen}>{fmt(totalNet)} $</Text>
+                    <Text style={s.finValueGreen}>{fmt(computedTotalNet)} $</Text>
                   </View>
-                )}
+                </View>
+                <Text style={[s.sigNotice, { marginTop: 6 }]}>
+                  En acceptant la présente soumission, le client s'engage à respecter le terme de paiement à l'installation.
+                </Text>
               </View>
             </View>
           </View>
         </View>
 
-        {/* ── Signature ──────────────────────────────────────────── */}
-        <View style={s.section} wrap={false}>
-          <View style={s.sectionHeader}><Text style={s.sectionTitle}>Signature client</Text></View>
-          <View style={s.sectionBody}>
-            {quote.signature_data ? (
-              <Image src={quote.signature_data} style={s.sigImage} />
-            ) : (
-              <View style={{ width: 200, height: 40, borderBottomWidth: 1, borderBottomColor: C.border, marginTop: 4 }}>
-                <Text style={[s.colLabel, { paddingTop: 26 }]}>Signature</Text>
-              </View>
-            )}
-            <Text style={s.sigNotice}>
-              En acceptant cette soumission, le client s'engage à respecter les termes de paiement à l'installation.
-            </Text>
+        {/* ── Croquis ────────────────────────────────────────────── */}
+        {quote.sketch_data && (
+          <View style={s.section} wrap={false}>
+            <View style={s.sectionHeader}><Text style={s.sectionTitle}>Croquis / plan d'installation</Text></View>
+            <View style={s.sectionBody}>
+              <Image src={quote.sketch_data} style={s.sketchImage} />
+            </View>
           </View>
-        </View>
+        )}
 
       </Page>
+
+      {/* ── Page 2 : Option B ──────────────────────────────────── */}
+      {altUnits.length > 0 && (
+        <Page size="LETTER" style={s.page}>
+          <View style={s.altBanner}>
+            <Text style={s.altBannerText}>SOUMISSION #{quote.quote_number} — {quote.client_name} — OPTION B</Text>
+          </View>
+
+          <View style={s.section}>
+            <View style={s.sectionHeader} minPresenceAhead={100}>
+              <Text style={s.sectionTitle}>Équipements — Option B</Text>
+            </View>
+            <View style={s.sectionBody}>
+              {altUnits.map((u, idx) => (
+                <UnitBlock key={u.id} u={u} idx={idx} />
+              ))}
+            </View>
+          </View>
+
+          {altSub > 0 && (
+            <View style={s.section} wrap={false}>
+              <View style={s.sectionHeader}><Text style={s.sectionTitle}>Financiers — Option B</Text></View>
+              <View style={s.sectionBody}>
+                <View style={{ marginLeft: "auto", maxWidth: 220 }}>
+                  <View style={s.finTable}>
+                    <View style={s.finRow}>
+                      <Text style={s.finLabel}>Sous-total (nets)</Text>
+                      <Text style={s.finValue}>{fmt(altSub)} $</Text>
+                    </View>
+                    <View style={s.finRow}>
+                      <Text style={s.finLabel}>TPS (5%)</Text>
+                      <Text style={s.finValue}>{fmt(altTps)} $</Text>
+                    </View>
+                    <View style={s.finRow}>
+                      <Text style={s.finLabel}>TVQ (9.975%)</Text>
+                      <Text style={s.finValue}>{fmt(altTvq)} $</Text>
+                    </View>
+                    <View style={s.finRowDark}>
+                      <Text style={s.finLabelBold}>Total :</Text>
+                      <Text style={s.finValueBold}>{fmt(altTotal)} $</Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+        </Page>
+      )}
+
     </Document>
   );
 }

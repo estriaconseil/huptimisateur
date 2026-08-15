@@ -78,17 +78,18 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   useEffect(() => {
     if (mode === "move" && moveTab === "optimizer" && hasGps && slots === null) {
       startLoadSlots(async () => {
+        const filterSp = appointment.salesperson_locked ? appointment.salesperson_id : null;
         const res = await findBestSlotsForProspect(
           appointment.client_lat!,
           appointment.client_lng!,
           10,
-          appointment.salesperson_id,
+          filterSp,
           appointment.id
         );
         if (res.ok) setSlots(res.slots);
       });
     }
-  }, [mode, moveTab, hasGps, slots, appointment.client_lat, appointment.client_lng, appointment.salesperson_id, appointment.id]);
+  }, [mode, moveTab, hasGps, slots, appointment.client_lat, appointment.client_lng, appointment.salesperson_id, appointment.salesperson_locked, appointment.id]);
 
   const [moveForm, setMoveForm] = useState({
     salesperson_id: appointment.salesperson_id,

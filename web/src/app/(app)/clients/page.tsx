@@ -11,8 +11,12 @@ export default async function ClientsPage() {
   const { data: raw, error } = await supabase
     .from("clients")
     .select(
-      `id, name, phone, email, city, address_formatted, postal_code, lat, lng, created_at,
-       jobs ( id, status, estimated_duration_hours, preferred_date, installation_info, internal_notes )`
+      `id, name, phone, email, billing_address, billing_city, billing_postal, created_at,
+       installation_addresses ( id, label, address_formatted, city, postal_code, lat, lng, installation_info ),
+       jobs (
+         id, status, estimated_duration_hours, preferred_date, installation_info, internal_notes, installation_address_id,
+         quotes ( id, quote_number )
+       )`
     )
     .order("created_at", { ascending: false });
 
@@ -22,26 +26,49 @@ export default async function ClientsPage() {
       name: string;
       phone: string | null;
       email: string | null;
-      city: string | null;
-      address_formatted: string | null;
-      postal_code: string | null;
-      lat: number | null;
-      lng: number | null;
+      billing_address: string | null;
+      billing_city: string | null;
+      billing_postal: string | null;
       created_at: string;
-      jobs: ClientRow["jobs"];
+      installation_addresses: ClientRow["installation_addresses"] | ClientRow["installation_addresses"][number] | null;
+      jobs:
+        | Array<ClientRow["jobs"][number] & { quotes?: { id: string; quote_number: number } | { id: string; quote_number: number }[] | null }>
+        | (ClientRow["jobs"][number] & { quotes?: { id: string; quote_number: number } | { id: string; quote_number: number }[] | null })
+        | null;
     };
+    const addrs = Array.isArray(row.installation_addresses)
+      ? row.installation_addresses
+      : row.installation_addresses
+        ? [row.installation_addresses]
+        : [];
+    const rawJobs = Array.isArray(row.jobs) ? row.jobs : row.jobs ? [row.jobs] : [];
+    const jobs = rawJobs.map((j) => {
+      const qRaw = j.quotes;
+      const qList = Array.isArray(qRaw) ? qRaw : qRaw ? [qRaw] : [];
+      const q = [...qList].sort((a, b) => (b.quote_number ?? 0) - (a.quote_number ?? 0))[0];
+      return {
+        id: j.id,
+        status: j.status,
+        estimated_duration_hours: j.estimated_duration_hours,
+        preferred_date: j.preferred_date,
+        installation_info: j.installation_info,
+        internal_notes: j.internal_notes,
+        installation_address_id: j.installation_address_id,
+        quote_id: q?.id ?? null,
+        quote_number: q?.quote_number ?? null,
+      };
+    });
     return {
       id: row.id,
       name: row.name,
       phone: row.phone,
       email: row.email,
-      city: row.city,
-      address_formatted: row.address_formatted,
-      postal_code: row.postal_code,
-      lat: row.lat,
-      lng: row.lng,
+      billing_address: row.billing_address,
+      billing_city: row.billing_city,
+      billing_postal: row.billing_postal,
       created_at: row.created_at,
-      jobs: Array.isArray(row.jobs) ? row.jobs : row.jobs ? [row.jobs] : [],
+      installation_addresses: addrs,
+      jobs,
     };
   });
 
@@ -51,7 +78,7 @@ export default async function ClientsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Clients &amp; Jobs</h1>
           <p className="text-muted-foreground text-sm">
-            {clients.length} client{clients.length > 1 ? "s" : ""} enregistré{clients.length > 1 ? "s" : ""}
+            Comptes regroupés par adresse de facturation
           </p>
         </div>
         <Link href="/nouveau" className={buttonVariants({ size: "sm" })}>

@@ -39,6 +39,13 @@ export type EnrichedScheduleRow = {
       lng: number | null;
       address_formatted?: string | null;
     } | null;
+    /** Adresse d'installation liée — prioritaire sur clients.lat/lng pour le GPS. */
+    installation_address?: {
+      lat: number | null;
+      lng: number | null;
+      city?: string | null;
+      address_formatted?: string | null;
+    } | null;
   } | null;
 };
 

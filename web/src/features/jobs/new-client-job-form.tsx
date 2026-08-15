@@ -7,6 +7,7 @@ import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { AddressAutocomplete } from "@/components/maps/address-autocomplete";
+import type { ResolvedPlace } from "@/components/maps/address-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -29,6 +30,7 @@ type Props = {
 export function NewClientJobForm({ onSuccess }: Props = {}) {
   const router = useRouter();
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [sameAddress, setSameAddress] = useState(false);
 
   const form = useForm<NewClientJobFormValues>({
     resolver: zodResolver(newClientJobFormSchema),
@@ -36,12 +38,14 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
       name: "",
       email: "",
       phone: "",
-      address_raw: "",
-      address_formatted: "",
-      city: "",
-      postal_code: "",
-      lat: null,
-      lng: null,
+      billing_address: "",
+      billing_city: "",
+      billing_postal: "",
+      install_address_formatted: "",
+      install_city: "",
+      install_postal_code: "",
+      install_lat: null,
+      install_lng: null,
       installation_info: "",
       internal_notes: "",
       estimated_duration_hours: 4,
@@ -52,44 +56,60 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
 
   const { watch, setValue, register, handleSubmit, formState } = form;
 
-  const addressDisplay = watch("address_formatted") || watch("address_raw") || "";
+  const [billingDisplay, setBillingDisplay] = useState("");
 
-  const onPlaceResolved = useCallback(
-    (p: {
-      address_raw: string;
-      address_formatted: string;
-      city: string;
-      postal_code: string;
-      lat: number | null;
-      lng: number | null;
-    }) => {
-      setValue("address_raw", p.address_raw, { shouldValidate: true, shouldDirty: true });
-      setValue("address_formatted", p.address_formatted, { shouldValidate: true });
-      setValue("city", p.city, { shouldValidate: true });
-      setValue("postal_code", p.postal_code, { shouldValidate: true });
-      setValue("lat", p.lat, { shouldValidate: true });
-      setValue("lng", p.lng, { shouldValidate: true });
-    },
-    [setValue]
-  );
+  // ── Installation (seule source GPS) ──
+  const installDisplay = watch("install_address_formatted") || "";
 
-  const onAddressChange = useCallback(
-    (v: string) => {
-      setValue("address_raw", v, { shouldDirty: true });
-      setValue("address_formatted", v, { shouldDirty: true });
-    },
-    [setValue]
-  );
+  const onInstallResolved = useCallback((p: ResolvedPlace) => {
+    const addr = p.address_formatted || p.address_raw;
+    setValue("install_address_formatted", addr, { shouldValidate: true, shouldDirty: true });
+    setValue("install_city", p.city, { shouldValidate: true });
+    setValue("install_postal_code", p.postal_code, { shouldValidate: true });
+    setValue("install_lat", p.lat, { shouldValidate: true });
+    setValue("install_lng", p.lng, { shouldValidate: true });
+    if (sameAddress) {
+      setBillingDisplay(addr);
+      setValue("billing_address", addr);
+      setValue("billing_city", p.city);
+      setValue("billing_postal", p.postal_code);
+    }
+  }, [setValue, sameAddress]);
+
+  const onBillingResolved = useCallback((p: ResolvedPlace) => {
+    const addr = p.address_formatted || p.address_raw;
+    setBillingDisplay(addr);
+    setValue("billing_address", addr);
+    setValue("billing_city", p.city);
+    setValue("billing_postal", p.postal_code);
+  }, [setValue]);
+
+  const handleSameAddress = (checked: boolean) => {
+    setSameAddress(checked);
+    if (checked) {
+      const addr = watch("install_address_formatted") || "";
+      setBillingDisplay(addr);
+      setValue("billing_address", addr);
+      setValue("billing_city", watch("install_city") || "");
+      setValue("billing_postal", watch("install_postal_code") || "");
+    }
+  };
 
   async function submitForm(data: NewClientJobFormValues, thenSuggest: boolean) {
     setSubmitError(null);
-    if (!data.address_formatted?.trim()) {
-      form.setError("address_formatted", { message: "Adresse requise — sélectionnez une adresse dans la liste Google" });
+    if (!data.install_address_formatted?.trim()) {
+      form.setError("install_address_formatted", { message: "Adresse d'installation requise — sélectionnez une adresse dans la liste Google" });
       return;
     }
-    if (data.lat == null || data.lng == null) {
-      form.setError("address_formatted", { message: "Sélectionnez l'adresse dans la liste Google pour obtenir les coordonnées GPS (nécessaires pour les suggestions de distance)" });
+    if (data.install_lat == null || data.install_lng == null) {
+      form.setError("install_address_formatted", { message: "Sélectionnez l'adresse dans la liste Google pour obtenir les coordonnées GPS" });
       return;
+    }
+    // Si même adresse, s'assurer que billing = install
+    if (sameAddress) {
+      data.billing_address = data.install_address_formatted;
+      data.billing_city = data.install_city;
+      data.billing_postal = data.install_postal_code;
     }
     const result = await createClientAndJob(data);
     if (!result.ok) {
@@ -97,6 +117,8 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
       return;
     }
     form.reset();
+    setBillingDisplay("");
+    setSameAddress(false);
     if (onSuccess) {
       onSuccess(result.jobId);
       return;
@@ -139,43 +161,94 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
         </CardContent>
       </Card>
 
+      {/* ── Adresse d'installation (GPS) ── */}
       <Card>
         <CardHeader>
-          <CardTitle>Adresse</CardTitle>
+          <CardTitle>Adresse d&apos;installation</CardTitle>
+          <CardDescription>Emplacement de l&apos;installation — seule source GPS pour la planification.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="space-y-2">
-            <Label htmlFor="address_search">
-              Adresse <span className="text-destructive">*</span>
+            <Label htmlFor="install_address_search">
+              Adresse d&apos;installation <span className="text-destructive">*</span>
             </Label>
             <AddressAutocomplete
-              id="address_search"
-              value={addressDisplay}
-              onChange={onAddressChange}
-              onResolved={onPlaceResolved}
+              id="install_address_search"
+              value={installDisplay}
+              onChange={(v) => {
+                setValue("install_address_formatted", v, { shouldDirty: true });
+                setValue("install_lat", null);
+                setValue("install_lng", null);
+              }}
+              onResolved={onInstallResolved}
               disabled={formState.isSubmitting}
             />
-            {/* Indicateur GPS */}
-            {watch("lat") != null
+            {watch("install_lat") != null
               ? <p className="text-[11px] text-emerald-600">✓ Adresse géocodée — coordonnées GPS enregistrées</p>
               : <p className="text-[11px] text-muted-foreground">Sélectionnez une adresse dans la liste pour activer les suggestions de distance.</p>
             }
-            {formState.errors.address_formatted && (
-              <p className="text-destructive text-sm">{formState.errors.address_formatted.message}</p>
+            {formState.errors.install_address_formatted && (
+              <p className="text-destructive text-sm">{formState.errors.install_address_formatted.message}</p>
             )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="city">Ville</Label>
-              <Input id="city" {...register("city")} />
+              <Label htmlFor="install_city">Ville</Label>
+              <Input id="install_city" {...register("install_city")} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="postal_code">Code postal</Label>
-              <Input id="postal_code" {...register("postal_code")} />
+              <Label htmlFor="install_postal_code">Code postal</Label>
+              <Input id="install_postal_code" {...register("install_postal_code")} />
             </div>
           </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={sameAddress}
+              onChange={(e) => handleSameAddress(e.target.checked)}
+              disabled={formState.isSubmitting}
+              className="rounded"
+            />
+            Même adresse que l&apos;installation
+          </label>
         </CardContent>
       </Card>
+
+      {/* ── Adresse de facturation ── */}
+      {!sameAddress && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Adresse de facturation</CardTitle>
+            <CardDescription>Adresse utilisée pour les factures (pas de GPS).</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="billing_address_search">Adresse</Label>
+              <AddressAutocomplete
+                id="billing_address_search"
+                value={billingDisplay}
+                onChange={(v) => {
+                  setBillingDisplay(v);
+                  setValue("billing_address", v);
+                }}
+                onResolved={onBillingResolved}
+                disabled={formState.isSubmitting}
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="billing_city">Ville</Label>
+                <Input id="billing_city" {...register("billing_city")} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="billing_postal">Code postal</Label>
+                <Input id="billing_postal" {...register("billing_postal")} />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

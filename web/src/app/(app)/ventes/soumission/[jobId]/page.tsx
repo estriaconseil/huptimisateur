@@ -26,7 +26,8 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
     .from("jobs")
     .select(
       `id, status, appointment_id, salesperson_id, installation_info,
-       clients ( id, name, phone, email, address_formatted )`
+       clients ( id, name, phone, email, billing_address ),
+       installation_addresses!installation_address_id(address_formatted, city)`
     )
     .eq("id", jobId)
     .maybeSingle();
@@ -44,7 +45,13 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
     name: string;
     phone: string | null;
     email: string | null;
+    billing_address: string | null;
+  } | null;
+
+  const installRaw = (job as unknown as { installation_addresses: unknown }).installation_addresses;
+  const jobInstall = (Array.isArray(installRaw) ? installRaw[0] : installRaw) as {
     address_formatted: string | null;
+    city: string | null;
   } | null;
 
   // Soumission existante liée à ce job
@@ -101,10 +108,10 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
                   {client.phone}
                 </span>
               )}
-              {client?.address_formatted && (
+              {(jobInstall?.address_formatted ?? client?.billing_address) && (
                 <span className="flex items-center gap-1">
                   <MapPin className="size-3.5" />
-                  {client.address_formatted}
+                  {jobInstall?.address_formatted ?? client?.billing_address}
                 </span>
               )}
             </div>
@@ -136,6 +143,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
         salespeople={salespeople}
         nextQuoteNumber={nextQuoteNumber}
         alreadyConverted={alreadyConverted}
+        installAddress={jobInstall?.address_formatted ?? null}
         defaultClient={
           quote
             ? undefined
@@ -143,7 +151,8 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
                 name: client?.name ?? "",
                 phone: client?.phone ?? null,
                 email: client?.email ?? null,
-                address: client?.address_formatted ?? null,
+                address: client?.billing_address ?? null,
+                install_address: jobInstall?.address_formatted ?? null,
                 salesperson_id: job.salesperson_id,
               }
         }

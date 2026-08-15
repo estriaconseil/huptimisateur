@@ -52,7 +52,7 @@ export async function getDistanceSuggestionsForJob(
     await Promise.all([
       supabase
         .from("jobs")
-        .select("id, estimated_duration_hours, client_id, clients ( lat, lng )")
+        .select("id, estimated_duration_hours, client_id, installation_address_id, clients ( lat, lng ), installation_addresses!installation_address_id ( lat, lng )")
         .eq("id", jobId)
         .maybeSingle(),
       supabase.from("teams").select("id, name, active, color, notes, created_at").order("name"),
@@ -60,7 +60,10 @@ export async function getDistanceSuggestionsForJob(
         .from("schedules")
         .select(
           `id, job_id, team_id, scheduled_date, slot_type, status,
-           jobs ( id, estimated_duration_hours, clients ( name, lat, lng, city, phone, email, address_formatted ) )`
+           jobs ( id, estimated_duration_hours,
+             clients ( name, lat, lng, city, phone, email, address_formatted ),
+             installation_addresses!installation_address_id ( lat, lng, city, address_formatted )
+           )`
         )
         .gte("scheduled_date", rangeStart)
         .lte("scheduled_date", rangeEnd)
@@ -72,12 +75,12 @@ export async function getDistanceSuggestionsForJob(
     return { ok: false, message: jobErr?.message ?? "Job introuvable" };
   }
 
-  const rawJob = jobRow as Job & { clients?: unknown };
-  const jobClient = unwrapRelation<{ lat: number | null; lng: number | null }>(
-    rawJob.clients ?? null
+  const rawJob = jobRow as Job & { clients?: unknown; installation_addresses?: unknown };
+  const jobInstallAddr = unwrapRelation<{ lat: number | null; lng: number | null }>(
+    rawJob.installation_addresses ?? null
   );
-  const lat = jobClient?.lat;
-  const lng = jobClient?.lng;
+  const lat = jobInstallAddr?.lat;
+  const lng = jobInstallAddr?.lng;
 
   if (lat == null || lng == null) {
     return {
@@ -122,6 +125,7 @@ export async function getDistanceSuggestionsForJob(
       id: string;
       estimated_duration_hours: number;
       clients: unknown;
+      installation_addresses: unknown;
     }>(row.jobs);
     const job: EnrichedScheduleRow["job"] = jo
       ? {
@@ -136,6 +140,12 @@ export async function getDistanceSuggestionsForJob(
             lng: number | null;
             address_formatted: string | null;
           }>(jo.clients),
+          installation_address: unwrapRelation<{
+            lat: number | null;
+            lng: number | null;
+            city: string | null;
+            address_formatted: string | null;
+          }>(jo.installation_addresses),
         }
       : null;
     return {

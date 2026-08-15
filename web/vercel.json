@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/auto-complete",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/interruption-backup",
+      "schedule": "0 10,11 * * 1-5"
     }
   ]
 }

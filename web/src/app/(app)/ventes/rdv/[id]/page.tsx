@@ -45,10 +45,15 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
-  // Charger le rendez-vous avec les données client via JOIN
+  // Charger le rendez-vous avec les données client et adresse d'installation via JOIN
   const { data: appt } = await supabase
     .from("sales_appointments")
-    .select("*, salespeople!salesperson_id(id, name), clients!client_id(name, phone, email, address_formatted)")
+    .select(`
+      *,
+      salespeople!salesperson_id(id, name),
+      clients!client_id(name, phone, email, billing_address),
+      installation_addresses!installation_address_id(address_formatted, city)
+    `)
     .eq("id", id)
     .maybeSingle();
 
@@ -60,7 +65,14 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
     name: string | null;
     phone: string | null;
     email: string | null;
+    billing_address: string | null;
+  } | null;
+
+  // Extraire l'adresse d'installation depuis le JOIN
+  const installRaw = (appt as unknown as { installation_addresses: unknown }).installation_addresses;
+  const apptInstall = (Array.isArray(installRaw) ? installRaw[0] : installRaw) as {
     address_formatted: string | null;
+    city: string | null;
   } | null;
 
   // Charger la soumission liée (si elle existe)
@@ -115,7 +127,8 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
     name: apptClient?.name ?? "",
     phone: apptClient?.phone ?? null,
     email: apptClient?.email ?? null,
-    address: apptClient?.address_formatted ?? null,
+    address: apptClient?.billing_address ?? null,
+    install_address: apptInstall?.address_formatted ?? null,
     salesperson_id: spId,
   };
 
@@ -153,10 +166,10 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
                   {apptClient.phone}
                 </span>
               )}
-              {apptClient?.address_formatted && (
+              {(apptInstall?.address_formatted ?? apptClient?.billing_address) && (
                 <span className="flex items-center gap-1">
                   <MapPin className="size-3.5" />
-                  {apptClient.address_formatted}
+                  {apptInstall?.address_formatted ?? apptClient?.billing_address}
                 </span>
               )}
             </div>
@@ -190,6 +203,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
         salespeople={salespeople}
         nextQuoteNumber={nextQuoteNumber}
         defaultClient={quote ? undefined : defaultClient}
+        installAddress={apptInstall?.address_formatted ?? null}
         alreadyConverted={alreadyConverted}
       />
     </div>

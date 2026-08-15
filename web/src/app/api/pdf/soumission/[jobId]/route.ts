@@ -69,10 +69,23 @@ export async function GET(
     salespersonName = (sp as { name?: string } | null)?.name ?? null;
   }
 
+  // Adresse d'installation via le job
+  let installAddress: string | null = null;
+  const { data: jobRow } = await supabase
+    .from("jobs")
+    .select("installation_addresses!installation_address_id(address_formatted)")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (jobRow) {
+    const raw = (jobRow as { installation_addresses: unknown }).installation_addresses;
+    const addr = (Array.isArray(raw) ? raw[0] : raw) as { address_formatted?: string | null } | null;
+    installAddress = addr?.address_formatted ?? null;
+  }
+
   const logoBase64 = getLogoBase64();
 
   const element = React.createElement(
-    QuoteDocument, { quote, units, salespersonName, logoBase64 }
+    QuoteDocument, { quote, units, salespersonName, logoBase64, installAddress }
   ) as ReactElement<DocumentProps>;
 
   const buffer = await renderToBuffer(element);

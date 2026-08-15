@@ -6,7 +6,6 @@ import { addDays, addWeeks, format, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
 import { CalendarOff, ChevronLeft, ChevronRight, Loader2, MapPin, Plus, Sparkles, X } from "lucide-react";
 
-import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import {
   findBestSlotsForProspect,
   getProspectsForSlot,
@@ -16,6 +15,7 @@ import {
   type ProspectSlotResult,
 } from "@/actions/sales";
 import { createProspect } from "@/actions/prospects";
+import { DualAddressBlock, emptyDualAddress, type DualAddressState } from "@/features/sales/pipeline-client";
 import { createSalespersonBlock } from "@/actions/blocks";
 import { TravelDuration } from "@/lib/format-travel";
 import { FIXED_TIME_SLOTS } from "./sales-utils";
@@ -199,9 +199,7 @@ function NewClientTab({
     client_name: "",
     client_phone: "",
     client_email: "",
-    client_address: "",
-    client_lat: null as number | null,
-    client_lng: null as number | null,
+    ...emptyDualAddress(),
     installation_info: "",
   });
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
@@ -209,20 +207,20 @@ function NewClientTab({
   const [booking, startBook] = useTransition();
   const [bookingKey, setBookingKey] = useState<string | null>(null);
 
-  const onAddressResolved = useCallback((p: ResolvedPlace) => {
-    setForm((f) => ({
-      ...f,
-      client_address: p.address_formatted || p.address_raw,
-      client_lat: p.lat,
-      client_lng: p.lng,
-    }));
-  }, []);
+  const setAddr = useCallback((patch: Partial<DualAddressState>) => setForm((f) => ({ ...f, ...patch })), []);
+
+  const addrState: DualAddressState = {
+    billing_address: form.billing_address, billing_city: form.billing_city, billing_postal: form.billing_postal,
+    same_address: form.same_address,
+    install_address: form.install_address, install_city: form.install_city, install_postal: form.install_postal,
+    install_lat: form.install_lat, install_lng: form.install_lng,
+  };
 
   const findSlots = async () => {
-    if (!form.client_lat || !form.client_lng) return;
+    if (!form.install_lat || !form.install_lng) return;
     setError(null);
     setStep("loading");
-    const res = await findBestSlotsForProspect(form.client_lat, form.client_lng);
+    const res = await findBestSlotsForProspect(form.install_lat, form.install_lng);
     if (!res.ok) { setError(res.message); setStep("form"); return; }
     setSlots(res.slots);
     setStep("slots");
@@ -237,13 +235,20 @@ function NewClientTab({
       // 1. Créer le prospect (client + job dans le pipeline)
       const prospectRes = await createProspect({
         name: form.client_name,
-        phone: form.client_phone,
-        email: form.client_email,
-        address: form.client_address,
-        lat: form.client_lat,
-        lng: form.client_lng,
+        phone: form.client_phone || null,
+        email: form.client_email || null,
+        billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
+        billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
+        billing_postal: (form.same_address ? form.install_postal : form.billing_postal) || null,
+        install_address: form.install_address || null,
+        install_city: form.install_city || null,
+        install_postal: form.install_postal || null,
+        install_lat: form.install_lat,
+        install_lng: form.install_lng,
         installation_info: form.installation_info || null,
         salesperson_id: s.salesperson_id || slot.salesperson_id || null,
+        // Placement calendrier (appel) → pas d'ownership, suggestions futures = tous vendeurs
+        salesperson_locked: false,
       });
       if (!prospectRes.ok) { setError(prospectRes.message); setBookingKey(null); return; }
 
@@ -262,7 +267,7 @@ function NewClientTab({
 
   const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const lbl = "block text-sm font-medium mb-1";
-  const canOptimize = !!form.client_lat && !!form.client_name.trim();
+  const canOptimize = !!form.install_lat && !!form.client_name.trim();
 
   // ── Étape 1 : formulaire ──────────────────────────────────────────────────
   if (step === "form") {
@@ -300,17 +305,7 @@ function NewClientTab({
             />
           </div>
         </div>
-        <div>
-          <label className={lbl}>
-            Adresse
-            {form.client_lat && <span className="ml-1 text-[10px] text-emerald-600 font-normal">✓ GPS</span>}
-          </label>
-          <AddressAutocomplete
-            value={form.client_address}
-            onChange={(v) => setForm((f) => ({ ...f, client_address: v, client_lat: null, client_lng: null }))}
-            onResolved={onAddressResolved}
-          />
-        </div>
+        <DualAddressBlock state={addrState} onChange={setAddr} inp={inp} lbl={lbl} />
         <div>
           <label className={lbl}>Notes / Info projet</label>
           <textarea
@@ -330,9 +325,9 @@ function NewClientTab({
           <Sparkles className="size-4" />
           Trouver le meilleur créneau
         </button>
-        {!form.client_lat && (
+        {!form.install_lat && (
           <p className="text-[11px] text-muted-foreground text-center">
-            Entrez l&apos;adresse pour activer l&apos;optimisation.
+            Sélectionnez l&apos;adresse d&apos;installation dans Google pour activer l&apos;optimisation.
           </p>
         )}
       </div>

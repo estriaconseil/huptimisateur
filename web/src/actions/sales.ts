@@ -70,13 +70,18 @@ export type UnitInput = {
   tech_count: number | null;
   unit_subtotal: number;
   serial_number: string | null;
+  /** Unité faisant partie du groupe alternatif (page 2 du PDF). */
+  is_alternative: boolean;
+  /** Subvention spécifique à cette unité. */
+  subsidy_amount: number;
+  /** Permet la répartition sans # de série pour cette unité. */
+  serial_bypass: boolean;
 };
 
 export type QuoteInput = {
   quote_number: number;
   client_name: string;
   client_address: string;
-  client_work_address: string;
   client_phone: string;
   client_cell: string;
   client_email: string;
@@ -106,6 +111,7 @@ export type QuoteInput = {
   salesperson_id: string;
   approved_by: string;
   signature_data: string | null;
+  sketch_data: string | null;
   status: QuoteStatus;
 };
 
@@ -291,7 +297,6 @@ export async function createQuote(
       client_id: clientId,
       client_name: data.client_name,
       client_address: data.client_address || null,
-      client_work_address: data.client_work_address || null,
       client_phone: data.client_phone || null,
       client_cell: data.client_cell || null,
       client_email: data.client_email || null,
@@ -321,6 +326,7 @@ export async function createQuote(
       salesperson_id: data.salesperson_id || null,
       approved_by: data.approved_by || null,
       signature_data: data.signature_data,
+      sketch_data: data.sketch_data ?? null,
       status: data.status,
     })
     .select("id")
@@ -352,6 +358,9 @@ export async function createQuote(
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
         serial_number: u.serial_number || null,
+        is_alternative: u.is_alternative ?? false,
+        subsidy_amount: u.subsidy_amount ?? 0,
+        serial_bypass: u.serial_bypass ?? false,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -390,7 +399,6 @@ export async function updateQuote(
       quote_number: data.quote_number,
       client_name: data.client_name,
       client_address: data.client_address || null,
-      client_work_address: data.client_work_address || null,
       client_phone: data.client_phone || null,
       client_cell: data.client_cell || null,
       client_email: data.client_email || null,
@@ -420,6 +428,7 @@ export async function updateQuote(
       salesperson_id: data.salesperson_id || null,
       approved_by: data.approved_by || null,
       signature_data: data.signature_data,
+      sketch_data: data.sketch_data ?? null,
       status: data.status,
     })
     .eq("id", quoteId);
@@ -454,6 +463,9 @@ export async function updateQuote(
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
         serial_number: u.serial_number || null,
+        is_alternative: u.is_alternative ?? false,
+        subsidy_amount: u.subsidy_amount ?? 0,
+        serial_bypass: u.serial_bypass ?? false,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -753,10 +765,14 @@ export async function bookProspectToSlot(input: {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { ok: false, message: "Non authentifié" };
 
-  // Récupérer les infos du client via la job
+  // Récupérer les infos du client + adresse d'installation via la job
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
-    .select(`id, client_id, status, appointment_id, clients ( name, phone, email, address_formatted, lat, lng )`)
+    .select(`
+      id, client_id, status, appointment_id, installation_address_id,
+      clients ( name, phone, email ),
+      installation_addresses!installation_address_id ( lat, lng, address_formatted )
+    `)
     .eq("id", input.jobId)
     .maybeSingle();
 
@@ -768,10 +784,13 @@ export async function bookProspectToSlot(input: {
 
   const client = unwrapRelation<{
     name: string; phone: string | null; email: string | null;
-    address_formatted: string | null; lat: number | null; lng: number | null;
   }>((job as { clients: unknown }).clients);
 
   if (!client) return { ok: false, message: "Client introuvable" };
+
+  const installAddr = unwrapRelation<{
+    lat: number | null; lng: number | null; address_formatted: string | null;
+  }>((job as { installation_addresses: unknown }).installation_addresses);
 
   // Remplacement : libérer l'ancien RDV s'il existe
   const previousApptId = (job as { appointment_id: string | null }).appointment_id;
@@ -779,14 +798,15 @@ export async function bookProspectToSlot(input: {
     await supabase.from("sales_appointments").delete().eq("id", previousApptId);
   }
 
-  // Créer le rendez-vous
+  // Créer le rendez-vous — GPS uniquement depuis l'adresse d'installation
   const { data: appt, error: apptErr } = await supabase
     .from("sales_appointments")
     .insert({
       salesperson_id: input.salespersonId,
       client_id: (job as { client_id: string }).client_id,
-      client_lat: client.lat ?? null,
-      client_lng: client.lng ?? null,
+      installation_address_id: (job as { installation_address_id: string | null }).installation_address_id ?? null,
+      client_lat: installAddr?.lat ?? null,
+      client_lng: installAddr?.lng ?? null,
       scheduled_date: input.scheduledDate,
       start_time: input.startTime,
       status: "scheduled",
@@ -802,7 +822,8 @@ export async function bookProspectToSlot(input: {
     return { ok: false, message: apptErr.message };
   }
 
-  // Passer la job en "soumission_repartie" et lier le rendez-vous
+  // Passer la job en "soumission_repartie" et lier le rendez-vous.
+  // Ne PAS toucher salesperson_locked : un booking calendrier n'implique pas ownership.
   const { error: jobStatusErr } = await supabase
     .from("jobs")
     .update({
@@ -965,9 +986,12 @@ export async function findBestSlotsForProspect(
   if (!salespeople?.length) return { ok: true, slots: [] };
 
   // 2. Tous les RDV dans la fenêtre (avec coordonnées), hors annulés et hors RDV exclu
+  // GPS : client_lat dénormalisé, sinon fallback installation_addresses (jamais clients/billing)
   let apptQuery = supabase
     .from("sales_appointments")
-    .select("id, salesperson_id, scheduled_date, start_time, client_lat, client_lng, clients ( name, address_formatted )")
+    .select(`id, salesperson_id, scheduled_date, start_time, client_lat, client_lng,
+             clients ( name, address_formatted ),
+             installation_addresses!installation_address_id ( lat, lng )`)
     .neq("status", "cancelled")
     .gte("scheduled_date", todayStr)
     .lte("scheduled_date", in30Days)
@@ -982,9 +1006,19 @@ export async function findBestSlotsForProspect(
         id: string; salesperson_id: string; scheduled_date: string; start_time: string;
         client_lat: number | null; client_lng: number | null;
         clients: { name: string | null; address_formatted: string | null } | null;
+        installation_addresses: { lat: number | null; lng: number | null } | null;
       };
       const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
-      return { ...r, client_name: c?.name ?? null, client_address: c?.address_formatted ?? null };
+      const ia = Array.isArray(r.installation_addresses) ? r.installation_addresses[0] : r.installation_addresses;
+      const lat = r.client_lat ?? ia?.lat ?? null;
+      const lng = r.client_lng ?? ia?.lng ?? null;
+      return {
+        ...r,
+        client_lat: lat,
+        client_lng: lng,
+        client_name: c?.name ?? null,
+        client_address: c?.address_formatted ?? null,
+      };
     });
 
   const base = new Date(2000, 0, 1);
@@ -1174,7 +1208,9 @@ export async function getSlotsForWeekWithScores(
     spQuery,
     supabase
       .from("sales_appointments")
-      .select("id, salesperson_id, scheduled_date, start_time, client_lat, client_lng, clients ( name, address_formatted )")
+      .select(`id, salesperson_id, scheduled_date, start_time, client_lat, client_lng,
+               clients ( name, address_formatted ),
+               installation_addresses!installation_address_id ( lat, lng )`)
       .neq("status", "cancelled")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekEnd)
@@ -1189,9 +1225,17 @@ export async function getSlotsForWeekWithScores(
         id: string; salesperson_id: string; scheduled_date: string; start_time: string;
         client_lat: number | null; client_lng: number | null;
         clients: { name: string | null; address_formatted: string | null } | null;
+        installation_addresses: { lat: number | null; lng: number | null } | null;
       };
       const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
-      return { ...r, client_name: c?.name ?? null, client_address: c?.address_formatted ?? null };
+      const ia = Array.isArray(r.installation_addresses) ? r.installation_addresses[0] : r.installation_addresses;
+      return {
+        ...r,
+        client_lat: r.client_lat ?? ia?.lat ?? null,
+        client_lng: r.client_lng ?? ia?.lng ?? null,
+        client_name: c?.name ?? null,
+        client_address: c?.address_formatted ?? null,
+      };
     });
 
   if (!salespeople?.length) return { ok: true, data: [] };
@@ -1347,7 +1391,7 @@ export async function getProspectsForSlot(
   // 2. RDV précédent ce jour-là (avant le créneau)
   const { data: dayAppts } = await supabase
     .from("sales_appointments")
-    .select("start_time, client_lat, client_lng, clients ( name )")
+    .select("start_time, client_lat, client_lng, clients ( name ), installation_addresses!installation_address_id ( lat, lng )")
     .eq("salesperson_id", salespersonId)
     .eq("scheduled_date", date)
     .neq("status", "cancelled")
@@ -1361,52 +1405,66 @@ export async function getProspectsForSlot(
         ? (prevRaw as unknown as { clients: { name: string }[] }).clients[0]
         : (prevRaw as unknown as { clients: { name: string } | null }).clients)?.name ?? "—")
     : null;
-  const prevAppt = prevRaw as { client_lat: number | null; client_lng: number | null } | null;
-  const originLat: number | null = prevAppt?.client_lat ?? (sp.home_lat as number | null);
-  const originLng: number | null = prevAppt?.client_lng ?? (sp.home_lng as number | null);
+  const prevAppt = prevRaw as {
+    client_lat: number | null;
+    client_lng: number | null;
+    installation_addresses: { lat: number | null; lng: number | null } | { lat: number | null; lng: number | null }[] | null;
+  } | null;
+  const prevIa = prevAppt
+    ? (Array.isArray(prevAppt.installation_addresses) ? prevAppt.installation_addresses[0] : prevAppt.installation_addresses)
+    : null;
+  const originLat: number | null = prevAppt?.client_lat ?? prevIa?.lat ?? (sp.home_lat as number | null);
+  const originLng: number | null = prevAppt?.client_lng ?? prevIa?.lng ?? (sp.home_lng as number | null);
   const prevLabel = prevApptName
     ? `après ${prevApptName}`
     : `départ domicile (${(sp as { name: string }).name})`;
 
-  // 3. Prospects du pipeline avec GPS
+  // 3. Prospects du pipeline avec GPS d'installation uniquement
   const { data: jobs } = await supabase
     .from("jobs")
     .select(`
       id, status,
-      clients ( name, phone, city, address_formatted, lat, lng )
+      clients ( name, phone, billing_city ),
+      installation_addresses!installation_address_id ( lat, lng, address_formatted, city )
     `)
     .in("status", ["soumission_en_attente", "soumission_repartie", "en_attente"])
     .order("created_at");
 
   if (!jobs?.length) return { ok: true, prospects: [], prevLabel, originLat, originLng };
 
-  // Filtrer ceux avec GPS
+  // Filtrer ceux avec GPS d'installation
   type RawJob = {
     id: string;
     status: string;
-    clients: { name: string; phone: string | null; city: string | null; address_formatted: string | null; lat: number | null; lng: number | null } | null;
+    clients: { name: string; phone: string | null; billing_city: string | null } | null;
+    installation_addresses: { lat: number | null; lng: number | null; address_formatted: string | null; city: string | null } | null;
   };
 
-  const gpsJobs = (jobs as unknown as RawJob[]).filter(
-    (j) => j.clients?.lat && j.clients?.lng
-  );
+  const gpsJobs = (jobs as unknown as RawJob[]).filter((j) => {
+    const ia = Array.isArray(j.installation_addresses) ? j.installation_addresses[0] : j.installation_addresses;
+    return ia?.lat != null && ia?.lng != null;
+  });
 
   if (!gpsJobs.length) return { ok: true, prospects: [], prevLabel, originLat, originLng };
 
   // Retourner immédiatement les prospects SANS distances (calcul séparé)
-  const prospects: ProspectForSlot[] = gpsJobs.map((j) => ({
-    job_id: j.id,
-    job_status: j.status,
-    client_name: j.clients!.name,
-    client_phone: j.clients!.phone,
-    client_city: j.clients!.city,
-    client_address: j.clients!.address_formatted,
-    client_lat: j.clients!.lat!,
-    client_lng: j.clients!.lng!,
-    distance_meters: null,
-    travel_seconds: null,
-    prev_label: prevLabel,
-  }));
+  const prospects: ProspectForSlot[] = gpsJobs.map((j) => {
+    const c = Array.isArray(j.clients) ? j.clients[0] : j.clients;
+    const ia = Array.isArray(j.installation_addresses) ? j.installation_addresses[0] : j.installation_addresses;
+    return {
+      job_id: j.id,
+      job_status: j.status,
+      client_name: c!.name,
+      client_phone: c!.phone,
+      client_city: ia?.city ?? c?.billing_city ?? null,
+      client_address: ia?.address_formatted ?? null,
+      client_lat: ia!.lat!,
+      client_lng: ia!.lng!,
+      distance_meters: null,
+      travel_seconds: null,
+      prev_label: prevLabel,
+    };
+  });
 
   return { ok: true, prospects, prevLabel, originLat, originLng };
 }

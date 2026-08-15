@@ -40,7 +40,7 @@ import {
   type SalespersonWeekData,
 } from "@/actions/sales";
 import { createProspect } from "@/actions/prospects";
-import { updateClient, updateJob } from "@/actions/clients";
+import { updateClient, updateJob, addInstallationAddress, updateInstallationAddress } from "@/actions/clients";
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
 import { updateJobStatus, updateJobFlag, acceptJobAsPlanifier } from "@/actions/jobs";
@@ -51,6 +51,13 @@ import type { JobStatus, FollowUpFlag, Salesperson } from "@/types/domain";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+export type PipelineInstallationAddress = {
+  lat: number | null;
+  lng: number | null;
+  address_formatted: string | null;
+  city: string | null;
+};
+
 export type PipelineJob = {
   id: string;
   status: JobStatus;
@@ -60,19 +67,23 @@ export type PipelineJob = {
   appointment_date: string | null;
   has_quote: boolean;
   salesperson_id: string | null;
+  /** Ownership volontaire → filtrer les suggestions sur ce vendeur. */
+  salesperson_locked: boolean;
   installation_info: string | null;
   internal_notes: string | null;
   follow_up_date: string | null;
   created_at: string;
+  installation_address_id: string | null;
+  installation_address: PipelineInstallationAddress | null;
   clients: {
     id: string;
     name: string;
     phone: string | null;
     email: string | null;
     city: string | null;
-    address_formatted: string | null;
-    lat: number | null;
-    lng: number | null;
+    billing_address: string | null;
+    billing_city: string | null;
+    billing_postal: string | null;
   } | null;
   salespeople: { name: string } | null;
 };
@@ -102,6 +113,155 @@ function AbandonConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCanc
   );
 }
 
+// ── Bloc double adresse réutilisable ──────────────────────────────────────────
+// Règle : GPS = installation uniquement. Facturation = texte seulement.
+// UX : installation d'abord → checkbox « même adresse » → facturation.
+
+export type DualAddressState = {
+  billing_address: string;
+  billing_city: string;
+  billing_postal: string;
+  same_address: boolean;
+  install_address: string;
+  install_city: string;
+  install_postal: string;
+  install_lat: number | null;
+  install_lng: number | null;
+};
+
+export function emptyDualAddress(): DualAddressState {
+  return {
+    billing_address: "", billing_city: "", billing_postal: "",
+    same_address: false,
+    install_address: "", install_city: "", install_postal: "",
+    install_lat: null, install_lng: null,
+  };
+}
+
+/** Filtre vendeur pour l'optimisation : uniquement si ownership verrouillé. */
+function optimizationSalespersonFilter(
+  locked: boolean,
+  salespersonId: string | null
+): string | null {
+  return locked && salespersonId ? salespersonId : null;
+}
+
+export function DualAddressBlock({
+  state,
+  onChange,
+  disabled,
+  inp,
+  lbl,
+}: {
+  state: DualAddressState;
+  onChange: (patch: Partial<DualAddressState>) => void;
+  disabled?: boolean;
+  inp: string;
+  lbl: string;
+}) {
+  /** Installation : seule source GPS. Si « même adresse », synchronise le texte facturation. */
+  const onInstallResolved = useCallback((p: ResolvedPlace) => {
+    const addr = p.address_formatted || p.address_raw;
+    const patch: Partial<DualAddressState> = {
+      install_address: addr,
+      install_city: p.city,
+      install_postal: p.postal_code,
+      install_lat: p.lat,
+      install_lng: p.lng,
+    };
+    if (state.same_address) {
+      Object.assign(patch, {
+        billing_address: addr,
+        billing_city: p.city,
+        billing_postal: p.postal_code,
+      });
+    }
+    onChange(patch);
+  }, [state.same_address, onChange]);
+
+  /** Facturation : texte seulement, aucun GPS. */
+  const onBillingResolved = useCallback((p: ResolvedPlace) => {
+    onChange({
+      billing_address: p.address_formatted || p.address_raw,
+      billing_city: p.city,
+      billing_postal: p.postal_code,
+    });
+  }, [onChange]);
+
+  const handleSameAddress = (checked: boolean) => {
+    if (checked) {
+      onChange({
+        same_address: true,
+        billing_address: state.install_address,
+        billing_city: state.install_city,
+        billing_postal: state.install_postal,
+      });
+    } else {
+      onChange({ same_address: false });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* ── Installation (GPS) ── */}
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Installation</p>
+      <div>
+        <label className={lbl}>
+          Adresse d&apos;installation
+          {state.install_lat
+            ? <span className="ml-1 text-[10px] text-emerald-600 font-normal">✓ GPS</span>
+            : <span className="ml-1 text-[10px] text-amber-500 font-normal">sélectionnez dans Google pour le GPS</span>
+          }
+        </label>
+        <AddressAutocomplete
+          value={state.install_address}
+          onChange={(v) => onChange({ install_address: v, install_lat: null, install_lng: null })}
+          onResolved={onInstallResolved}
+          disabled={disabled}
+        />
+      </div>
+
+      {/* ── Checkbox ── */}
+      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={state.same_address}
+          onChange={(e) => handleSameAddress(e.target.checked)}
+          disabled={disabled}
+          className="rounded"
+        />
+        Même adresse que l&apos;installation
+      </label>
+
+      {/* ── Facturation (texte seulement) ── */}
+      {!state.same_address && (
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Facturation</p>
+          <div>
+            <label className={lbl}>Adresse de facturation</label>
+            <AddressAutocomplete
+              value={state.billing_address}
+              onChange={(v) => onChange({ billing_address: v })}
+              onResolved={onBillingResolved}
+              disabled={disabled}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Ville</label>
+              <input className={inp} value={state.billing_city} onChange={(e) => onChange({ billing_city: e.target.value })} disabled={disabled} />
+            </div>
+            <div>
+              <label className={lbl}>Code postal</label>
+              <input className={inp} value={state.billing_postal} onChange={(e) => onChange({ billing_postal: e.target.value })} disabled={disabled} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Création rapide d'un prospect ─────────────────────────────────────────────
 
 type CreateStep = "form" | "loading-slots" | "slots";
@@ -123,31 +283,48 @@ function QuickProspectModal({
   const [createdJobId, setCreatedJobId] = useState<string | null>(null);
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
   const [form, setForm] = useState({
-    name: "", phone: "", email: "", address: "",
-    lat: null as number | null, lng: null as number | null,
+    name: "", phone: "", email: "",
+    ...emptyDualAddress(),
     installation_info: "",
     salesperson_id: "",
+    salesperson_locked: false,
   });
 
-  const isDirty = !!(form.name || form.phone || form.email || form.address || form.installation_info);
+  const setAddr = useCallback((patch: Partial<DualAddressState>) => setForm((f) => ({ ...f, ...patch })), []);
+
+  const addrState: DualAddressState = {
+    billing_address: form.billing_address, billing_city: form.billing_city, billing_postal: form.billing_postal,
+    same_address: form.same_address,
+    install_address: form.install_address, install_city: form.install_city, install_postal: form.install_postal,
+    install_lat: form.install_lat, install_lng: form.install_lng,
+  };
+
+  const isDirty = !!(form.name || form.phone || form.email || form.billing_address || form.install_address || form.installation_info);
 
   const tryClose = () => {
     if (step === "slots" || !isDirty) { onClose(); return; }
     setShowAbandon(true);
   };
 
-  const onAddressResolved = useCallback((p: ResolvedPlace) => {
-    setForm((f) => ({ ...f, address: p.address_formatted || p.address_raw, lat: p.lat, lng: p.lng }));
-  }, []);
-
   /** Crée le prospect, retourne le jobId ou null en cas d'erreur */
   const doCreate = async (): Promise<string | null> => {
     if (!form.name.trim()) { setError("Le nom est requis."); return null; }
     setError(null);
     const res = await createProspect({
-      ...form,
+      name: form.name,
+      phone: form.phone || null,
+      email: form.email || null,
+      billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
+      billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
+      billing_postal: (form.same_address ? form.install_postal : form.billing_postal) || null,
+      install_address: form.install_address || null,
+      install_city: form.install_city || null,
+      install_postal: form.install_postal || null,
+      install_lat: form.install_lat,
+      install_lng: form.install_lng,
       installation_info: form.installation_info || null,
       salesperson_id: form.salesperson_id || null,
+      salesperson_locked: form.salesperson_locked && !!form.salesperson_id,
     });
     if (!res.ok) { setError(res.message); return null; }
     return res.jobId;
@@ -163,8 +340,8 @@ function QuickProspectModal({
   };
 
   const handleCreateAndOptimize = () => {
-    if (!form.lat || !form.lng) {
-      setError("Ajoutez une adresse géolocalisée pour lancer l'optimisation.");
+    if (!form.install_lat || !form.install_lng) {
+      setError("Sélectionnez l'adresse d'installation dans Google pour activer le GPS.");
       return;
     }
     start(async () => {
@@ -172,7 +349,8 @@ function QuickProspectModal({
       if (!jobId) return;
       setCreatedJobId(jobId);
       setStep("loading-slots");
-      const res = await findBestSlotsForProspect(form.lat!, form.lng!, 10, form.salesperson_id || null);
+      const filterSp = form.salesperson_locked ? (form.salesperson_id || null) : null;
+      const res = await findBestSlotsForProspect(form.install_lat!, form.install_lng!, 10, filterSp);
       if (!res.ok) { setError(res.message); setStep("form"); return; }
       setSlots(res.slots);
       setStep("slots");
@@ -244,27 +422,38 @@ function QuickProspectModal({
                 <input type="email" className={inp} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="marie@example.com" />
               </div>
             </div>
-            <div>
-              <label className={lbl}>
-                Adresse
-                {form.lat
-                  ? <span className="ml-1 text-[10px] text-emerald-600 font-normal">✓ géolocalisée</span>
-                  : <span className="ml-1 text-[10px] text-amber-500 font-normal">requise pour l'optimisation</span>
-                }
-              </label>
-              <AddressAutocomplete
-                value={form.address}
-                onChange={(v) => setForm((f) => ({ ...f, address: v, lat: null, lng: null }))}
-                onResolved={onAddressResolved}
-              />
-            </div>
+            <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} />
             {salespeople.length > 0 && (
-              <div>
-                <label className={lbl}>Vendeur assigné</label>
-                <select className={inp} value={form.salesperson_id} onChange={(e) => setForm((f) => ({ ...f, salesperson_id: e.target.value }))}>
-                  <option value="">— Aucun —</option>
-                  {salespeople.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
-                </select>
+              <div className="space-y-2">
+                <div>
+                  <label className={lbl}>Vendeur assigné</label>
+                  <select
+                    className={inp}
+                    value={form.salesperson_id}
+                    onChange={(e) => setForm((f) => ({
+                      ...f,
+                      salesperson_id: e.target.value,
+                      salesperson_locked: e.target.value ? f.salesperson_locked : false,
+                    }))}
+                  >
+                    <option value="">— Aucun —</option>
+                    {salespeople.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+                  </select>
+                </div>
+                {form.salesperson_id && (
+                  <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={form.salesperson_locked}
+                      onChange={(e) => setForm((f) => ({ ...f, salesperson_locked: e.target.checked }))}
+                      className="rounded"
+                    />
+                    Verrouiller ce vendeur
+                    <span className="text-[11px] text-muted-foreground font-normal">
+                      (suggestions uniquement dans son horaire)
+                    </span>
+                  </label>
+                )}
               </div>
             )}
             <div>
@@ -314,9 +503,9 @@ function QuickProspectModal({
             <SlotChooser
               jobId={createdJobId}
               slots={slots}
-              prospectLat={form.lat!}
-              prospectLng={form.lng!}
-              salespersonId={form.salesperson_id || null}
+              prospectLat={form.install_lat!}
+              prospectLng={form.install_lng!}
+              salespersonId={form.salesperson_locked ? (form.salesperson_id || null) : null}
               onBooked={handleBooked}
             />
             {error && <p className="text-destructive text-sm mt-2">{error}</p>}
@@ -421,26 +610,45 @@ function ProspectEditModal({
     client_name:       client?.name ?? "",
     client_phone:      client?.phone ?? "",
     client_email:      client?.email ?? "",
-    client_address:    client?.address_formatted ?? "",
-    client_lat:        client?.lat ?? null as number | null,
-    client_lng:        client?.lng ?? null as number | null,
+    billing_address:   client?.billing_address ?? "",
+    billing_city:      client?.billing_city ?? "",
+    billing_postal:    client?.billing_postal ?? "",
+    same_address:      false,
+    install_address:   job.installation_address?.address_formatted ?? "",
+    install_city:      job.installation_address?.city ?? "",
+    install_postal:    "",
+    install_lat:       job.installation_address?.lat ?? null as number | null,
+    install_lng:       job.installation_address?.lng ?? null as number | null,
     status:            job.status,
     salesperson_id:    job.salesperson_id ?? "",
+    salesperson_locked: job.salesperson_locked,
     follow_up_date:    job.follow_up_date ?? "",
     installation_info: job.installation_info ?? "",
     internal_notes:    job.internal_notes ?? "",
   });
 
-  // Détecte si des champs ont été modifiés par rapport aux valeurs originales
+  const setAddr = useCallback((patch: Partial<DualAddressState>) => setForm((f) => ({ ...f, ...patch })), []);
+
+  const addrState: DualAddressState = {
+    billing_address: form.billing_address, billing_city: form.billing_city, billing_postal: form.billing_postal,
+    same_address: form.same_address,
+    install_address: form.install_address, install_city: form.install_city, install_postal: form.install_postal,
+    install_lat: form.install_lat, install_lng: form.install_lng,
+  };
+
   const isDirty =
     form.client_name       !== (client?.name ?? "") ||
     form.client_phone      !== (client?.phone ?? "") ||
     form.client_email      !== (client?.email ?? "") ||
-    form.client_address    !== (client?.address_formatted ?? "") ||
-    form.client_lat        !== (client?.lat ?? null) ||
-    form.client_lng        !== (client?.lng ?? null) ||
+    form.billing_address   !== (client?.billing_address ?? "") ||
+    form.billing_city      !== (client?.billing_city ?? "") ||
+    form.billing_postal    !== (client?.billing_postal ?? "") ||
+    form.install_address   !== (job.installation_address?.address_formatted ?? "") ||
+    form.install_lat       !== (job.installation_address?.lat ?? null) ||
+    form.install_lng       !== (job.installation_address?.lng ?? null) ||
     form.status            !== job.status ||
     form.salesperson_id    !== (job.salesperson_id ?? "") ||
+    form.salesperson_locked !== job.salesperson_locked ||
     form.follow_up_date    !== (job.follow_up_date ?? "") ||
     form.installation_info !== (job.installation_info ?? "") ||
     form.internal_notes    !== (job.internal_notes ?? "");
@@ -450,16 +658,7 @@ function ProspectEditModal({
     setShowAbandon(true);
   };
 
-  const onAddressResolved = useCallback((p: ResolvedPlace) => {
-    setForm((f) => ({
-      ...f,
-      client_address: p.address_formatted || p.address_raw,
-      client_lat: p.lat,
-      client_lng: p.lng,
-    }));
-  }, []);
-
-  /** Persiste client + job, puis exécute afterSave() */
+  /** Persiste client (facturation) + adresse d'installation + job */
   const persist = async (): Promise<boolean> => {
     if (!form.client_name.trim()) { setError("Le nom est requis."); return false; }
     setError(null);
@@ -469,11 +668,29 @@ function ProspectEditModal({
         name: form.client_name,
         email: form.client_email,
         phone: form.client_phone,
-        address_formatted: form.client_address,
-        lat: form.client_lat,
-        lng: form.client_lng,
+        billing_address: form.same_address ? form.install_address : form.billing_address,
+        billing_city: form.same_address ? form.install_city : form.billing_city,
+        billing_postal: form.same_address ? form.install_postal : form.billing_postal,
       });
       if (!r.ok) { setError(r.message); return false; }
+    }
+
+    if (form.install_address && client?.id) {
+      if (job.installation_address_id) {
+        const r = await updateInstallationAddress(job.installation_address_id, {
+          address_formatted: form.install_address,
+          lat: form.install_lat,
+          lng: form.install_lng,
+        });
+        if (!r.ok) { setError(r.message); return false; }
+      } else {
+        const r = await addInstallationAddress(client.id, {
+          address_formatted: form.install_address,
+          lat: form.install_lat,
+          lng: form.install_lng,
+        });
+        if (!r.ok) { setError(r.message); return false; }
+      }
     }
 
     const r = await updateJob(job.id, {
@@ -482,6 +699,7 @@ function ProspectEditModal({
       preferred_date: "",
       follow_up_date: form.follow_up_date,
       salesperson_id: form.salesperson_id,
+      salesperson_locked: form.salesperson_locked && !!form.salesperson_id,
       installation_info: form.installation_info,
       internal_notes: form.internal_notes,
     });
@@ -499,14 +717,20 @@ function ProspectEditModal({
   };
 
   const handleSaveAndOptimize = () => {
-    if (!form.client_lat || !form.client_lng) {
-      setError("Ajoutez une adresse géolocalisée pour lancer l'optimisation.");
+    if (!form.install_lat || !form.install_lng) {
+      setError("Sélectionnez l'adresse d'installation dans Google pour activer le GPS.");
       return;
     }
     start(async () => {
       if (!await persist()) return;
       setStep("loading-slots");
-      const res = await findBestSlotsForProspect(form.client_lat!, form.client_lng!, 10, form.salesperson_id || null);
+      const res = await findBestSlotsForProspect(
+        form.install_lat!,
+        form.install_lng!,
+        10,
+        optimizationSalespersonFilter(form.salesperson_locked, form.salesperson_id || null),
+        job.appointment_id
+      );
       if (!res.ok) { setError(res.message); setStep("edit"); return; }
       setSlots(res.slots);
       setStep("slots");
@@ -590,20 +814,7 @@ function ProspectEditModal({
                   <input type="email" className={inp} value={form.client_email} onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))} placeholder="marie@exemple.com" />
                 </div>
               </div>
-              <div>
-                <label className={lbl}>
-                  Adresse
-                  {form.client_lat
-                    ? <span className="ml-1 text-[10px] text-emerald-600 normal-case font-normal">✓ GPS</span>
-                    : <span className="ml-1 text-[10px] text-amber-500 normal-case font-normal">requis pour l'optimisation</span>
-                  }
-                </label>
-                <AddressAutocomplete
-                  value={form.client_address}
-                  onChange={(v) => setForm((f) => ({ ...f, client_address: v, client_lat: null, client_lng: null }))}
-                  onResolved={onAddressResolved}
-                />
-              </div>
+              <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} />
             </div>
 
             <hr />
@@ -619,12 +830,36 @@ function ProspectEditModal({
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className={lbl}>Vendeur</label>
-                  <select className={inp} value={form.salesperson_id} onChange={(e) => setForm((f) => ({ ...f, salesperson_id: e.target.value }))}>
-                    <option value="">— Aucun —</option>
-                    {salespeople.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
-                  </select>
+                <div className="space-y-2">
+                  <div>
+                    <label className={lbl}>Vendeur</label>
+                    <select
+                      className={inp}
+                      value={form.salesperson_id}
+                      onChange={(e) => setForm((f) => ({
+                        ...f,
+                        salesperson_id: e.target.value,
+                        salesperson_locked: e.target.value ? f.salesperson_locked : false,
+                      }))}
+                    >
+                      <option value="">— Aucun —</option>
+                      {salespeople.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+                    </select>
+                  </div>
+                  {form.salesperson_id && (
+                    <label className="flex items-center gap-2 text-sm cursor-pointer select-none col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={form.salesperson_locked}
+                        onChange={(e) => setForm((f) => ({ ...f, salesperson_locked: e.target.checked }))}
+                        className="rounded"
+                      />
+                      Verrouiller ce vendeur
+                      <span className="text-[11px] text-muted-foreground font-normal">
+                        (suggestions uniquement dans son horaire)
+                      </span>
+                    </label>
+                  )}
                 </div>
               </div>
               <div>
@@ -688,9 +923,10 @@ function ProspectEditModal({
             <SlotChooser
               jobId={job.id}
               slots={slots}
-              prospectLat={form.client_lat!}
-              prospectLng={form.client_lng!}
-              salespersonId={form.salesperson_id || null}
+              prospectLat={form.install_lat!}
+              prospectLng={form.install_lng!}
+              salespersonId={optimizationSalespersonFilter(form.salesperson_locked, form.salesperson_id || null)}
+              excludeAppointmentId={job.appointment_id}
               onBooked={handleBooked}
             />
             {error && <p className="text-destructive text-sm mt-2">{error}</p>}
@@ -1113,8 +1349,8 @@ function ProspectOptimizer({
   const [error, setError] = useState<string | null>(null);
   const [listLoaded, setListLoaded] = useState(false);
 
-  const lat = job.clients?.lat;
-  const lng = job.clients?.lng;
+  const lat = job.installation_address?.lat;
+  const lng = job.installation_address?.lng;
   const noGps = !lat || !lng;
 
   const loadList = () => {
@@ -1126,7 +1362,7 @@ function ProspectOptimizer({
         lat,
         lng,
         10,
-        job.salesperson_id,
+        job.salesperson_locked ? job.salesperson_id : null,
         job.appointment_id
       );
       if (!res.ok) { setError(res.message); return; }
@@ -1162,7 +1398,7 @@ function ProspectOptimizer({
       <div className="px-4 pb-4 space-y-3">
         {noGps ? (
           <p className="text-xs text-amber-600">
-            Adresse non géolocalisée — modifiez la fiche client pour ajouter une adresse Google.
+            Adresse d&apos;installation non géolocalisée — modifiez le dossier pour ajouter une adresse GPS.
           </p>
         ) : (
           <>
@@ -1198,7 +1434,7 @@ function ProspectOptimizer({
                 jobId={job.id}
                 prospectLat={lat}
                 prospectLng={lng}
-                salespersonId={job.salesperson_id}
+                salespersonId={job.salesperson_locked ? job.salesperson_id : null}
                 excludeAppointmentId={job.appointment_id}
                 onBooked={onBooked}
               />
@@ -1364,7 +1600,7 @@ function ProspectCard({
                 ? <Badge variant="outline" className="text-[10px]">{job.salespeople.name}</Badge>
                 : <span className="text-[10px] text-muted-foreground italic">Non assigné</span>
               }
-              {client?.lat && <span className="text-[10px] text-emerald-600 flex items-center gap-0.5"><MapPin className="size-2.5" />GPS</span>}
+              {job.installation_address?.lat && <span className="text-[10px] text-emerald-600 flex items-center gap-0.5"><MapPin className="size-2.5" />GPS</span>}
               {/* Badge drapeau follow_up_flag */}
               {job.follow_up_flag && (
                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${flagColor(job.follow_up_flag)}`}>
@@ -1379,7 +1615,12 @@ function ProspectCard({
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               {client?.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{client.phone}</span>}
-              {client?.city && <span className="flex items-center gap-1"><MapPin className="size-3" />{client.city}</span>}
+              {(job.installation_address?.city || client?.billing_city || client?.city) && (
+                <span className="flex items-center gap-1">
+                  <MapPin className="size-3" />
+                  {job.installation_address?.city || client?.billing_city || client?.city}
+                </span>
+              )}
               <span>Créé le {createdAt}</span>
               {followUp && <span className="text-amber-600 font-medium">Relancer : {followUp}</span>}
             </div>
@@ -1547,11 +1788,14 @@ export function PipelineClient({
   jobs,
   salespeople,
   currentSalespersonId = null,
+  openJobId = null,
 }: {
   jobs: PipelineJob[];
   salespeople: Salesperson[];
   /** null = admin/secrétaire (voit tout). string = vendeur connecté (Phase 2). */
   currentSalespersonId?: string | null;
+  /** Deep-link : ouvre la fiche prospect pour ce jobId (`?job=`) */
+  openJobId?: string | null;
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -1561,7 +1805,29 @@ export function PipelineClient({
   const [filterSalesperson, setFilterSalesperson] = useState<string>(
     currentSalespersonId ?? "all"
   );
+  const [deepLinkJob, setDeepLinkJob] = useState<PipelineJob | null>(null);
   const router = useRouter();
+
+  // Ouvrir la fiche prospect depuis ?job=
+  useEffect(() => {
+    if (!openJobId) {
+      setDeepLinkJob(null);
+      return;
+    }
+    const found = jobs.find((j) => j.id === openJobId) ?? null;
+    setDeepLinkJob(found);
+    if (!found) {
+      setToast("Ce prospect n'est plus dans le pipeline (statut changé ou inaccessible).");
+      const t = setTimeout(() => setToast(null), 5000);
+      router.replace("/ventes/pipeline");
+      return () => clearTimeout(t);
+    }
+  }, [openJobId, jobs, router]);
+
+  function clearDeepLink() {
+    setDeepLinkJob(null);
+    router.replace("/ventes/pipeline");
+  }
 
   const handleBooked = (msg: string) => {
     setToast(msg);
@@ -1587,11 +1853,16 @@ export function PipelineClient({
       if (search.trim()) {
         const q = search.toLowerCase();
         const c = j.clients;
+        const ia = j.installation_address;
         return (
           c?.name?.toLowerCase().includes(q) ||
           c?.phone?.toLowerCase().includes(q) ||
           c?.email?.toLowerCase().includes(q) ||
-          c?.address_formatted?.toLowerCase().includes(q) ||
+          c?.billing_address?.toLowerCase().includes(q) ||
+          c?.billing_city?.toLowerCase().includes(q) ||
+          c?.billing_postal?.toLowerCase().includes(q) ||
+          ia?.address_formatted?.toLowerCase().includes(q) ||
+          ia?.city?.toLowerCase().includes(q) ||
           false
         );
       }
@@ -1852,6 +2123,18 @@ export function PipelineClient({
           salespeople={salespeople}
           onClose={() => { setShowCreate(false); router.refresh(); }}
           onBooked={(msg) => { setShowCreate(false); handleBooked(msg); }}
+        />
+      )}
+
+      {deepLinkJob && (
+        <ProspectEditModal
+          job={deepLinkJob}
+          salespeople={salespeople}
+          onClose={clearDeepLink}
+          onBooked={(msg) => {
+            clearDeepLink();
+            handleBooked(msg);
+          }}
         />
       )}
 

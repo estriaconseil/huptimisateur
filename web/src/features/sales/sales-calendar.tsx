@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addWeeks, subWeeks, format, getISODay, parse, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Plus, Clock, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Plus, Clock, RefreshCw } from "lucide-react";
 
 import { cityFromAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
@@ -257,12 +257,21 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                                   onClick={() => setActiveAppt(appt)}
                                   className={cn(
                                     "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
-                                    STATUS_COLORS[appt.status] ?? "bg-muted border-border"
+                                    appt.missing_serial
+                                      ? "bg-orange-50 border-orange-400 text-orange-900"
+                                      : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
                                   )}
                                 >
                                   <div className="font-semibold truncate flex items-center gap-1">
                                     <span className="truncate">{appt.client_name}</span>
-                                    {appt.quote_id && <span className="shrink-0 opacity-60" title="Soumission">📄</span>}
+                                    {appt.missing_serial && (
+                                      <span title="# série manquant">
+                                        <AlertTriangle className="shrink-0 size-3 text-orange-500" />
+                                      </span>
+                                    )}
+                                    {appt.quote_id && !appt.missing_serial && (
+                                      <span className="shrink-0 opacity-60" title="Soumission">📄</span>
+                                    )}
                                   </div>
                                   <div className="opacity-70 truncate">
                                     {cityFromAddress(appt.client_address) ??
@@ -299,6 +308,10 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
             {v}
           </div>
         ))}
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block size-2.5 rounded-sm bg-orange-50 border border-orange-400" />
+          # Série manquant
+        </div>
         <div className="flex items-center gap-1.5">
           <span className="inline-block size-2.5 rounded-sm bg-orange-100 border border-orange-300" />
           Vacances / Absent

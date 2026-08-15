@@ -18,6 +18,7 @@ import {
   FileText,
   UserPlus,
   ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -50,6 +51,7 @@ const teamItems: NavItem[] = [
 
 const systemItems: NavItem[] = [
   { href: "/parametres",   label: "Paramètres",  icon: Settings2 },
+  { href: "/interruption", label: "Interruption", icon: ShieldAlert },
   { href: "/impression",   label: "Impression",  icon: Printer },
 ];
 

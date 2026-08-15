@@ -1,6 +1,6 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
-import { PipelineClient, type PipelineJob } from "@/features/sales/pipeline-client";
+import { PipelineClient, type PipelineJob, type PipelineInstallationAddress } from "@/features/sales/pipeline-client";
 import type { JobStatus, Salesperson } from "@/types/domain";
 
 const PIPELINE_STATUSES: JobStatus[] = [
@@ -9,7 +9,14 @@ const PIPELINE_STATUSES: JobStatus[] = [
   "en_attente",
 ];
 
-export default async function VentesPipelinePage() {
+export default async function VentesPipelinePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ job?: string }>;
+}) {
+  const sp = await searchParams;
+  const openJobId = sp.job ?? null;
+
   const supabase = await createServerSupabaseClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -18,9 +25,10 @@ export default async function VentesPipelinePage() {
     supabase
       .from("jobs")
       .select(
-        `id, status, follow_up_flag, appointment_id, salesperson_id, installation_info, internal_notes, follow_up_date, created_at,
-         clients ( id, name, phone, email, city, address_formatted, lat, lng ),
-         salespeople ( name )`
+        `id, status, follow_up_flag, appointment_id, salesperson_id, salesperson_locked, installation_info, internal_notes, follow_up_date, created_at, installation_address_id,
+         clients ( id, name, phone, email, city, billing_address, billing_city, billing_postal ),
+         salespeople ( name ),
+         installation_addresses!installation_address_id ( lat, lng, address_formatted, city )`
       )
       .in("status", PIPELINE_STATUSES)
       .order("follow_up_date", { ascending: true, nullsFirst: false })
@@ -47,12 +55,15 @@ export default async function VentesPipelinePage() {
     follow_up_flag: string | null;
     appointment_id: string | null;
     salesperson_id: string | null;
+    salesperson_locked: boolean | null;
     installation_info: string | null;
     internal_notes: string | null;
     follow_up_date: string | null;
     created_at: string;
+    installation_address_id: string | null;
     clients: unknown;
     salespeople: unknown;
+    installation_addresses: unknown;
   };
 
   const jobIds = (rawJobs ?? []).map((r) => (r as RawRow).id);
@@ -139,10 +150,13 @@ export default async function VentesPipelinePage() {
         : null,
       has_quote: quoteJobIds.has(row.id),
       salesperson_id: row.salesperson_id,
+      salesperson_locked: row.salesperson_locked ?? false,
       installation_info: row.installation_info,
       internal_notes: row.internal_notes,
       follow_up_date: row.follow_up_date,
       created_at: row.created_at,
+      installation_address_id: row.installation_address_id ?? null,
+      installation_address: unwrapRelation<PipelineInstallationAddress>(row.installation_addresses) ?? null,
       clients: unwrapRelation<NonNullable<PipelineJob["clients"]>>(row.clients),
       salespeople: unwrapRelation<{ name: string }>(row.salespeople),
     };
@@ -157,6 +171,7 @@ export default async function VentesPipelinePage() {
         jobs={jobs}
         salespeople={salespeople}
         currentSalespersonId={currentSalespersonId}
+        openJobId={openJobId}
       />
     </div>
   );

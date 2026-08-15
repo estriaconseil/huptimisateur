@@ -67,7 +67,27 @@ export interface Client {
   name: string;
   email: string | null;
   phone: string | null;
+  /** Adresse de facturation (nouvelle) */
+  billing_address: string | null;
+  billing_city: string | null;
+  billing_postal: string | null;
+  /** Adresse d'installation principale — conservée pour compatibilité avec l'existant. */
   address_raw: string | null;
+  address_formatted: string | null;
+  city: string | null;
+  postal_code: string | null;
+  lat: number | null;
+  lng: number | null;
+  installation_info: string | null;
+  created_at: string;
+}
+
+/** Une adresse physique où un travail d'installation est réalisé (1..N par client). */
+export interface InstallationAddress {
+  id: string;
+  client_id: string;
+  /** Étiquette libre (ex: "Maison", "Chalet", "Condo"). */
+  label: string | null;
   address_formatted: string | null;
   city: string | null;
   postal_code: string | null;
@@ -80,7 +100,14 @@ export interface Client {
 export interface Job {
   id: string;
   client_id: string;
+  /** Adresse spécifique où l'installation aura lieu (FK → installation_addresses). */
+  installation_address_id: string | null;
   salesperson_id: string | null;
+  /**
+   * true = vendeur assigné volontairement → optimiser seulement chez lui.
+   * false = placement flexible → suggestions tous vendeurs.
+   */
+  salesperson_locked: boolean;
   appointment_id: string | null;
   installation_info: string | null;
   internal_notes: string | null;
@@ -192,7 +219,9 @@ export interface SalesAppointment {
   id: string;
   salesperson_id: string;
   client_id: string;
-  /** Coordonnées géocodées au moment du RDV (peuvent différer de clients.lat/lng). */
+  /** Adresse d'installation concernée par le RDV. */
+  installation_address_id: string | null;
+  /** Coordonnées géocodées au moment du RDV (peuvent différer de installation_addresses.lat/lng). */
   client_lat: number | null;
   client_lng: number | null;
   scheduled_date: string;
@@ -210,12 +239,16 @@ export interface Quote {
   appointment_id: string | null;
   client_id: string | null;
   job_id: string | null;
+  /** Snapshot client au moment de la soumission (pour historique). */
   client_name: string;
   client_address: string | null;
-  client_work_address: string | null;
+  /** @deprecated Conservé en DB pour historique — plus saisi ni affiché. */
+  client_work_address?: string | null;
   client_phone: string | null;
   client_cell: string | null;
   client_email: string | null;
+  /** Dessin de plan / schéma d'installation (base64 PNG). */
+  sketch_data: string | null;
   has_subsidy: boolean;
   will_call_back: boolean;
   montant_subvention: number | null;
@@ -270,6 +303,12 @@ export interface QuoteUnit {
   tech_count: number | null;
   unit_subtotal: number;
   serial_number: string | null;
+  /** Unité faisant partie du groupe alternatif (exclue du total principal, page PDF séparée). */
+  is_alternative: boolean;
+  /** Montant de subvention applicable à cette unité spécifique. */
+  subsidy_amount: number;
+  /** Permet de répartir sans avoir saisi le # de série pour cette unité. */
+  serial_bypass: boolean;
 }
 
 /** Suggestion de creneau (pas d'affectation auto) */
