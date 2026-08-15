@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/interruption-backup",
-      "schedule": "0 10,11 * * 1-5"
+      "schedule": "0 10 * * 1-5"
     }
   ]
 }
