@@ -354,12 +354,12 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const deposit = quote.deposit ?? 0;
   const computedTotalNet = Math.max(0, total - deposit);
 
-  const isFilled = (u: QuoteUnit) => !!(u.brand || u.model || u.description || (u.unit_subtotal ?? 0) > 0);
+  const isPriced = (u: QuoteUnit) => (u.unit_subtotal ?? 0) > 0;
   const principalUnits = units
-    .filter((u) => !u.is_alternative && isFilled(u))
+    .filter((u) => !u.is_alternative && isPriced(u))
     .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
   const altUnits = units
-    .filter((u) => u.is_alternative && isFilled(u))
+    .filter((u) => u.is_alternative && isPriced(u))
     .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
   // Sous-total Option B = somme des nets (total − subvention)
   const altSub = altUnits.reduce(

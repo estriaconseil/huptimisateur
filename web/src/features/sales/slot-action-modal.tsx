@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addWeeks, format, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, FilePlus, Loader2, MapPin, Plus, Sparkles, X } from "lucide-react";
+import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, FilePlus, Loader2, MapPin, Plus, Search, Sparkles, X } from "lucide-react";
 
 import {
   findBestSlotsForProspect,
@@ -66,6 +66,7 @@ function ProspectsTab({
   const [booking, startBook] = useTransition();
   const [bookingId, setBookingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     // Étape 1 : liste immédiate depuis la DB (< 1 sec)
@@ -134,13 +135,34 @@ function ProspectsTab({
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
         Aucun prospect à placer (sans RDV confirmé) dans le pipeline.
-        <br />Utilisez l&apos;onglet <strong>Nouveau client</strong> pour créer un RDV.
+        <br />Utilisez l&apos;onglet <strong>Nouveau prospect</strong> pour créer un RDV.
       </p>
     );
   }
 
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? prospects.filter((p) => {
+        const hay = [p.client_name, p.client_city, p.client_address, p.client_phone]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      })
+    : prospects;
+
   return (
     <div className="space-y-1.5">
+      <div className="relative mb-2">
+        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Nom ou adresse…"
+          className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+      </div>
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-muted-foreground">
           Trajet : <strong>{prevLabel || "—"}</strong>
@@ -150,7 +172,10 @@ function ProspectsTab({
           : <span className="text-[10px] text-muted-foreground">Trié par temps de trajet</span>
         }
       </div>
-      {prospects.map((p, i) => {
+      {filtered.length === 0 && (
+        <p className="text-sm text-muted-foreground py-6 text-center">Aucun prospect ne correspond.</p>
+      )}
+      {filtered.map((p, i) => {
         const isBooking = booking && bookingId === p.job_id;
         const rankKnown = p.travel_seconds !== null;
         return (
@@ -158,9 +183,9 @@ function ProspectsTab({
             key={p.job_id}
             onClick={() => book(p)}
             disabled={booking}
-            className="w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm hover:bg-accent transition-colors disabled:opacity-60"
+            className="w-full text-left flex items-center gap-3 rounded-lg border px-4 py-3 text-sm hover:bg-accent transition-colors disabled:opacity-60"
           >
-            <span className={`shrink-0 size-5 rounded-full text-[11px] font-bold flex items-center justify-center ${rankKnown ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+            <span className={`shrink-0 size-6 rounded-full text-xs font-bold flex items-center justify-center ${rankKnown ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
               {loadingDist ? "·" : i + 1}
             </span>
             <div className="flex-1 min-w-0">
@@ -170,9 +195,9 @@ function ProspectsTab({
                 {p.client_phone && <span className="ml-1">{p.client_phone}</span>}
               </div>
             </div>
-            <div className="shrink-0 text-right min-w-[52px]">
-              <div className="text-xs font-semibold">
-                <TravelDuration seconds={p.travel_seconds} numberClassName="font-semibold" />
+            <div className="shrink-0 text-right min-w-[4.5rem]">
+              <div className="text-base leading-tight">
+                <TravelDuration seconds={p.travel_seconds} numberClassName="font-bold tabular-nums" />
               </div>
               <div className="text-[10px] text-muted-foreground">de trajet</div>
             </div>
@@ -775,7 +800,7 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
 
   const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "prospects",   label: "Prospects",     icon: <Sparkles className="size-3.5" /> },
-    { id: "new-client",  label: "Nouveau client", icon: <Plus className="size-3.5" /> },
+    { id: "new-client",  label: "Nouveau prospect", icon: <Plus className="size-3.5" /> },
     { id: "block",       label: "Bloquer",        icon: <CalendarOff className="size-3.5" /> },
   ];
 
@@ -784,7 +809,7 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-background rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-background rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
         {/* En-tête */}
         <div className="flex items-center justify-between px-5 pt-5 pb-3">
           <div>

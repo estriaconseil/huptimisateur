@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ronde de test — Huptimisateur</title>
+  <style>
+    :root {
+      --ink: #1a1a1a;
+      --muted: #5c5c5c;
+      --line: #e4e0d8;
+      --paper: #f7f4ee;
+      --card: #fff;
+      --ok: #1b7a3d;
+      --stop: #b42318;
+      --p0: #b42318;
+      --p1: #9a6700;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 16px/1.5 Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 24px 80px; }
+    h1 { font-size: 28px; font-weight: 700; margin: 0 0 8px; }
+    .lede { color: var(--muted); margin: 0 0 24px; }
+    .bar {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 24px; padding: 12px 14px; background: var(--card);
+      border: 1px solid var(--line); border-radius: 10px; position: sticky; top: 0; z-index: 2;
+    }
+    .bar label { font-family: system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+    .bar select, .bar button {
+      font: 14px/1.2 system-ui, sans-serif; padding: 6px 10px; border-radius: 6px;
+      border: 1px solid var(--line); background: #fff;
+    }
+    .bar button { cursor: pointer; }
+    .progress { margin-left: auto; font-family: system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+    .callout {
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      padding: 14px 16px; margin: 0 0 20px;
+    }
+    .callout strong { font-family: system-ui, sans-serif; }
+    .legend { display: flex; gap: 16px; flex-wrap: wrap; font-family: system-ui, sans-serif; font-size: 14px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+    h2 {
+      font-size: 20px; margin: 36px 0 8px; padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+    h2:first-of-type { border-top: none; padding-top: 0; }
+    .hint { color: var(--muted); font-size: 15px; margin: 0 0 14px; }
+    .step {
+      background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+      padding: 14px 16px 12px; margin: 0 0 10px;
+    }
+    .step header {
+      display: flex; gap: 10px; align-items: flex-start; font-family: system-ui, sans-serif;
+    }
+    .step h3 { font-size: 16px; margin: 2px 0 0; font-weight: 650; }
+    .badge {
+      font: 11px/1.2 system-ui, sans-serif; font-weight: 700; letter-spacing: .04em;
+      padding: 3px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle;
+    }
+    .p0 { background: #fdecea; color: var(--p0); }
+    .p1 { background: #fff4d6; color: var(--p1); }
+    .row { display: flex; gap: 10px; align-items: flex-start; margin: 6px 0; }
+    .row input[type=checkbox] { margin-top: 4px; width: 16px; height: 16px; flex-shrink: 0; }
+    .k { font-family: system-ui, sans-serif; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); min-width: 72px; }
+    .meta p { margin: 6px 0 0; }
+    ol.plain { margin: 8px 0 0; padding-left: 20px; }
+    ol.plain li { margin: 4px 0; }
+    .stop { border-color: #f0b8b4; background: #fff7f6; }
+    .wait { border-color: #e8e0c8; background: #fffcf4; }
+    ul.tight { margin: 8px 0 0; padding-left: 18px; }
+    ul.tight li { margin: 4px 0; }
+    textarea {
+      width: 100%; min-height: 72px; margin-top: 8px; padding: 8px;
+      font: 14px/1.4 system-ui, sans-serif; border: 1px solid var(--line); border-radius: 6px;
+    }
+    @media print {
+      .bar { position: static; }
+      .bar button { display: none; }
+      .step { break-inside: avoid; }
+      body { background: #fff; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Ronde de test — démo secrétaires</h1>
+    <p class="lede">Même parcours pour toi et ton ami. Coche au fur et à mesure. Un échec P0 : on arrête et on note.</p>
+
+    <div class="bar">
+      <label>Testeur
+        <select id="tester">
+          <option value="mike">Mike</option>
+          <option value="ami">Ami</option>
+        </select>
+      </label>
+      <button type="button" id="print">Imprimer</button>
+      <button type="button" id="reset">Effacer mes coches</button>
+      <span class="progress" id="progress"></span>
+    </div>
+
+    <div class="callout">
+      <p><strong>Compte :</strong> secrétaire ou admin (pas vendeur).</p>
+      <p><strong>Noms :</strong> Mike → Test Mike &nbsp;·&nbsp; Ami → Test Ami (évite de vous marcher dessus).</p>
+      <p><strong>Ne pas utiliser</strong> le menu « Nouveau client / job ».</p>
+      <p><strong>Adresses :</strong> toujours cliquer une suggestion Google Places. Évite Cutting (Coaticook), King Est et Chemin du Moulin (Stoke).</p>
+    </div>
+
+    <div class="callout">
+      <p style="margin:0 0 8px"><strong>Temps de trajet</strong></p>
+      <div class="legend">
+        <span><span class="dot" style="background:#1b7a3d"></span> moins de 20 min = vert</span>
+        <span><span class="dot" style="background:#e67e22"></span> 20 à 40 min = orange (pas rouge)</span>
+        <span><span class="dot" style="background:#b42318"></span> plus de 40 min = rouge</span>
+      </div>
+      <p style="margin:10px 0 0">Week-end (sam/dim) : les calendriers et « Par calendrier » ouvrent la <strong>semaine suivante</strong>.</p>
+    </div>
+
+    <div class="callout">
+      <p style="margin:0 0 6px"><strong>Comment noter un problème</strong></p>
+      <p style="margin:0">Étape · Attendu · Obtenu · Capture oui/non. Signale tout de suite si ça bloque. Cosmétique : note et continue.</p>
+    </div>
+
+    <h2>Partie 0 — Nouveautés visuelles (~10 min)</h2>
+    <p class="hint">À faire avant les 15 étapes. Si ça échoue, on corrige avant le parcours complet.</p>
+
+    <article class="step">
+      <header><h3>N1 — Menu latéral</h3></header>
+      <label class="row"><input type="checkbox" data-id="n1a"><span>Toutes les sections (Ventes, Installations, Clients…) sont ouvertes au départ.</span></label>
+      <label class="row"><input type="checkbox" data-id="n1b"><span>En haut à droite du logo : une flèche gauche (pas le mot « Réduire », pas en bas).</span></label>
+      <label class="row"><input type="checkbox" data-id="n1c"><span>Clic → menu réduit. Une flèche droite en haut le rouvre.</span></label>
+    </article>
+
+    <article class="step">
+      <header><h3>N2 — Calendrier ventes</h3></header>
+      <label class="row"><input type="checkbox" data-id="n2a"><span>Bouton en-tête = + Nouveau prospect (pas « Nouveau rendez-vous »).</span></label>
+      <label class="row"><input type="checkbox" data-id="n2b"><span>Samedi/dimanche : semaine = lundi suivant, pas la semaine qui finit aujourd’hui.</span></label>
+      <label class="row"><input type="checkbox" data-id="n2c"><span>Case RDV sans soumission : nom + ville (pas « Prévu »), fond bleu, pas de triangle / #série.</span></label>
+      <label class="row"><input type="checkbox" data-id="n2d"><span>Après soumission sauvegardée : case verte + petite icône document, toujours la ville.</span></label>
+    </article>
+
+    <article class="step">
+      <header><h3>N3 — Case vide du calendrier ventes</h3></header>
+      <label class="row"><input type="checkbox" data-id="n3a"><span>Clic dans une case vide → modale assez large.</span></label>
+      <label class="row"><input type="checkbox" data-id="n3b"><span>Onglets : Prospects · Nouveau prospect · Bloquer (pas « Nouveau client »).</span></label>
+      <label class="row"><input type="checkbox" data-id="n3c"><span>Champ de recherche compact : Nom ou adresse…</span></label>
+      <label class="row"><input type="checkbox" data-id="n3d"><span>Minutes de trajet grosses / gras ; 25 min = orange, pas rouge.</span></label>
+    </article>
+
+    <article class="step">
+      <header><h3>N4 — Recherche clients</h3></header>
+      <label class="row"><input type="checkbox" data-id="n4a"><span>Clients → tape assez vite (ex. une rue). Le dernier caractère reste.</span></label>
+    </article>
+
+    <article class="step">
+      <header><h3>N5 — Fiche client</h3></header>
+      <label class="row"><input type="checkbox" data-id="n5a"><span>Une ligne par job : statut · durée · #30xxx · un seul bouton Ouvrir.</span></label>
+      <label class="row"><input type="checkbox" data-id="n5b"><span>Nouvelle soumission et Reprendre sont encore là.</span></label>
+    </article>
+
+    <h2>Partie 1 — Les 15 étapes (~25–35 min)</h2>
+    <p class="hint">Prérequis : au moins 1 vendeur actif (domicile GPS) et 1 équipe d’installation.</p>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s1"></label>
+        <h3>1. Nouveau prospect avec GPS <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Ventes → Pipeline prospects → Nouveau prospect. Nom = ton nom de test, tél. 819-555-0100, courriel demo@example.com. Adresse d’installation : cherche Places, clique une suggestion. Coche Même adresse que l’installation.</p>
+        <p><span class="k">Attendu</span> Pas d’écran « adresse déjà connue ».</p>
+        <p><span class="k">Vérifier</span> Le formulaire accepte l’adresse ; pas de message GPS manquant.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s2"></label>
+        <h3>2. Booker le RDV vendeur <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Sauvegarder et trouver un créneau → clique le créneau #1.</p>
+        <p><span class="k">Attendu</span> Retour pipeline, une seule carte, statut Visite planifiée.</p>
+        <p><span class="k">Vérifier</span> Pas deux cartes du même nom. Minutes vert / orange / rouge selon la légende.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s3"></label>
+        <h3>3. Le calendrier ventes montre le bon RDV <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Ventes → Calendrier ventes, date du créneau.</p>
+        <p><span class="k">Attendu</span> Le nom dans la bonne case, ville du chantier (pas « Prévu »), fond bleu.</p>
+        <p><span class="k">Vérifier</span> Pas un autre client dans ce créneau ; pas de #série / triangle orange.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s4"></label>
+        <h3>4. Ouvrir le dossier et créer la soumission <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Pipeline → carte → Créer soumission.</p>
+        <p><span class="k">Attendu</span> Page Créer soumission + nom. Adresses gelées. Modifier existe.</p>
+        <p><span class="k">Vérifier</span> Pas de Réassigner ; Bas de page en haut à droite. Croquis replié (« Ajouter un croquis »).</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s5"></label>
+        <h3>5. Remplir le minimum et sauvegarder <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Durée Demi-journée (4 h). Unité 1 : marque Midea, sous-total 2500. Coche Répartir sans # série. Sauvegarder.</p>
+        <p><span class="k">Attendu</span> Message de sauvegarde ; Sauvegarder disparaît si tu n’as plus rien changé. Un numéro #30xxx apparaît.</p>
+        <p><span class="k">Vérifier</span> En bas : bouton Haut de page → ramène en haut.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s6"></label>
+        <h3>6. PDF / courriel / répartir bloqués si non sauvegardé <span class="badge p1">P1</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Change le sous-total (ex. 2600) sans sauvegarder.</p>
+        <p><span class="k">Attendu</span> Aperçu PDF, Envoyer par courriel, Répartir grisés. Sauvegarder est visible. Après sauvegarde, les trois reviennent.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s7"></label>
+        <h3>7. Pas d’envoi à 0 $ <span class="badge p1">P1</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Mets le sous-total à 0, sauvegarde.</p>
+        <p><span class="k">Attendu</span> Envoyer par courriel reste inutilisable.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s8"></label>
+        <h3>8. Répartir vers l’installation <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Remets 2500, sauvegarde. → Répartir vers l’installation. S’il y a un RDV vendeur : Annuler le RDV et répartir.</p>
+        <p><span class="k">Attendu</span> Dashboard installation ; job À planifier. La modale = Placer dans le calendrier, pas « Modifier le dossier ».</p>
+        <p><span class="k">Vérifier</span> Fermer la modale → tu restes sur le dashboard. Carte disparue du pipeline. Créneau ventes libre.</p>
+        <p><span class="k">Bonus</span> Sans bypass ni # série → Répartir. La page descend sur # Série. Tape un # ou coche bypass → le message disparaît.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s9"></label>
+        <h3>9. Booker l’installation <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Sur la carte → Placer dans le calendrier. Modale grande, onglets Meilleur créneau / Par calendrier. Prends la 1re suggestion, confirme.</p>
+        <p><span class="k">Attendu</span> Statut Réparti. Calendrier installation : bonne case, nom + ville chantier. Si bypass série : case jaune + #série.</p>
+        <p><span class="k">Vérifier</span> Une seule équipe / un seul créneau. Par calendrier sam/dim = semaine suivante.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s10"></label>
+        <h3>10. Retrouver le client dans la base <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Clients → Base donnée clients. Cherche le nom (ou la rue). Tape assez vite.</p>
+        <p><span class="k">Attendu</span> Une fiche, bonne adresse. Le dernier caractère de la recherche reste. Pas deux clients identiques.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s11"></label>
+        <h3>11. Historique, adresse, soumission <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Ouvre la fiche adresse.</p>
+        <p><span class="k">Attendu</span> Adresse, téléphone, job Réparti, numéro de soumission. Une ligne : statut · durée · # · Ouvrir.</p>
+        <p><span class="k">Vérifier</span> Le # est le même. Ouvrir amène à la soumission.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s12"></label>
+        <h3>12. Nouvelle soumission = nouveau job, ancienne intacte <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Fiche → Nouvelle soumission (pas Reprendre). Tu arrives sur Créer soumission. 4 h + sous-total 1800 → Sauvegarder.</p>
+        <p><span class="k">Attendu</span> Nouveau #. Ventes → Soumissions : les deux # existent. L’ancienne a encore 2500.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s13"></label>
+        <h3>13. Reprendre ne copie pas les prix <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Fiche → Reprendre la dernière soumission (prix à zéro).</p>
+        <p><span class="k">Attendu</span> Page soumission directe, nouveau #, unités copiées, sous-totaux à 0. L’ancienne (2500) n’a pas bougé.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s14"></label>
+        <h3>14. Interception d’adresse connue <span class="badge p0">P0</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Pipeline → Nouveau prospect. Reprends exactement la même suggestion Places que l’étape 1. Choisis Même personne.</p>
+        <p><span class="k">Attendu</span> Fenêtre « adresse déjà connue ». Nouveau job Prospect, pas un deuxième client. Dans Clients : toujours une personne.</p>
+      </div>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="s15"></label>
+        <h3>15. Corriger tél. / nom sans créer un 2e dossier <span class="badge p1">P1</span></h3>
+      </header>
+      <div class="meta">
+        <p><span class="k">Action</span> Sur la carte Prospect de l’étape 14 : crayon Modifier. Change le téléphone, Sauvegarder seulement.</p>
+        <p><span class="k">Attendu</span> Une seule carte, nouveau tél. Clients : toujours une fiche.</p>
+      </div>
+    </article>
+
+    <h2>Partie 2 — Scénarios oraux</h2>
+    <p class="hint">Après les 15 étapes, ou à la place si tu manques de temps. A est obligatoire.</p>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="a"></label>
+        <h3>Scénario A — Nouveau client simple</h3>
+      </header>
+      <ol class="plain">
+        <li>Pipeline → Nouveau prospect (Test … A), Places neuve, Même adresse.</li>
+        <li>Sauvegarder et trouver un créneau → créneau #1.</li>
+        <li>Carte Visite planifiée → Créer soumission.</li>
+        <li>4 h + 2500 + Répartir sans # série → Sauvegarder.</li>
+        <li>Répartir → Annuler le RDV et répartir.</li>
+        <li>Modale Placer dans le calendrier (pas Modifier) → 1re suggestion → confirmer.</li>
+        <li>Calendrier installation : le RDV est là, ville chantier, jaune #série si bypass.</li>
+        <li>Clients → cherche → fiche → # + adresse.</li>
+      </ol>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="b"></label>
+        <h3>Scénario B — Client existant</h3>
+      </header>
+      <ol class="plain">
+        <li>Clients → fiche du scénario A. Note le # et le montant.</li>
+        <li>Nouvelle soumission → autre prix (1800).</li>
+        <li>Nouveau #. Ancienne inchangée.</li>
+        <li>Fiche : deux jobs / deux #. Ne clique pas Reprendre ici.</li>
+      </ol>
+    </article>
+
+    <article class="step">
+      <header>
+        <label><input type="checkbox" data-id="c"></label>
+        <h3>Scénario C — Petite erreur</h3>
+      </header>
+      <ol class="plain">
+        <li>Nouveau prospect, mauvais téléphone 111-111-1111, Places neuve, booker créneau #1.</li>
+        <li>Crayon Modifier → bon téléphone → Sauvegarder seulement.</li>
+        <li>Créer soumission. Si le nom est faux : Modifier dans la soumission puis sauvegarder.</li>
+        <li>Pipeline : une carte. Clients : un client. Calendrier ventes : un RDV (pas un 2e).</li>
+      </ol>
+    </article>
+
+    <h2>Partie 3 — Extras si le temps le permet</h2>
+    <article class="step">
+      <label class="row"><input type="checkbox" data-id="x1"><span>Clic sur un RDV ventes → Par calendrier : sam/dim = semaine suivante.</span></label>
+      <label class="row"><input type="checkbox" data-id="x2"><span>Retour depuis une soumission (calendrier ventes / pipeline / dispatch) : tu reviens au bon endroit.</span></label>
+      <label class="row"><input type="checkbox" data-id="x3"><span>Ouvrir sur la fiche (job déjà réparti) : la carte défile, sans ouvrir toute seule « Placer dans le calendrier ».</span></label>
+      <label class="row"><input type="checkbox" data-id="x4"><span>Dispatch sans week= un week-end : semaine suivante.</span></label>
+    </article>
+
+    <h2>Stop — corriger avant la démo</h2>
+    <article class="step stop">
+      <ul class="tight">
+        <li>Places n’enregistre pas / pas de créneaux / erreur au bookage</li>
+        <li>Deux cartes ou deux clients pour la même personne</li>
+        <li>La soumission ne sauvegarde pas, ou Répartir refuse</li>
+        <li>L’ancienne soumission change de prix après Nouvelle soumission ou Reprendre</li>
+        <li>Répartir ouvre « Modifier le dossier » au lieu de Placer dans le calendrier</li>
+        <li>Le job n’apparaît pas dans Dashboard installation</li>
+        <li>Mauvaise équipe / mauvais jour / mauvaise ville au calendrier installation</li>
+        <li>Clients ne retrouve pas le nom, ou la recherche mange des lettres</li>
+        <li>25 min affiché en rouge</li>
+        <li>Onglet encore nommé « Nouveau client »</li>
+      </ul>
+    </article>
+
+    <h2>Peut attendre</h2>
+    <article class="step wait">
+      <ul class="tight">
+        <li>Croquis trop petit</li>
+        <li>Cap Long qui se remplit tout seul</li>
+        <li>Plus de 3 unités</li>
+        <li>Page Nouveau client / job</li>
+        <li>Libellés encore « projet » quelque part</li>
+        <li>PDF / courriel grisés tant que non sauvegardé (c’est voulu)</li>
+      </ul>
+    </article>
+
+    <h2>Notes du testeur</h2>
+    <article class="step">
+      <textarea id="notes" placeholder="Étape · attendu · obtenu · capture oui/non"></textarea>
+    </article>
+  </div>
+
+  <script>
+    const testerEl = document.getElementById("tester");
+    const notesEl = document.getElementById("notes");
+    const progressEl = document.getElementById("progress");
+    const boxes = [...document.querySelectorAll("input[data-id]")];
+
+    function key() {
+      return "huppe.ronde." + testerEl.value;
+    }
+    function load() {
+      const raw = localStorage.getItem(key());
+      const data = raw ? JSON.parse(raw) : { checks: {}, notes: "" };
+      boxes.forEach((b) => { b.checked = !!data.checks[b.dataset.id]; });
+      notesEl.value = data.notes || "";
+      updateProgress();
+    }
+    function save() {
+      const checks = {};
+      boxes.forEach((b) => { checks[b.dataset.id] = b.checked; });
+      localStorage.setItem(key(), JSON.stringify({ checks, notes: notesEl.value }));
+      updateProgress();
+    }
+    function updateProgress() {
+      const done = boxes.filter((b) => b.checked).length;
+      progressEl.textContent = done + " / " + boxes.length + " cochés";
+    }
+
+    testerEl.addEventListener("change", load);
+    boxes.forEach((b) => b.addEventListener("change", save));
+    notesEl.addEventListener("input", save);
+    document.getElementById("print").addEventListener("click", () => window.print());
+    document.getElementById("reset").addEventListener("click", () => {
+      if (!confirm("Effacer les coches et notes de " + testerEl.value + " ?")) return;
+      localStorage.removeItem(key());
+      load();
+    });
+    load();
+  </script>
+</body>
+</html>

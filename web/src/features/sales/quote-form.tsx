@@ -3,7 +3,7 @@
 import { useState, useTransition, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Mail, Printer, Pencil, ArrowDown, Plus } from "lucide-react";
+import { Mail, Printer, Pencil, ArrowDown, ArrowUp, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { createQuote, updateQuote, updateQuoteStatus, convertQuoteToInstallationJob } from "@/actions/sales";
@@ -129,6 +129,11 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   serial_bypass: u.serial_bypass ?? false,
 });
 
+function filledUnitNeedsSerial(u: UnitState): boolean {
+  const filled = !!(u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0);
+  return filled && !u.serial_number?.trim() && !u.serial_bypass;
+}
+
 const MAX_UNITS_PER_OPTION = 8;
 
 /** Reconstruit les unités DB : au moins 1 slot vide par option (A puis B). */
@@ -224,7 +229,7 @@ export function QuoteForm({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "banner" | null>(null);
+  const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "serial" | "banner" | null>(null);
   const [errorTick, setErrorTick] = useState(0);
   const [saved, setSaved] = useState(false);
   const [showRepartirModal, setShowRepartirModal] = useState(false);
@@ -243,6 +248,7 @@ export function QuoteForm({
 
   const [signature, setSignature] = useState<string | null>(initialQuote?.signature_data ?? null);
   const [sketch, setSketch] = useState<string | null>(initialQuote?.sketch_data ?? null);
+  const [sketchOpen, setSketchOpen] = useState(false);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
 
@@ -258,6 +264,7 @@ export function QuoteForm({
         errorField === "email" ? emailRef.current :
         errorField === "phone" ? phoneRef.current :
         errorField === "duration" ? durationRef.current :
+        errorField === "serial" ? document.querySelector("[data-serial-error]") :
         errorRef.current;
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 50);
@@ -339,6 +346,14 @@ export function QuoteForm({
 
   const existingUnits = initialUnits ?? [];
   const [units, setUnits] = useState<UnitState[]>(() => slotsFromUnits(existingUnits));
+
+  useEffect(() => {
+    if (errorField !== "serial") return;
+    if (!units.some(filledUnitNeedsSerial)) {
+      setError(null);
+      setErrorField(null);
+    }
+  }, [units, errorField]);
 
   // Sous-total = somme des nets Option A — recalculé au montage (évite un sous-total DB périmé)
   useEffect(() => {
@@ -577,6 +592,8 @@ export function QuoteForm({
 
     if (missingSerial.length > 0) {
       setError(`# de série manquant : ${missingSerial.join(", ")}`);
+      setErrorField("serial");
+      setErrorTick((n) => n + 1);
       return false;
     }
 
@@ -779,7 +796,7 @@ export function QuoteForm({
   };
 
   return (
-    <div className="space-y-6">
+    <div id="soumission-top" className="space-y-6">
       {/* En-tête soumission */}
       <div className="bg-background rounded-xl border p-5 print:p-0">
         <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1181,13 +1198,25 @@ export function QuoteForm({
                           </div>
                         </div>
                         {/* Ligne 2 : # Série + bypass */}
-                        <div className="flex flex-col sm:flex-row sm:items-start gap-2">
+                        <div
+                          className={`flex flex-col sm:flex-row sm:items-start gap-2 ${
+                            errorField === "serial" && filledUnitNeedsSerial(u)
+                              ? "ring-2 ring-destructive/60 rounded-lg p-2 -m-1"
+                              : ""
+                          }`}
+                          {...(errorField === "serial" && filledUnitNeedsSerial(u)
+                            ? { "data-serial-error": "" }
+                            : {})}
+                        >
                           <div className="flex-1">
                             <label className={`${lbl} flex items-center gap-1`}>
                               # Série
                               <span className="text-[10px] text-muted-foreground font-normal">(rempli par la secrétaire)</span>
                             </label>
                             <input className={inp} value={u.serial_number} onChange={setU(i, "serial_number")} placeholder="Ex: SN-123456" {...noAc} />
+                            {errorField === "serial" && filledUnitNeedsSerial(u) && error && (
+                              <p className="mt-1 text-sm text-destructive print:hidden">{error}</p>
+                            )}
                           </div>
                           <label className="flex items-center gap-1.5 text-xs cursor-pointer text-muted-foreground hover:text-foreground sm:mt-5 shrink-0">
                             <input type="checkbox" checked={u.serial_bypass} onChange={setU(i, "serial_bypass")} className="rounded" />
@@ -1467,11 +1496,31 @@ export function QuoteForm({
 
       {/* Croquis / plan d'installation */}
       <div className="bg-background rounded-xl border p-5 print:break-inside-avoid">
-        <p className={sectionTitle}>Croquis / plan d&apos;installation</p>
-        <p className="text-xs text-muted-foreground mb-3">
-          Format page lettre — le dessin occupera une page entière dans le PDF client.
-        </p>
-        <SketchPad value={sketch} onChange={setSketchDirty} />
+        <div className="flex items-center justify-between gap-3">
+          <p className="font-semibold text-sm">Croquis / plan d&apos;installation</p>
+          <button
+            type="button"
+            onClick={() => setSketchOpen((o) => !o)}
+            className="print:hidden h-8 px-3 rounded-lg border text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {sketchOpen
+              ? "Masquer le croquis"
+              : sketch
+                ? "Voir le croquis"
+                : "Ajouter un croquis"}
+          </button>
+        </div>
+        {sketchOpen && (
+          <>
+            <p className="text-xs text-muted-foreground mt-3 mb-3">
+              Format page lettre — le dessin occupera une page entière dans le PDF client.
+            </p>
+            <SketchPad value={sketch} onChange={setSketchDirty} />
+          </>
+        )}
+        {!sketchOpen && sketch && (
+          <p className="text-xs text-muted-foreground mt-2 print:hidden">Un croquis est enregistré.</p>
+        )}
       </div>
 
       {/* Dialogue envoi par courriel */}
@@ -1636,19 +1685,37 @@ export function QuoteForm({
           )}
           {quoteId && jobId && (
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-              <a
-                href={`/api/pdf/soumission/${jobId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
-              >
-                <Printer className="size-3.5" />
-                Aperçu PDF
-              </a>
+              {isDirty ? (
+                <button
+                  type="button"
+                  disabled
+                  title="Sauvegardez avant d'ouvrir l'aperçu"
+                  className="h-[38px] px-4 rounded-lg border text-sm font-medium inline-flex items-center gap-2 opacity-40 cursor-not-allowed"
+                >
+                  <Printer className="size-3.5" />
+                  Aperçu PDF
+                </button>
+              ) : (
+                <a
+                  href={`/api/pdf/soumission/${jobId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
+                >
+                  <Printer className="size-3.5" />
+                  Aperçu PDF
+                </a>
+              )}
               <button
                 type="button"
-                disabled={!canSendQuote}
-                title={!canSendQuote ? "Ajoutez un sous-total avant d'envoyer au client" : undefined}
+                disabled={isDirty || !canSendQuote}
+                title={
+                  isDirty
+                    ? "Sauvegardez avant d'envoyer"
+                    : !canSendQuote
+                      ? "Ajoutez un sous-total avant d'envoyer au client"
+                      : undefined
+                }
                 onClick={() => { setEmailDialogOpen(true); setEmailStatus(null); setEmailTo(form.client_email || ""); }}
                 className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
               >
@@ -1675,7 +1742,8 @@ export function QuoteForm({
               <button
                 type="button"
                 onClick={handleRepartirClick}
-                disabled={pending}
+                disabled={pending || isDirty}
+                title={isDirty ? "Sauvegardez avant de répartir" : undefined}
                 className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 sm:ml-auto"
               >
                 → Répartir vers l&apos;installation
@@ -1687,6 +1755,19 @@ export function QuoteForm({
             )}
           </div>
         )}
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() =>
+              document.getElementById("soumission-top")?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+            className="print:hidden inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="Aller en haut de page"
+          >
+            <ArrowUp className="size-3.5" />
+            Haut de page
+          </button>
+        </div>
       </div>
       {showCallBackModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">

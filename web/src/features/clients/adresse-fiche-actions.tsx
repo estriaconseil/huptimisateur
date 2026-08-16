@@ -27,7 +27,7 @@ export function NouvellesoumissionButton({
         alert(res.message);
         return;
       }
-      router.push(`/ventes/pipeline?job=${res.jobId}`);
+      router.push(`/ventes/soumission/${res.jobId}`);
     });
   }
 
@@ -72,7 +72,7 @@ export function ReprendreButton({
         alert(res.message);
         return;
       }
-      router.push(`/ventes/pipeline?job=${res.jobId}`);
+      router.push(`/ventes/soumission/${res.jobId}`);
     });
   }
 

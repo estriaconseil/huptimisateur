@@ -1,7 +1,8 @@
-import { startOfWeek, addWeeks, getDay, parseISO } from "date-fns";
+import { startOfWeek, parseISO } from "date-fns";
 
 import { SalesCalendar } from "@/features/sales/sales-calendar";
 import { loadSalesPageData } from "@/features/sales/load-sales-data";
+import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
 
 type Props = {
   searchParams: Promise<{ week?: string }>;
@@ -10,13 +11,9 @@ type Props = {
 export default async function VentesPage({ searchParams }: Props) {
   const { week } = await searchParams;
 
-  const today = new Date();
-  // Sam/Dim → afficher la semaine suivante (la semaine en cours est terminée)
-  const dow = getDay(today);
-  const defaultBase = dow === 0 || dow === 6 ? addWeeks(today, 1) : today;
   const monday = week
     ? startOfWeek(parseISO(week), { weekStartsOn: 1 })
-    : startOfWeek(defaultBase, { weekStartsOn: 1 });
+    : defaultBusinessWeekMonday();
 
   const data = await loadSalesPageData(monday);
 

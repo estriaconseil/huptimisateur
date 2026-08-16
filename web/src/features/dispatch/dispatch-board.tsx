@@ -8,7 +8,7 @@ import {
   startOfWeek,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, FileText, Loader2, MapPin, Printer, PlusCircle, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
@@ -34,8 +34,6 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import type { JobPickerRow, RetourAFaireRow, TeamWithTechs } from "@/features/dispatch/load-dispatch-data";
-import { updateJobStatus } from "@/actions/jobs";
-import { statusLabel } from "@/lib/job-status";
 import { slotLabel } from "@/services/planning/slot-rules";
 import {
   buildDispatchStateMap,
@@ -46,6 +44,8 @@ import type { AppSettings, EstimatedDurationHours, ScheduleSuggestion } from "@/
 import { cn } from "@/lib/utils";
 import { TravelDuration } from "@/lib/format-travel";
 import { cityFromAddress } from "@/lib/address";
+import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
+import { withQuoteOrigin } from "@/lib/quote-back";
 
 type PickTarget = {
   teamId: string;
@@ -76,7 +76,7 @@ export function DispatchBoard(props: Props) {
     teams,
     schedules,
     jobsForPicker,
-    retourAFaireJobs,
+    retourAFaireJobs: _retourAFaireJobs,
     settings,
     initialSuggestJobId,
     initialSuggestFlag,
@@ -91,6 +91,7 @@ export function DispatchBoard(props: Props) {
   const [pickOpen, setPickOpen] = useState(false);
   const [pickTarget, setPickTarget] = useState<PickTarget | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
+  const [pickSearch, setPickSearch] = useState("");
   const [pickerRanked, setPickerRanked] = useState<RankedPickerJob[] | null>(null);
   const [pickerRankLoading, setPickerRankLoading] = useState(false);
   const [pickerOriginLabel, setPickerOriginLabel] = useState<string | null>(null);
@@ -109,6 +110,24 @@ export function DispatchBoard(props: Props) {
     }
     return jobsForPicker;
   }, [pickTarget, stateMap, jobsForPicker]);
+
+  const searchedJobsForPicker = useMemo(() => {
+    const q = pickSearch.trim().toLowerCase();
+    if (!q) return compatibleJobsForPicker;
+    return compatibleJobsForPicker.filter((job) => {
+      const hay = [
+        job.clients?.name,
+        job.clients?.city,
+        job.installation_address?.city,
+        job.installation_address?.address_formatted,
+        job.installation_info,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [compatibleJobsForPicker, pickSearch]);
 
   const [newJobOpen, setNewJobOpen] = useState(false);
 
@@ -208,6 +227,7 @@ export function DispatchBoard(props: Props) {
     if (half === "pm" && state.pm.kind === "busy") return;
 
     setPickError(null);
+    setPickSearch("");
     setPickerRanked(null);
     setPickerRankLoading(false);
     setPickerOriginLabel(null);
@@ -415,7 +435,7 @@ export function DispatchBoard(props: Props) {
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => navigateToMonday(new Date())}
+            onClick={() => navigateToMonday(defaultBusinessWeekMonday())}
           >
             Cette semaine
           </Button>
@@ -534,6 +554,7 @@ export function DispatchBoard(props: Props) {
                             city={fullDayBusy.city}
                             phone={fullDayBusy.phone}
                             email={fullDayBusy.email}
+                            missingSerial={fullDayBusy.missingSerial}
                             onOpenDetail={() =>
                               openDetail(team.id, dateStr, {
                                 kind: "am",
@@ -555,6 +576,7 @@ export function DispatchBoard(props: Props) {
                               city={amBusy?.city}
                               phone={amBusy?.phone}
                               email={amBusy?.email}
+                              missingSerial={amBusy?.missingSerial}
                               onPick={() => openPick(team.id, dateStr, "am")}
                               onOpenDetail={
                                 amBusy
@@ -577,6 +599,7 @@ export function DispatchBoard(props: Props) {
                               city={pmBusy?.city}
                               phone={pmBusy?.phone}
                               email={pmBusy?.email}
+                              missingSerial={pmBusy?.missingSerial}
                               onPick={() => openPick(team.id, dateStr, "pm")}
                               onOpenDetail={
                                 pmBusy
@@ -604,82 +627,8 @@ export function DispatchBoard(props: Props) {
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
 
-      {/* ── Section : jobs en attente de planification ──────────────── */}
-      {(jobsForPicker.length > 0 || retourAFaireJobs.length > 0) && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-          {/* À planifier */}
-          {jobsForPicker.length > 0 && (
-            <div className="rounded-xl border p-4 space-y-2">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[11px] font-semibold">
-                  {statusLabel("a_planifier")}
-                </span>
-                <span className="text-muted-foreground font-normal">{jobsForPicker.length} job{jobsForPicker.length > 1 ? "s" : ""}</span>
-              </h2>
-              <ul className="space-y-1">
-                {jobsForPicker.map((job) => (
-                  <li key={job.id} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/40 transition-colors">
-                    <div className="min-w-0">
-                      <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                      {job.clients?.city && <span className="block text-xs text-muted-foreground">📍 {job.clients.city}</span>}
-                      {job.installation_info && <span className="block text-xs text-muted-foreground line-clamp-1">{job.installation_info}</span>}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0 ml-2"
-                      onClick={() => void openSuggestionsForJob(job.id, {})}
-                    >
-                      Planifier
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Retour à faire */}
-          {retourAFaireJobs.length > 0 && (
-            <div className="rounded-xl border p-4 space-y-2">
-              <h2 className="text-sm font-semibold flex items-center gap-2">
-                <span className="inline-flex items-center rounded-full bg-orange-100 text-orange-800 px-2 py-0.5 text-[11px] font-semibold">
-                  {statusLabel("retour_a_faire")}
-                </span>
-                <span className="text-muted-foreground font-normal">{retourAFaireJobs.length} job{retourAFaireJobs.length > 1 ? "s" : ""}</span>
-              </h2>
-              <ul className="space-y-1">
-                {retourAFaireJobs.map((job) => (
-                  <li key={job.id} className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/40 transition-colors">
-                    <div className="min-w-0">
-                      <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                      {job.clients?.city && <span className="block text-xs text-muted-foreground">📍 {job.clients.city}</span>}
-                      {job.installation_info && <span className="block text-xs text-muted-foreground line-clamp-1">{job.installation_info}</span>}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="shrink-0 ml-2"
-                      onClick={() => {
-                        startTransition(async () => {
-                          await updateJobStatus(job.id, "a_planifier");
-                          router.refresh();
-                        });
-                      }}
-                    >
-                      Replanifier
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-
-      <Dialog open={pickOpen} onOpenChange={(o) => { setPickOpen(o); if (!o) { setPickerRanked(null); setPickerOriginLabel(null); } }}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={pickOpen} onOpenChange={(o) => { setPickOpen(o); if (!o) { setPickerRanked(null); setPickerOriginLabel(null); setPickSearch(""); } }}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Affecter une job</DialogTitle>
             <DialogDescription>
@@ -697,8 +646,20 @@ export function DispatchBoard(props: Props) {
           </DialogHeader>
           {pickError && <p className="text-destructive text-sm">{pickError}</p>}
 
-          {/* Indicateur de classement par proximité */}
-          {pickerOriginLabel && (
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="search"
+              value={pickSearch}
+              onChange={(e) => setPickSearch(e.target.value)}
+              placeholder="Nom, ville ou adresse…"
+              className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              autoFocus
+            />
+          </div>
+
+          {/* Indicateur de classement par proximité — masqué pendant une recherche */}
+          {!pickSearch.trim() && pickerOriginLabel && (
             <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
               {pickerRankLoading
                 ? <span className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" /> Classement par proximité depuis {pickerOriginLabel}…</span>
@@ -709,17 +670,21 @@ export function DispatchBoard(props: Props) {
 
           <ul className="max-h-[50vh] space-y-1 overflow-y-auto pr-1">
             {(() => {
-              /* Si classement disponible, réordonner compatibleJobsForPicker selon pickerRanked */
-              let orderedJobs = compatibleJobsForPicker;
-              if (pickerRanked && pickerRanked.length > 0) {
-                const rankMap = new Map(pickerRanked.map((r) => [r.id, r]));
-                const ranked = pickerRanked
+              const q = pickSearch.trim();
+              const list = searchedJobsForPicker;
+              const rankMap = !q && pickerRanked && pickerRanked.length > 0
+                ? new Map(pickerRanked.map((r) => [r.id, r]))
+                : null;
+
+              let orderedJobs = list;
+              if (rankMap) {
+                const ranked = pickerRanked!
                   .map((r) => {
-                    const job = compatibleJobsForPicker.find((j) => j.id === r.id);
+                    const job = list.find((j) => j.id === r.id);
                     return job ? { job, rank: r } : null;
                   })
-                  .filter((x): x is { job: typeof compatibleJobsForPicker[number]; rank: RankedPickerJob } => x !== null);
-                const unranked = compatibleJobsForPicker
+                  .filter((x): x is { job: typeof list[number]; rank: RankedPickerJob } => x !== null);
+                const unranked = list
                   .filter((j) => !rankMap.has(j.id))
                   .map((job) => ({ job, rank: null as RankedPickerJob | null }));
                 orderedJobs = [...ranked.map((x) => x.job), ...unranked.map((x) => x.job)];
@@ -736,8 +701,11 @@ export function DispatchBoard(props: Props) {
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                            {job.clients?.city && (
-                              <span className="text-muted-foreground block text-xs">📍 {job.clients.city}</span>
+                            {(job.installation_address?.city ?? job.clients?.city) && (
+                              <span className="text-muted-foreground block text-xs">📍 {job.installation_address?.city ?? job.clients?.city}</span>
+                            )}
+                            {job.installation_address?.address_formatted && (
+                              <span className="text-muted-foreground block text-xs truncate">{job.installation_address.address_formatted}</span>
                             )}
                             <span className="text-muted-foreground block text-xs">{job.estimated_duration_hours} h</span>
                           </div>
@@ -757,7 +725,6 @@ export function DispatchBoard(props: Props) {
                 });
               }
 
-              /* Sans classement : liste simple */
               return orderedJobs.map((job) => (
                 <li key={job.id}>
                   <button
@@ -767,8 +734,11 @@ export function DispatchBoard(props: Props) {
                     onClick={() => void confirmAssign(job)}
                   >
                     <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                    {job.clients?.city && (
-                      <span className="text-muted-foreground block text-xs">📍 {job.clients.city}</span>
+                    {(job.installation_address?.city ?? job.clients?.city) && (
+                      <span className="text-muted-foreground block text-xs">📍 {job.installation_address?.city ?? job.clients?.city}</span>
+                    )}
+                    {job.installation_address?.address_formatted && (
+                      <span className="text-muted-foreground block text-xs truncate">{job.installation_address.address_formatted}</span>
                     )}
                     <span className="text-muted-foreground block text-xs">{job.estimated_duration_hours} h</span>
                   </button>
@@ -777,12 +747,13 @@ export function DispatchBoard(props: Props) {
             })()}
           </ul>
 
-          {compatibleJobsForPicker.length === 0 && (
+          {searchedJobsForPicker.length === 0 && (
             <p className="text-muted-foreground text-sm">
-              {jobsForPicker.length > 0
-                ? "Aucune job de 4 h disponible — l'autre demi-journée est déjà occupée."
-                : <>Aucune job disponible. Crée-en une avec le bouton <strong>Nouvelle job</strong> en haut du calendrier.</>
-              }
+              {pickSearch.trim()
+                ? `Aucun client ne correspond à « ${pickSearch.trim()} ».`
+                : jobsForPicker.length > 0
+                  ? "Aucune job de 4 h disponible — l'autre demi-journée est déjà occupée."
+                  : "Aucune job à planifier. Utilisez le dashboard installation."}
             </p>
           )}
           <DialogFooter>
@@ -857,7 +828,7 @@ export function DispatchBoard(props: Props) {
               )}
 
               <a
-                href={`/ventes/soumission/${detailJobFull.jobId}`}
+                href={withQuoteOrigin(`/ventes/soumission/${detailJobFull.jobId}`, "dispatch", weekStartLabel)}
                 className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium hover:bg-accent transition-colors"
               >
                 <FileText className="size-4 text-muted-foreground" />
@@ -916,7 +887,7 @@ export function DispatchBoard(props: Props) {
                       size="icon"
                       onClick={() => {
                         setDetailOpen(false);
-                        router.push(`/ventes/soumission/${detail.jobId}`);
+                        router.push(withQuoteOrigin(`/ventes/soumission/${detail.jobId}`, "dispatch", weekStartLabel));
                       }}
                     />
                   }
@@ -1108,17 +1079,28 @@ function FullDayCell(props: {
   city?: string | null;
   phone?: string | null;
   email?: string | null;
+  missingSerial?: boolean;
   onOpenDetail?: () => void;
 }) {
-  const { labelText, city, phone, email, onOpenDetail } = props;
+  const { labelText, city, phone, email, missingSerial, onOpenDetail } = props;
   const hasContact = phone || email;
 
-  const cellClassName =
-    "flex h-[104px] w-full flex-col items-start overflow-hidden bg-[#00854d] px-2 py-1.5 text-left text-white transition-colors cursor-pointer hover:brightness-90";
+  const cellClassName = cn(
+    "flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left transition-colors cursor-pointer hover:brightness-90",
+    missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#00854d] text-white"
+  );
 
   const cellChildren = (
     <>
-      <span className="text-[10px] font-semibold uppercase opacity-80 shrink-0">Journée complète</span>
+      <div className="flex w-full items-start justify-between gap-1 shrink-0">
+        <span className="text-[10px] font-semibold uppercase opacity-80">Journée complète</span>
+        {missingSerial && (
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
+            <AlertTriangle className="size-3" />
+            #série
+          </span>
+        )}
+      </div>
       <span className="mt-0.5 line-clamp-1 text-sm font-semibold leading-tight">{labelText ?? "—"}</span>
       {city && <span className="mt-0.5 line-clamp-1 text-xs opacity-90 leading-tight">{city}</span>}
     </>
@@ -1158,6 +1140,7 @@ function HalfCell(props: {
   city?: string | null;
   phone?: string | null;
   email?: string | null;
+  missingSerial?: boolean;
   onPick: () => void;
   onOpenDetail?: () => void;
 }) {
@@ -1170,6 +1153,7 @@ function HalfCell(props: {
     city,
     phone,
     email,
+    missingSerial,
     onPick,
     onOpenDetail,
   } = props;
@@ -1178,11 +1162,19 @@ function HalfCell(props: {
     const hasContact = phone || email;
     const cellClassName = cn(
       "flex h-[52px] w-full flex-1 flex-col items-start overflow-hidden px-2 py-1 text-left transition-colors cursor-pointer hover:brightness-90",
-      "bg-[#0073ea] text-white"
+      missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#0073ea] text-white"
     );
     const cellChildren = (
       <>
-        <span className="text-[10px] font-semibold uppercase opacity-70 shrink-0 leading-none">{label}</span>
+        <div className="flex w-full items-start justify-between gap-1 shrink-0">
+          <span className="text-[10px] font-semibold uppercase opacity-70 leading-none">{label}</span>
+          {missingSerial && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold leading-none">
+              <AlertTriangle className="size-3" />
+              #série
+            </span>
+          )}
+        </div>
         <span className="line-clamp-1 text-sm leading-tight font-semibold">{labelText ?? "—"}</span>
         {city && <span className="line-clamp-1 text-[11px] opacity-90 leading-tight">{city}</span>}
       </>
@@ -1244,6 +1236,9 @@ function Legend() {
       </span>
       <span>
         <span className="bg-muted mr-1 inline-block size-3 rounded opacity-50 align-middle" /> Équipe inactive
+      </span>
+      <span>
+        <span className="mr-1 inline-block size-3 rounded bg-amber-400 align-middle" /> # série manquant
       </span>
     </div>
   );

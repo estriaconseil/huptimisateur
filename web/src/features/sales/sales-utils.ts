@@ -32,6 +32,8 @@ export type AppointmentRow = {
   client_name: string;
   client_phone: string | null;
   client_address: string | null;
+  /** Ville chantier (prioritaire) ou ville client. */
+  client_city: string | null;
   client_lat: number | null;
   client_lng: number | null;
   scheduled_date: string;

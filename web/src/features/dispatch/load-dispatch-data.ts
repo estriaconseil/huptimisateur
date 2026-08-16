@@ -1,4 +1,5 @@
 import { format, parseISO, startOfWeek } from "date-fns";
+import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
 
 import { getBusinessWeekDateStrings } from "@/lib/dispatch/business-week";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
@@ -12,8 +13,13 @@ export type JobPickerRow = Pick<
   Job,
   "id" | "estimated_duration_hours" | "status" | "installation_info" | "preferred_date" | "created_at"
 > & {
-  clients: { name: string; city: string | null; lat: number | null; lng: number | null } | null;
-  installation_address: { lat: number | null; lng: number | null } | null;
+  clients: { name: string; city: string | null } | null;
+  installation_address: {
+    lat: number | null;
+    lng: number | null;
+    city: string | null;
+    address_formatted: string | null;
+  } | null;
 };
 
 export type RetourAFaireRow = {
@@ -27,7 +33,28 @@ function mondayFromParam(weekParam: string | undefined): Date {
   if (weekParam && /^\d{4}-\d{2}-\d{2}$/.test(weekParam)) {
     return startOfWeek(parseISO(weekParam), { weekStartsOn: 1 });
   }
-  return startOfWeek(new Date(), { weekStartsOn: 1 });
+  return defaultBusinessWeekMonday();
+}
+
+function unitsMissingSerial(quotes: unknown): boolean {
+  const list = Array.isArray(quotes) ? quotes : quotes ? [quotes] : [];
+  for (const q of list) {
+    const raw = (q as { quote_units?: unknown }).quote_units;
+    const units = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    for (const u of units) {
+      const row = u as {
+        brand?: string | null;
+        model?: string | null;
+        unit_subtotal?: number | null;
+        serial_number?: string | null;
+        serial_bypass?: boolean | null;
+      };
+      const filled = !!(row.brand?.trim() || row.model?.trim() || (row.unit_subtotal ?? 0) > 0);
+      if (!filled) continue;
+      if (row.serial_bypass || !row.serial_number?.trim()) return true;
+    }
+  }
+  return false;
 }
 
 export async function loadDispatchPageData(weekParam: string | undefined) {
@@ -67,7 +94,8 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
           id,
           estimated_duration_hours,
           clients ( name, city, phone, email, lat, lng, address_formatted ),
-          installation_addresses!installation_address_id ( lat, lng, city, address_formatted )
+          installation_addresses!installation_address_id ( lat, lng, city, address_formatted ),
+          quotes ( quote_units ( serial_number, serial_bypass, brand, model, unit_subtotal ) )
         )
       `
       )
@@ -87,7 +115,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         preferred_date,
         created_at,
         clients ( name, city ),
-        installation_addresses!installation_address_id ( lat, lng )
+        installation_addresses!installation_address_id ( lat, lng, city, address_formatted )
       `
       )
       .eq("status", "a_planifier")
@@ -113,8 +141,13 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       clients: unknown;
       installation_addresses: unknown;
     };
-    const clients = unwrapRelation<{ name: string; city: string | null; lat: number | null; lng: number | null }>(row.clients);
-    const installation_address = unwrapRelation<{ lat: number | null; lng: number | null }>(row.installation_addresses);
+    const clients = unwrapRelation<{ name: string; city: string | null }>(row.clients);
+    const installation_address = unwrapRelation<{
+      lat: number | null;
+      lng: number | null;
+      city: string | null;
+      address_formatted: string | null;
+    }>(row.installation_addresses);
     return {
       id: row.id,
       estimated_duration_hours: row.estimated_duration_hours as EstimatedDurationHours,
@@ -142,6 +175,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       estimated_duration_hours: number;
       clients: unknown;
       installation_addresses: unknown;
+      quotes: unknown;
     }>(row.jobs);
     const job: EnrichedScheduleRow["job"] = jo
       ? {
@@ -162,6 +196,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
             city: string | null;
             address_formatted: string | null;
           }>(jo.installation_addresses),
+          missingSerial: unitsMissingSerial(jo.quotes),
         }
       : null;
     return {

@@ -43,7 +43,8 @@ export default async function APlanifierPage({
   searchParams: Promise<{ highlight?: string; job?: string }>;
 }) {
   const sp = await searchParams;
-  const highlight = sp.job ?? sp.highlight ?? null;
+  const highlight = sp.highlight ?? null;
+  const openJobId = sp.job ?? null;
 
   const supabase = await createServerSupabaseClient();
 
@@ -129,6 +130,7 @@ export default async function APlanifierPage({
       jobs={jobs}
       weekIso={weekMondayIso()}
       highlightJobId={highlight}
+      scrollJobId={openJobId ?? highlight}
       fetchError={error?.message ?? null}
       fullDayThreshold={fullDayThreshold}
     />

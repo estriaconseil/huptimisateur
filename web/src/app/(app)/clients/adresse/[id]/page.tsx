@@ -177,8 +177,8 @@ export default async function AdresseFichePage({
           </div>
           {cityLine && <p className="text-muted-foreground text-sm mt-1 pl-6">{cityLine}</p>}
           {addr.lat != null && (
-            <p className="text-[11px] text-emerald-600 pl-6 mt-0.5">
-              ✓ Coordonnées GPS — {addr.lat.toFixed(5)}, {addr.lng?.toFixed(5)}
+            <p className="text-[11px] text-muted-foreground pl-6 mt-0.5">
+              GPS {addr.lat.toFixed(5)}, {addr.lng?.toFixed(5)}
             </p>
           )}
         </div>
@@ -188,24 +188,24 @@ export default async function AdresseFichePage({
       {client && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-400">
+            <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Contact actuel
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1 text-sm">
+          <CardContent className="space-y-0.5 text-sm">
             <p className="font-semibold">{client.name}</p>
-            {client.phone && (
-              <a
-                href={`tel:${client.phone}`}
-                className="inline-flex items-center gap-1.5 text-muted-foreground hover:text-sky-700 hover:underline"
-              >
-                <Phone className="size-3.5" />
-                {client.phone}
-              </a>
-            )}
-            {client.email && (
-              <p className="text-muted-foreground">{client.email}</p>
-            )}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-muted-foreground">
+              {client.phone && (
+                <a
+                  href={`tel:${client.phone}`}
+                  className="inline-flex items-center gap-1.5 hover:text-foreground hover:underline"
+                >
+                  <Phone className="size-3.5" />
+                  {client.phone}
+                </a>
+              )}
+              {client.email && <span>{client.email}</span>}
+            </div>
             {client.billing_address && (
               <p className="text-xs text-muted-foreground mt-1">
                 Facturation : {client.billing_address}
@@ -236,7 +236,7 @@ export default async function AdresseFichePage({
       {/* Jobs actuels */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+          <CardTitle className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Jobs — {client?.name ?? "Client"}
           </CardTitle>
         </CardHeader>
@@ -337,41 +337,36 @@ export default async function AdresseFichePage({
 function JobCard({ job }: { job: JobRow }) {
   const fiche = jobFicheLink(job.status, job.id);
   return (
-    <div className="flex flex-wrap items-center gap-2 px-6 py-3">
-      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", statusColor(job.status))}>
+    <div className="flex items-center gap-3 px-6 py-2.5">
+      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0", statusColor(job.status))}>
         {statusLabel(job.status)}
       </span>
-      <span className="text-xs text-muted-foreground tabular-nums">
+      <span className="text-xs text-muted-foreground tabular-nums shrink-0">
         {job.estimated_duration_hours} h
       </span>
-      {job.preferred_date && (
-        <span className="text-xs text-muted-foreground">
-          Souhaitée : {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
-        </span>
-      )}
-      {job.installation_info && (
-        <span className="truncate text-xs text-muted-foreground max-w-[14rem]">
-          {job.installation_info.slice(0, 80)}{job.installation_info.length > 80 ? "…" : ""}
-        </span>
-      )}
-      <div className="ml-auto flex items-center gap-1">
+      {job.quote_number ? (
         <Link
-          href={fiche.href}
-          className={cn(buttonVariants({ variant: "default", size: "sm" }), "h-7 gap-1 text-xs")}
+          href={`/ventes/soumission/${job.id}`}
+          className="text-xs text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 min-w-0 truncate"
         >
-          <ExternalLink className="size-3.5" />
-          {fiche.label}
+          <FileText className="size-3 shrink-0" />
+          #{job.quote_number}
         </Link>
-        {job.quote_id && (
-          <Link
-            href={`/ventes/soumission/${job.id}`}
-            className={cn(buttonVariants({ variant: "secondary", size: "sm" }), "h-7 gap-1 text-xs")}
-          >
-            <FileText className="size-3.5" />
-            {job.quote_number ? `#${job.quote_number}` : "Soumission"}
-          </Link>
-        )}
-      </div>
+      ) : (
+        <span className="text-xs text-muted-foreground italic">Pas de soumission</span>
+      )}
+      {job.preferred_date && (
+        <span className="hidden sm:inline text-xs text-muted-foreground">
+          {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
+        </span>
+      )}
+      <Link
+        href={fiche.href}
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 ml-auto shrink-0 text-xs gap-1")}
+      >
+        Ouvrir
+        <ExternalLink className="size-3" />
+      </Link>
     </div>
   );
 }

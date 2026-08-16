@@ -12,6 +12,7 @@ export type DaySlotBusy = {
   city: string | null;
   phone: string | null;
   email: string | null;
+  missingSerial: boolean;
 };
 
 export type DayDispatchState = {
@@ -46,6 +47,8 @@ export type EnrichedScheduleRow = {
       city?: string | null;
       address_formatted?: string | null;
     } | null;
+    /** Unité remplie sans # série, ou répartie avec bypass. */
+    missingSerial?: boolean;
   } | null;
 };
 
@@ -76,11 +79,14 @@ export function buildDispatchStateMap(
 
     const label = labelFromRow(row);
     const city =
+      row.job?.installation_address?.city ??
+      cityFromAddress(row.job?.installation_address?.address_formatted) ??
       row.job?.clients?.city ??
       cityFromAddress(row.job?.clients?.address_formatted) ??
       null;
     const phone = row.job?.clients?.phone ?? null;
     const email = row.job?.clients?.email ?? null;
+    const missingSerial = row.job?.missingSerial ?? false;
 
     if (row.slot_type === "full_day") {
       day.fullDay = true;
@@ -92,13 +98,14 @@ export function buildDispatchStateMap(
         city,
         phone,
         email,
+        missingSerial,
       };
       day.am = busy;
       day.pm = busy;
     } else if (row.slot_type === "am") {
-      day.am = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email };
+      day.am = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial };
     } else if (row.slot_type === "pm") {
-      day.pm = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email };
+      day.pm = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial };
     }
   }
 

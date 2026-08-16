@@ -7,16 +7,17 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-form";
 import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
+import { quoteBackLink } from "@/lib/quote-back";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ print?: string }>;
+  searchParams: Promise<{ print?: string; from?: string; week?: string }>;
 };
 
 export default async function AppointmentDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { print } = await searchParams;
+  const { print, from, week } = await searchParams;
   const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
@@ -108,17 +109,18 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   };
 
   const weekDate = format(parseISO(appt.scheduled_date), "yyyy-MM-dd");
+  const back = quoteBackLink({ from, week, alreadyConverted, salesWeek: weekDate });
 
   return (
     <div className="max-w-4xl mx-auto">
       <AutoPrint enabled={autoPrint} />
       {/* Retour */}
       <Link
-        href={`/ventes?week=${weekDate}`}
+        href={back.href}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 print:hidden"
       >
         <ArrowLeft className="size-4" />
-        Retour au calendrier
+        {back.label}
       </Link>
 
       <div className="mb-6 print:hidden flex flex-wrap items-start justify-between gap-3">

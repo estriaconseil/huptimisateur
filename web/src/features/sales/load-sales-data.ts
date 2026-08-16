@@ -1,6 +1,7 @@
 /** Chargement de données serveur uniquement — ne pas importer dans les composants client. */
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { cityFromAddress } from "@/lib/address";
 import { getBusinessWeekDateStrings } from "@/lib/dispatch/business-week";
 import type { SalesPageData, SalespersonForCalendar, BlockRow } from "./sales-utils";
 
@@ -24,7 +25,7 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
 
     supabase
       .from("sales_appointments")
-      .select("id, salesperson_id, client_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted )")
+      .select("id, salesperson_id, client_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted, city ), installation_addresses!installation_address_id ( city, address_formatted )")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekDates[weekDates.length - 1])
       .neq("status", "cancelled"),
@@ -136,16 +137,27 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         status: string;
         notes: string | null;
         quote_id: string | null;
-        clients: { name: string; phone: string | null; address_formatted: string | null } | { name: string; phone: string | null; address_formatted: string | null }[] | null;
+        clients: { name: string; phone: string | null; address_formatted: string | null; city: string | null } | { name: string; phone: string | null; address_formatted: string | null; city: string | null }[] | null;
+        installation_addresses: { city: string | null; address_formatted: string | null } | { city: string | null; address_formatted: string | null }[] | null;
       };
       const c = Array.isArray(raw.clients) ? raw.clients[0] : raw.clients;
+      const inst = Array.isArray(raw.installation_addresses)
+        ? raw.installation_addresses[0]
+        : raw.installation_addresses;
+      const clientCity =
+        inst?.city?.trim() ||
+        cityFromAddress(inst?.address_formatted) ||
+        c?.city?.trim() ||
+        cityFromAddress(c?.address_formatted) ||
+        null;
       return {
         id: raw.id,
         salesperson_id: raw.salesperson_id,
         client_id: raw.client_id,
         client_name: c?.name ?? "—",
         client_phone: c?.phone ?? null,
-        client_address: c?.address_formatted ?? null,
+        client_address: inst?.address_formatted ?? c?.address_formatted ?? null,
+        client_city: clientCity,
         client_lat: raw.client_lat,
         client_lng: raw.client_lng,
         scheduled_date: raw.scheduled_date,

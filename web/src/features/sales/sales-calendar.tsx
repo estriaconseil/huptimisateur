@@ -4,12 +4,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { addWeeks, subWeeks, format, getISODay, parse, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, ChevronLeft, ChevronRight, Plus, Clock, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Clock, FileText, RefreshCw } from "lucide-react";
 
 import { cityFromAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
 import { SlotActionModal } from "./slot-action-modal";
 import { AppointmentActionModal } from "./appointment-action-modal";
+import { QuickProspectModal } from "./pipeline-client";
 import { FIXED_TIME_SLOTS, APPOINTMENT_DURATION_MINUTES } from "./sales-utils";
 import type { SalesPageData, AppointmentRow, BlockRow } from "./sales-utils";
 
@@ -62,10 +63,11 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
   const router = useRouter();
   const [dialogSlot, setDialogSlot] = useState<PendingSlot>(null);
   const [activeAppt, setActiveAppt] = useState<AppointmentRow | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const anyModalOpen = dialogSlot !== null || activeAppt !== null;
+  const anyModalOpen = dialogSlot !== null || activeAppt !== null || showCreate;
 
   useEffect(() => {
     if (anyModalOpen) {
@@ -122,14 +124,11 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
             </span>
           </button>
           <button
-            onClick={() => {
-              const sp = salespeople.find((s) => s.active) ?? salespeople[0];
-              if (sp) setDialogSlot({ salesperson_id: sp.id, salesperson_name: sp.name, date: weekDates[0], start_time: FIXED_TIME_SLOTS[0] });
-            }}
+            onClick={() => setShowCreate(true)}
             className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
             <Plus className="size-4" />
-            Nouveau rendez-vous
+            Nouveau prospect
           </button>
         </div>
       </div>
@@ -257,25 +256,21 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                                   onClick={() => setActiveAppt(appt)}
                                   className={cn(
                                     "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
-                                    appt.missing_serial
-                                      ? "bg-orange-50 border-orange-400 text-orange-900"
+                                    appt.quote_id
+                                      ? "bg-emerald-50 border-emerald-300 text-emerald-900"
                                       : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
                                   )}
                                 >
                                   <div className="font-semibold truncate flex items-center gap-1">
                                     <span className="truncate">{appt.client_name}</span>
-                                    {appt.missing_serial && (
-                                      <span title="# série manquant">
-                                        <AlertTriangle className="shrink-0 size-3 text-orange-500" />
+                                    {appt.quote_id && (
+                                      <span title="Soumission commencée">
+                                        <FileText className="shrink-0 size-3 opacity-70" />
                                       </span>
-                                    )}
-                                    {appt.quote_id && !appt.missing_serial && (
-                                      <span className="shrink-0 opacity-60" title="Soumission">📄</span>
                                     )}
                                   </div>
                                   <div className="opacity-70 truncate">
-                                    {cityFromAddress(appt.client_address) ??
-                                      (STATUS_LABELS[appt.status] ?? appt.status)}
+                                    {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
                                   </div>
                                 </button>
                               ) : !sp.active ? null : (
@@ -309,8 +304,8 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
           </div>
         ))}
         <div className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-sm bg-orange-50 border border-orange-400" />
-          # Série manquant
+          <span className="inline-block size-2.5 rounded-sm bg-emerald-50 border border-emerald-300" />
+          Soumission commencée
         </div>
         <div className="flex items-center gap-1.5">
           <span className="inline-block size-2.5 rounded-sm bg-orange-100 border border-orange-300" />
@@ -333,6 +328,14 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
           onClose={() => setActiveAppt(null)}
           appointment={activeAppt}
           salespeople={salespeople}
+        />
+      )}
+
+      {showCreate && (
+        <QuickProspectModal
+          salespeople={salespeople}
+          onClose={() => { setShowCreate(false); router.refresh(); }}
+          onBooked={() => { setShowCreate(false); router.refresh(); }}
         />
       )}
     </>

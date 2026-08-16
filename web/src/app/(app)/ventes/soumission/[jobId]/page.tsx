@@ -6,18 +6,19 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-form";
 import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
+import { quoteBackLink } from "@/lib/quote-back";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ jobId: string }>;
-  searchParams: Promise<{ print?: string }>;
+  searchParams: Promise<{ print?: string; from?: string; week?: string }>;
 };
 
 const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
 
 export default async function JobQuotePage({ params, searchParams }: Props) {
   const { jobId } = await params;
-  const { print } = await searchParams;
+  const { print, from, week } = await searchParams;
   const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
@@ -35,7 +36,12 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
 
   // Si un RDV est lié, rediriger vers la page RDV (source de vérité calendrier)
   if (job.appointment_id) {
-    redirect(`/ventes/rdv/${job.appointment_id}${autoPrint ? "?print=1" : ""}`);
+    const qs = new URLSearchParams();
+    if (autoPrint) qs.set("print", "1");
+    if (from) qs.set("from", from);
+    if (week) qs.set("week", week);
+    const suffix = qs.size ? `?${qs.toString()}` : "";
+    redirect(`/ventes/rdv/${job.appointment_id}${suffix}`);
   }
 
   const clientRaw = job.clients;
@@ -82,18 +88,17 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
   const salespeople: Salesperson[] = (spData ?? []) as Salesperson[];
   const nextQuoteNumber = quote ? undefined : await getNextQuoteNumber();
   const alreadyConverted = INSTALL_STATUSES.includes(job.status);
-  const backHref = alreadyConverted ? "/a-planifier" : "/ventes/pipeline";
-  const backLabel = alreadyConverted ? "Retour aux jobs à placer" : "Retour au pipeline";
+  const back = quoteBackLink({ from, week, alreadyConverted });
 
   return (
     <div className="max-w-4xl mx-auto">
       <AutoPrint enabled={autoPrint} />
       <Link
-        href={backHref}
+        href={back.href}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 print:hidden"
       >
         <ArrowLeft className="size-4" />
-        {backLabel}
+        {back.label}
       </Link>
 
       <div className="mb-6 print:hidden flex flex-wrap items-start justify-between gap-3">

@@ -21,7 +21,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { addDays, addWeeks, format, parseISO, startOfWeek, subWeeks } from "date-fns";
+import { addDays, addWeeks, format, parseISO, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,7 @@ import {
 import { updateClient, updateJob, addInstallationAddress, updateInstallationAddress } from "@/actions/clients";
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
+import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
 import { updateJobStatus, updateJobFlag, acceptJobAsPlanifier } from "@/actions/jobs";
 import { statusLabel, statusColor, flagColor, flagLabel } from "@/lib/job-status";
 import { JobTimeline } from "@/features/jobs/job-timeline";
@@ -278,7 +279,7 @@ const OPEN_JOB_STATUSES = [
   "a_planifier", "reparti", "retour_a_faire",
 ] as const;
 
-function QuickProspectModal({
+export function QuickProspectModal({
   onClose,
   salespeople,
   onBooked,
@@ -1283,9 +1284,7 @@ export function WeekCalendar({
   /** Si fourni, remplace le booking (ex. déplacement de RDV). */
   onSelectSlot?: (pick: WeekSlotPick) => void | Promise<void>;
 }) {
-  const [monday, setMonday] = useState<Date>(() =>
-    startOfWeek(new Date(), { weekStartsOn: 1 })
-  );
+  const [monday, setMonday] = useState<Date>(() => defaultBusinessWeekMonday());
   const [weekData, setWeekData] = useState<SalespersonWeekData[] | null>(null);
   const [loading, startLoad] = useTransition();
   const [booking, startBook] = useTransition();
@@ -1906,7 +1905,7 @@ function ProspectCard({
                 Accepter
               </Button>
             )}
-            <a href={`/ventes/soumission/${job.id}`}>
+            <a href={`/ventes/soumission/${job.id}?from=pipeline`}>
               <Button
                 size="sm"
                 variant={job.has_quote ? "default" : "secondary"}

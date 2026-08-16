@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-/** Seuils d'affichage : &lt;20 vert, 20–40 jaune, &gt;40 rouge. */
+/** Seuils d'affichage : &lt;20 vert, 20–40 orange, &gt;40 rouge. */
 export function travelMinutesFromSeconds(seconds: number | null | undefined): number | null {
   if (seconds == null) return null;
   return Math.round(seconds / 60);
@@ -8,9 +8,9 @@ export function travelMinutesFromSeconds(seconds: number | null | undefined): nu
 
 export function travelDurationColorClass(minutes: number | null | undefined): string {
   if (minutes == null) return "text-muted-foreground";
-  if (minutes < 20) return "text-emerald-600";
-  if (minutes <= 40) return "text-amber-500";
-  return "text-red-600";
+  if (minutes < 20) return "text-emerald-700";
+  if (minutes <= 40) return "text-orange-500";
+  return "text-red-700";
 }
 
 export function formatTravelDurationLabel(seconds: number | null | undefined): string {
@@ -28,7 +28,7 @@ type TravelDurationProps = {
   neutral?: boolean;
 };
 
-/** Affiche « N min » coloré selon les seuils (&lt;20 vert, 20–40 jaune, &gt;40 rouge). */
+/** Affiche « N min » coloré selon les seuils (&lt;20 vert, 20–40 orange, &gt;40 rouge). */
 export function TravelDuration({ seconds, className, numberClassName, neutral }: TravelDurationProps) {
   const minutes = travelMinutesFromSeconds(seconds ?? null);
   if (minutes == null) {

@@ -11,6 +11,8 @@ import {
   FolderOpen,
   HardHat,
   ListTodo,
+  ChevronLeft,
+  ChevronRight,
   Printer,
   Settings2,
   Users,
@@ -22,10 +24,19 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { UserRole } from "@/types/domain";
 
 type NavItem = { href: string; label: string; icon: React.ElementType };
 type SectionId = "ventes" | "installations" | "clients" | "equipes" | "systeme" | "admin";
+
+const OPEN_SECTIONS_KEY = "huppe.sidebar.openSections";
+const COLLAPSED_KEY = "huppe.sidebar.collapsed";
 
 const installationItems: NavItem[] = [
   { href: "/a-planifier", label: "Dashboard installation", icon: ListTodo },
@@ -65,12 +76,85 @@ function sectionContainsPath(items: NavItem[], pathname: string): boolean {
   );
 }
 
+function isItemActive(href: string, pathname: string): boolean {
+  if (href === "/ventes") {
+    return pathname === "/ventes" || pathname.startsWith("/ventes/rdv") || pathname.startsWith("/ventes/soumission/");
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function defaultOpenSections(isSalesperson: boolean, isAdmin: boolean): SectionId[] {
+  if (isSalesperson) return ["ventes"];
+  const ids: SectionId[] = ["ventes", "installations", "clients", "equipes", "systeme"];
+  if (isAdmin) ids.push("admin");
+  return ids;
+}
+
+function readOpenSections(fallback: SectionId[]): Set<SectionId> {
+  if (typeof window === "undefined") return new Set(fallback);
+  try {
+    const raw = localStorage.getItem(OPEN_SECTIONS_KEY);
+    if (!raw) return new Set(fallback);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return new Set(fallback);
+    return new Set(parsed.filter((id): id is SectionId => typeof id === "string"));
+  } catch {
+    return new Set(fallback);
+  }
+}
+
+function readCollapsed(): boolean {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem(COLLAPSED_KEY) === "1";
+}
+
+function NavLink({
+  item,
+  pathname,
+  collapsed,
+}: {
+  item: NavItem;
+  pathname: string;
+  collapsed: boolean;
+}) {
+  const { href, label, icon: Icon } = item;
+  const active = isItemActive(href, pathname);
+  const link = (
+    <Link
+      href={href}
+      title={collapsed ? label : undefined}
+      className={cn(
+        "flex items-center rounded-md text-sm font-medium transition-colors",
+        collapsed ? "justify-center px-0 py-2" : "gap-2 px-3 py-2",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+      )}
+    >
+      <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
+      {!collapsed && <span className="truncate">{label}</span>}
+    </Link>
+  );
+
+  if (!collapsed) return link;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={link} />
+      <TooltipContent side="right" sideOffset={8}>
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function NavGroup({
   id,
   title,
   items,
   pathname,
   open,
+  collapsed,
   onToggle,
 }: {
   id: SectionId;
@@ -78,8 +162,19 @@ function NavGroup({
   items: NavItem[];
   pathname: string;
   open: boolean;
+  collapsed: boolean;
   onToggle: (id: SectionId) => void;
 }) {
+  if (collapsed) {
+    return (
+      <div className="mt-2 first:mt-0 space-y-0.5">
+        {items.map((item) => (
+          <NavLink key={item.href} item={item} pathname={pathname} collapsed />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-2 first:mt-0">
       <button
@@ -100,28 +195,9 @@ function NavGroup({
 
       {open && (
         <div className="space-y-0.5 mt-0.5">
-          {items.map(({ href, label, icon: Icon }) => {
-            // Évite que /ventes active aussi /ventes/pipeline et /ventes/soumissions
-            const active =
-              href === "/ventes"
-                ? pathname === "/ventes" || pathname.startsWith("/ventes/rdv") || pathname.startsWith("/ventes/soumission/")
-                : pathname === href || pathname.startsWith(`${href}/`);
-            return (
-              <Link
-                key={href}
-                href={href}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/60"
-                )}
-              >
-                <Icon className="size-4 shrink-0 opacity-80" aria-hidden />
-                {label}
-              </Link>
-            );
-          })}
+          {items.map((item) => (
+            <NavLink key={item.href} item={item} pathname={pathname} collapsed={false} />
+          ))}
         </div>
       )}
     </div>
@@ -147,7 +223,6 @@ function sectionForPath(pathname: string, isSalesperson: boolean, isAdmin: boole
   if (isAdmin && sectionContainsPath(adminItems, pathname)) {
     return "admin";
   }
-  // Défaut : Ventes pour vendeurs, Installations sinon
   return isSalesperson ? "ventes" : "installations";
 }
 
@@ -155,12 +230,30 @@ export function AppSidebar({ role }: { role: UserRole }) {
   const pathname = usePathname();
   const isSalesperson = role === "salesperson";
   const isAdmin = role === "admin";
+  const defaults = defaultOpenSections(isSalesperson, isAdmin);
 
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(() =>
-    new Set([sectionForPath(pathname, isSalesperson, isAdmin)])
-  );
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(() => readOpenSections(defaults));
+  const [collapsed, setCollapsed] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
-  // Ouvre automatiquement la section de la page courante
+  useEffect(() => {
+    setOpenSections(readOpenSections(defaults));
+    setCollapsed(readCollapsed());
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(OPEN_SECTIONS_KEY, JSON.stringify([...openSections]));
+  }, [openSections, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
+  }, [collapsed, hydrated]);
+
+  // Ouvre la section de la page courante sans fermer les autres
   useEffect(() => {
     const current = sectionForPath(pathname, isSalesperson, isAdmin);
     setOpenSections((prev) => {
@@ -181,90 +274,117 @@ export function AppSidebar({ role }: { role: UserRole }) {
   };
 
   return (
-    <aside className="bg-sidebar text-sidebar-foreground flex w-56 shrink-0 flex-col border-r border-sidebar-border print:hidden">
-      {/* Logo */}
-      <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
-        <div className="relative size-8 shrink-0 overflow-hidden rounded">
-          <Image
-            src="/logo.jpg"
-            alt="Logo Huppé Réfrigération"
-            fill
-            sizes="32px"
-            className="object-contain"
-            priority
-          />
+    <TooltipProvider delay={200}>
+      <aside
+        className={cn(
+          "bg-sidebar text-sidebar-foreground flex shrink-0 flex-col border-r border-sidebar-border print:hidden transition-[width] duration-200",
+          collapsed ? "w-14" : "w-56"
+        )}
+      >
+        <div className={cn(
+          "flex h-14 items-center border-b border-sidebar-border",
+          collapsed ? "justify-center px-1" : "gap-2 px-3"
+        )}>
+          {!collapsed && (
+            <>
+              <div className="relative size-8 shrink-0 overflow-hidden rounded">
+                <Image
+                  src="/logo.jpg"
+                  alt="Logo Huppé Réfrigération"
+                  fill
+                  sizes="32px"
+                  className="object-contain"
+                  priority
+                />
+              </div>
+              <div className="leading-tight min-w-0 flex-1">
+                <p className="text-sm font-bold tracking-wide text-sidebar-foreground truncate">Huptimisateur</p>
+              </div>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            className="flex size-8 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground transition-colors"
+            aria-label={collapsed ? "Agrandir le menu" : "Réduire le menu"}
+            title={collapsed ? "Agrandir le menu" : "Réduire le menu"}
+          >
+            {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+          </button>
         </div>
-        <div className="leading-tight">
-          <p className="text-sm font-bold tracking-wide text-sidebar-foreground">Huptimisateur</p>
-        </div>
-      </div>
 
-      {/* Nav */}
-      <nav className="flex flex-1 flex-col gap-0 overflow-y-auto p-2">
-        <NavGroup
-          id="ventes"
-          title="Ventes"
-          items={salesItems}
-          pathname={pathname}
-          open={openSections.has("ventes")}
-          onToggle={toggle}
-        />
-
-        {!isSalesperson && (
+        <nav className="flex flex-1 flex-col gap-0 overflow-y-auto overflow-x-hidden p-2">
           <NavGroup
-            id="installations"
-            title="Installations"
-            items={installationItems}
+            id="ventes"
+            title="Ventes"
+            items={salesItems}
             pathname={pathname}
-            open={openSections.has("installations")}
+            open={openSections.has("ventes")}
+            collapsed={collapsed}
             onToggle={toggle}
           />
-        )}
 
-        {!isSalesperson && (
-          <NavGroup
-            id="clients"
-            title="Clients"
-            items={clientItems}
-            pathname={pathname}
-            open={openSections.has("clients")}
-            onToggle={toggle}
-          />
-        )}
+          {!isSalesperson && (
+            <NavGroup
+              id="installations"
+              title="Installations"
+              items={installationItems}
+              pathname={pathname}
+              open={openSections.has("installations")}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          )}
 
-        {!isSalesperson && (
-          <NavGroup
-            id="equipes"
-            title="Équipes"
-            items={teamItems}
-            pathname={pathname}
-            open={openSections.has("equipes")}
-            onToggle={toggle}
-          />
-        )}
+          {!isSalesperson && (
+            <NavGroup
+              id="clients"
+              title="Clients"
+              items={clientItems}
+              pathname={pathname}
+              open={openSections.has("clients")}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          )}
 
-        {!isSalesperson && (
-          <NavGroup
-            id="systeme"
-            title="Système"
-            items={systemItems}
-            pathname={pathname}
-            open={openSections.has("systeme")}
-            onToggle={toggle}
-          />
-        )}
+          {!isSalesperson && (
+            <NavGroup
+              id="equipes"
+              title="Équipes"
+              items={teamItems}
+              pathname={pathname}
+              open={openSections.has("equipes")}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          )}
 
-        {isAdmin && (
-          <NavGroup
-            id="admin"
-            title="Admin"
-            items={adminItems}
-            pathname={pathname}
-            open={openSections.has("admin")}
-            onToggle={toggle}
-          />
-        )}
-      </nav>
-    </aside>
+          {!isSalesperson && (
+            <NavGroup
+              id="systeme"
+              title="Système"
+              items={systemItems}
+              pathname={pathname}
+              open={openSections.has("systeme")}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          )}
+
+          {isAdmin && (
+            <NavGroup
+              id="admin"
+              title="Admin"
+              items={adminItems}
+              pathname={pathname}
+              open={openSections.has("admin")}
+              collapsed={collapsed}
+              onToggle={toggle}
+            />
+          )}
+        </nav>
+      </aside>
+    </TooltipProvider>
   );
 }

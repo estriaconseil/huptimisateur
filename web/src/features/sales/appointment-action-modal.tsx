@@ -245,7 +245,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                       size="icon"
                       onClick={() => {
                         onClose();
-                        router.push(`/ventes/rdv/${appointment.id}`);
+                        router.push(`/ventes/rdv/${appointment.id}?from=ventes`);
                       }}
                     />
                   }

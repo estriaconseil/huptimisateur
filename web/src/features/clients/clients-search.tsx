@@ -40,10 +40,13 @@ export function ClientsSearchInput({ initialQ }: { initialQ: string }) {
   const router = useRouter();
   const [value, setValue] = useState(initialQ);
   const [, startTransition] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Sync quand le parent recharge avec un initialQ différent (ex. retour arrière)
+  // Sync quand le parent recharge avec un initialQ différent (ex. retour arrière),
+  // mais pas pendant que l'utilisateur tape (évite d'effacer le dernier caractère).
   useEffect(() => {
+    if (document.activeElement === inputRef.current) return;
     setValue(initialQ);
   }, [initialQ]);
 
@@ -72,6 +75,7 @@ export function ClientsSearchInput({ initialQ }: { initialQ: string }) {
     <div className="relative flex-1 min-w-[240px]">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <Input
+        ref={inputRef}
         autoFocus
         placeholder="Nom, téléphone, ville ou adresse d'installation…"
         value={value}

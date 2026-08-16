@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { addDays, format, parseISO, startOfWeek } from "date-fns";
+import { addDays, addWeeks, format, parseISO, startOfWeek, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 import {
   CalendarDays,
+  ChevronLeft,
   ChevronRight,
   FileText,
   Loader2,
@@ -14,6 +15,7 @@ import {
   Phone,
   PlusCircle,
   Search,
+  Sparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -26,13 +28,23 @@ import { statusLabel, statusColor } from "@/lib/job-status";
 import { cityFromAddress } from "@/lib/address";
 import { TravelDuration } from "@/lib/format-travel";
 import { cn } from "@/lib/utils";
+import { withQuoteOrigin } from "@/lib/quote-back";
 import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
 import { assignJobToSlot } from "@/actions/schedules";
+import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { updateClient, updateJob } from "@/actions/clients";
 import { JobTimeline } from "@/features/jobs/job-timeline";
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import type { InstallJob } from "@/app/(app)/a-planifier/page";
 import type { ScheduleSuggestion, EstimatedDurationHours } from "@/types/domain";
+import {
+  buildDispatchStateMap,
+  canAssignFullDay,
+  canAssignToHalf,
+  getDayState,
+  type EnrichedScheduleRow,
+} from "@/services/planning/dispatch-state";
+import type { TeamWithTechs } from "@/features/dispatch/load-dispatch-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants & helpers
@@ -88,6 +100,7 @@ function OptimizerDialog({
   onClose: () => void;
   onAssigned: () => void;
 }) {
+  const [mode, setMode] = useState<"list" | "calendar">("list");
   const [loading, setLoading] = useState(true);
   const [suggestions, setSuggestions] = useState<ScheduleSuggestion[]>([]);
   const [warning, setWarning] = useState<string | null>(null);
@@ -102,7 +115,6 @@ function OptimizerDialog({
     const startWeek = nextAvailableWeekMonday();
 
     async function fetchSuggestions() {
-      // First: try 4 weeks
       const res4 = await getDistanceSuggestionsForJob(job.id, startWeek, undefined, null, 4);
       if (cancelled) return;
 
@@ -112,7 +124,6 @@ function OptimizerDialog({
         return;
       }
 
-      // GPS warning (no coordinates) — don't try to extend, show the warning
       if (res4.warning) {
         setSuggestions(res4.suggestions);
         setWarning(res4.warning);
@@ -126,7 +137,6 @@ function OptimizerDialog({
         return;
       }
 
-      // Nothing in 4 weeks — extend to 8 weeks (next month)
       setExtendedSearch(true);
       const res8 = await getDistanceSuggestionsForJob(job.id, startWeek, undefined, null, 8);
       if (cancelled) return;
@@ -147,14 +157,13 @@ function OptimizerDialog({
     return () => { cancelled = true; };
   }, [job.id]);
 
-  function pickSlot(s: ScheduleSuggestion) {
+  function pickSlot(teamId: string, date: string, half: "am" | "pm") {
     setAssignError(null);
-    const half: "am" | "pm" = s.slot === "pm" ? "pm" : "am";
     startAssign(async () => {
       const res = await assignJobToSlot({
         jobId: job.id,
-        teamId: s.teamId,
-        scheduledDate: s.date,
+        teamId,
+        scheduledDate: date,
         half,
         estimatedDurationHours: job.estimated_duration_hours as EstimatedDurationHours,
         fullDayThresholdHours: fullDayThreshold,
@@ -167,16 +176,20 @@ function OptimizerDialog({
     });
   }
 
+  function pickSuggestion(s: ScheduleSuggestion) {
+    const half: "am" | "pm" = s.slot === "pm" ? "pm" : "am";
+    pickSlot(s.teamId, s.date, half);
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-background rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
-        {/* Header */}
+      <div className="bg-background rounded-xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="px-5 pt-5 pb-4 border-b flex items-start justify-between gap-3 shrink-0">
           <div>
-            <h2 className="text-base font-semibold">Optimiser le trajet</h2>
+            <h2 className="text-base font-semibold">Placer dans le calendrier</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
               {job.clients?.name ?? "Client"} · {job.estimated_duration_hours} h
             </p>
@@ -186,58 +199,285 @@ function OptimizerDialog({
           </button>
         </div>
 
-        {/* Body */}
+        <div className="px-5 pt-3 shrink-0">
+          <div className="flex rounded-lg border overflow-hidden text-xs">
+            <button
+              type="button"
+              onClick={() => setMode("list")}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors ${
+                mode === "list" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+              }`}
+            >
+              <Sparkles className="size-3" />
+              Meilleur créneau
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("calendar")}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors border-l ${
+                mode === "calendar" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+              }`}
+            >
+              <CalendarDays className="size-3" />
+              Par calendrier
+            </button>
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-          {loading && (
-            <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
-              <span className="flex items-center gap-2">
-                <Loader2 className="size-4 animate-spin" />
-                {extendedSearch
-                  ? "Aucun créneau sur 4 semaines — recherche jusqu'à 8 semaines…"
-                  : "Calcul des distances en cours…"}
-              </span>
-            </div>
-          )}
-          {!loading && warning && (
-            <p className="text-sm rounded-md bg-destructive/10 text-destructive px-3 py-2">{warning}</p>
-          )}
           {assignError && (
             <p className="text-destructive text-sm rounded-md bg-destructive/10 px-3 py-2">{assignError}</p>
           )}
-          {!loading && extendedSearch && suggestions.length > 0 && (
-            <p className="text-xs text-amber-600 bg-amber-50 rounded-md px-3 py-1.5 border border-amber-200">
-              Les 4 prochaines semaines sont complètes — résultats sur les semaines 5 à 8.
-            </p>
-          )}
-          {suggestions.slice(0, 15).map((s, idx) => (
-            <button
-              key={`${s.teamId}-${s.date}-${s.slot}-${idx}`}
-              type="button"
-              disabled={assigning}
-              onClick={() => pickSlot(s)}
-              className="border-border hover:bg-accent w-full rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold capitalize">
-                  {format(parseISO(s.date), "EEEE d MMMM", { locale: fr })}
-                  <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                    {slotLabel(s.slot)}
+
+          {mode === "list" && (
+            <>
+              {loading && (
+                <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground py-8 justify-center">
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    {extendedSearch
+                      ? "Aucun créneau sur 4 semaines — recherche jusqu'à 8 semaines…"
+                      : "Calcul des distances en cours…"}
                   </span>
-                </span>
-                <TravelDuration
-                  seconds={s.durationSeconds}
-                  numberClassName="font-semibold"
-                  neutral={s.slot === "full_day"}
-                />
-              </div>
-              <div className="flex items-center justify-between mt-0.5">
-                <span className="text-xs text-muted-foreground">{s.teamName}</span>
-                {assigning && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
-              </div>
-            </button>
-          ))}
+                </div>
+              )}
+              {!loading && warning && (
+                <p className="text-sm rounded-md bg-destructive/10 text-destructive px-3 py-2">{warning}</p>
+              )}
+              {!loading && extendedSearch && suggestions.length > 0 && (
+                <p className="text-xs text-amber-600 bg-amber-50 rounded-md px-3 py-1.5 border border-amber-200">
+                  Les 4 prochaines semaines sont complètes — résultats sur les semaines 5 à 8.
+                </p>
+              )}
+              {suggestions.slice(0, 15).map((s, idx) => (
+                <button
+                  key={`${s.teamId}-${s.date}-${s.slot}-${idx}`}
+                  type="button"
+                  disabled={assigning}
+                  onClick={() => pickSuggestion(s)}
+                  className="border-border hover:bg-accent w-full rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold capitalize">
+                      {format(parseISO(s.date), "EEEE d MMMM", { locale: fr })}
+                      <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                        {slotLabel(s.slot)}
+                      </span>
+                    </span>
+                    <TravelDuration
+                      seconds={s.durationSeconds}
+                      numberClassName="font-semibold"
+                      neutral={s.slot === "full_day"}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between mt-0.5">
+                    <span className="text-xs text-muted-foreground">{s.teamName}</span>
+                    {assigning && <Loader2 className="size-3 animate-spin text-muted-foreground" />}
+                  </div>
+                </button>
+              ))}
+            </>
+          )}
+
+          {mode === "calendar" && (
+            <InstallWeekPicker
+              job={job}
+              assigning={assigning}
+              onPick={pickSlot}
+            />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function InstallWeekPicker({
+  job,
+  assigning,
+  onPick,
+}: {
+  job: InstallJob;
+  assigning: boolean;
+  onPick: (teamId: string, date: string, half: "am" | "pm") => void;
+}) {
+  const [monday, setMonday] = useState(nextAvailableWeekMonday);
+  const [loading, setLoading] = useState(true);
+  const [travelLoading, setTravelLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [weekDates, setWeekDates] = useState<string[]>([]);
+  const [teams, setTeams] = useState<TeamWithTechs[]>([]);
+  const [schedules, setSchedules] = useState<EnrichedScheduleRow[]>([]);
+  const [travelByKey, setTravelByKey] = useState<Map<string, number | null>>(new Map());
+
+  function loadWeek(weekIso: string) {
+    setMonday(weekIso);
+    setLoading(true);
+    setTravelLoading(true);
+    setError(null);
+    setTravelByKey(new Map());
+    void getInstallWeekGrid(weekIso).then((res) => {
+      setWeekDates(res.weekDates);
+      setTeams(res.teams);
+      setSchedules(res.schedules);
+      setLoading(false);
+    }).catch((e: unknown) => {
+      setError(e instanceof Error ? e.message : "Impossible de charger le calendrier.");
+      setLoading(false);
+    });
+    void getDistanceSuggestionsForJob(job.id, weekIso, undefined, null, 1).then((res) => {
+      const next = new Map<string, number | null>();
+      if (res.ok) {
+        for (const s of res.suggestions) {
+          next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
+        }
+      }
+      setTravelByKey(next);
+      setTravelLoading(false);
+    }).catch(() => {
+      setTravelLoading(false);
+    });
+  }
+
+  useEffect(() => {
+    loadWeek(monday);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stateMap = useMemo(() => buildDispatchStateMap(schedules), [schedules]);
+  const needsFullDay = job.estimated_duration_hours === 8;
+  const DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
+
+  function travelFor(teamId: string, dateStr: string, slot: "am" | "pm" | "full_day") {
+    return travelByKey.get(`${teamId}|${dateStr}|${slot}`) ?? null;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => loadWeek(format(subWeeks(parseISO(monday), 1), "yyyy-MM-dd"))}
+          disabled={loading || assigning}
+          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <span className="text-sm font-medium flex-1 text-center">
+          Semaine du {format(parseISO(monday), "d MMM yyyy", { locale: fr })}
+        </span>
+        <button
+          type="button"
+          onClick={() => loadWeek(format(addWeeks(parseISO(monday), 1), "yyyy-MM-dd"))}
+          disabled={loading || assigning}
+          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
+
+      {travelLoading && !loading && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Loader2 className="size-3 animate-spin" /> Calcul des temps de trajet…
+        </p>
+      )}
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+          <Loader2 className="size-4 animate-spin" /> Chargement du calendrier…
+        </div>
+      )}
+      {error && <p className="text-destructive text-sm">{error}</p>}
+
+      {!loading && teams.length === 0 && (
+        <p className="text-sm text-muted-foreground">Aucune équipe active.</p>
+      )}
+
+      {!loading && teams.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[640px] border-collapse text-xs">
+            <thead>
+              <tr className="bg-muted/50">
+                <th className="px-2 py-1.5 text-left font-medium text-muted-foreground border-b border-r">Équipe</th>
+                {weekDates.map((d, i) => (
+                  <th key={d} className="px-1 py-1.5 text-center font-medium text-muted-foreground border-b border-r last:border-r-0">
+                    <div>{DAY_NAMES[i]}</div>
+                    <div className="text-foreground">{format(parseISO(d), "d MMM", { locale: fr })}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {teams.map((team) => (
+                <tr key={team.id} className="border-b last:border-b-0">
+                  <td className="px-2 py-1 font-medium border-r align-top whitespace-nowrap">{team.name}</td>
+                  {weekDates.map((dateStr) => {
+                    const state = getDayState(stateMap, team.id, dateStr);
+                    const amFree = canAssignToHalf(state, "am", true);
+                    const pmFree = canAssignToHalf(state, "pm", true);
+                    const fullFree = canAssignFullDay(state, true);
+                    const canAm = needsFullDay ? fullFree : amFree;
+                    const canPm = needsFullDay ? false : pmFree;
+                    const amTravel = needsFullDay
+                      ? travelFor(team.id, dateStr, "full_day")
+                      : travelFor(team.id, dateStr, "am");
+                    const pmTravel = travelFor(team.id, dateStr, "pm");
+                    return (
+                      <td key={dateStr} className="p-0.5 border-r last:border-r-0 align-top">
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            type="button"
+                            disabled={assigning || !canAm}
+                            onClick={() => canAm && onPick(team.id, dateStr, "am")}
+                            className={cn(
+                              "rounded px-1.5 py-1 text-left disabled:opacity-40",
+                              canAm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                            )}
+                          >
+                            <span className="block">
+                              {needsFullDay
+                                ? (fullFree ? "Journée libre" : "Occupé")
+                                : (amFree ? "AM libre" : "AM occupé")}
+                            </span>
+                            {canAm && (
+                              <TravelDuration
+                                seconds={amTravel}
+                                className="text-[11px] font-semibold"
+                                numberClassName="font-semibold"
+                                neutral={needsFullDay}
+                              />
+                            )}
+                          </button>
+                          {!needsFullDay && (
+                            <button
+                              type="button"
+                              disabled={assigning || !canPm}
+                              onClick={() => canPm && onPick(team.id, dateStr, "pm")}
+                              className={cn(
+                                "rounded px-1.5 py-1 text-left disabled:opacity-40",
+                                canPm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                              )}
+                            >
+                              <span className="block">{pmFree ? "PM libre" : "PM occupé"}</span>
+                              {canPm && (
+                                <TravelDuration
+                                  seconds={pmTravel}
+                                  className="text-[11px] font-semibold"
+                                  numberClassName="font-semibold"
+                                />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -496,12 +736,14 @@ export function InstallJobsClient({
   jobs,
   weekIso,
   highlightJobId,
+  scrollJobId,
   fetchError,
   fullDayThreshold,
 }: {
   jobs: InstallJob[];
   weekIso: string;
   highlightJobId: string | null;
+  scrollJobId: string | null;
   fetchError: string | null;
   fullDayThreshold: number;
 }) {
@@ -516,12 +758,13 @@ export function InstallJobsClient({
   const deepLinkOpenedFor = useRef<string | null>(null);
 
   useEffect(() => {
-    if (highlightJobId && highlightRef.current) {
+    if (scrollJobId && highlightRef.current) {
       highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [highlightJobId]);
+  }, [scrollJobId]);
 
-  // Deep-link ?job= / ?highlight= → ouvrir la fiche installation
+  // Deep-link ?highlight= (après Répartir) → ouvrir « Placer dans le calendrier »
+  // ?job= (fiche client « Ouvrir ») → scroller seulement, sans ouvrir la modale
   useEffect(() => {
     if (!highlightJobId) {
       deepLinkOpenedFor.current = null;
@@ -531,7 +774,7 @@ export function InstallJobsClient({
     const found = jobs.find((j) => j.id === highlightJobId) ?? null;
     deepLinkOpenedFor.current = highlightJobId;
     if (found) {
-      setEditJob(found);
+      setOptimizerJob(found);
     } else {
       setDeepLinkToast("Cette job n'est plus sur le dashboard installation (statut changé).");
       router.replace("/a-planifier");
@@ -672,7 +915,7 @@ export function InstallJobsClient({
         ) : (
           <ul className="space-y-3">
             {filtered.map((job) => {
-              const isHighlighted = job.id === highlightJobId;
+              const isHighlighted = job.id === scrollJobId;
               const clientName = job.clients?.name ?? "Client sans nom";
               const city =
                 job.clients?.city ?? cityFromAddress(job.clients?.address_formatted) ?? null;
@@ -793,7 +1036,7 @@ export function InstallJobsClient({
 
                         {/* Voir la soumission */}
                         <Link
-                          href={`/ventes/soumission/${job.id}`}
+                          href={withQuoteOrigin(`/ventes/soumission/${job.id}`, "a-planifier")}
                           className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
                         >
                           <FileText className="size-3.5" />
