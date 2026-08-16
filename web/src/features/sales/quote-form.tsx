@@ -1469,7 +1469,7 @@ export function QuoteForm({
       <div className="bg-background rounded-xl border p-5 print:break-inside-avoid">
         <p className={sectionTitle}>Croquis / plan d&apos;installation</p>
         <p className="text-xs text-muted-foreground mb-3">
-          Dessinez un schéma simplifié de l&apos;installation (passages de tuyaux, position des unités…). Ce dessin apparaîtra dans le PDF client.
+          Format page lettre — le dessin occupera une page entière dans le PDF client.
         </p>
         <SketchPad value={sketch} onChange={setSketchDirty} />
       </div>

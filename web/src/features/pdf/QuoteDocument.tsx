@@ -120,8 +120,12 @@ const s = StyleSheet.create({
   sigImage: { width: 200, height: 60, marginTop: 4, border: `1px solid ${C.border}` },
   sigNotice: { fontSize: 7, color: C.muted, marginTop: 4, fontStyle: "italic" },
 
-  // Croquis
-  sketchImage: { width: "100%", maxHeight: 200, objectFit: "contain", marginTop: 4 },
+  // Croquis (page dédiée, format lettre)
+  sketchPage: { fontFamily: "Helvetica", fontSize: 9, color: C.primary, paddingHorizontal: 28, paddingVertical: 24 },
+  sketchPageTitle: { fontSize: 12, fontWeight: "bold", letterSpacing: 0.4, marginBottom: 2 },
+  sketchPageSub: { fontSize: 8, color: C.muted, marginBottom: 10 },
+  sketchPageFrame: { borderWidth: 1, borderColor: C.border, width: 556, height: 700 },
+  sketchPageImage: { width: 554, height: 698, objectFit: "contain" },
 
   // Page alternative
   altBanner: { backgroundColor: "#fffbeb", borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 10, borderWidth: 1, borderColor: "#fcd34d" },
@@ -598,19 +602,22 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
           </View>
         </View>
 
-        {/* ── Croquis ────────────────────────────────────────────── */}
-        {quote.sketch_data && (
-          <View style={s.section} wrap={false}>
-            <View style={s.sectionHeader}><Text style={s.sectionTitle}>Croquis / plan d'installation</Text></View>
-            <View style={s.sectionBody}>
-              <Image src={quote.sketch_data} style={s.sketchImage} />
-            </View>
-          </View>
-        )}
-
       </Page>
 
-      {/* ── Page 2 : Option B ──────────────────────────────────── */}
+      {/* ── Croquis : une page lettre pleine ─────────────────────── */}
+      {quote.sketch_data && (
+        <Page size="LETTER" style={s.sketchPage}>
+          <Text style={s.sketchPageTitle}>Croquis / plan d'installation</Text>
+          <Text style={s.sketchPageSub}>
+            Soumission #{quote.quote_number} — {quote.client_name}
+          </Text>
+          <View style={s.sketchPageFrame}>
+            <Image src={quote.sketch_data} style={s.sketchPageImage} />
+          </View>
+        </Page>
+      )}
+
+      {/* ── Page Option B ──────────────────────────────────── */}
       {altUnits.length > 0 && (
         <Page size="LETTER" style={s.page}>
           <View style={s.altBanner}>
