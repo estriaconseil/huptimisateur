@@ -3,15 +3,29 @@
 import { useState, useTransition, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Mail, Printer } from "lucide-react";
+import { Mail, Printer, Pencil, ArrowDown, Plus } from "lucide-react";
+import dynamic from "next/dynamic";
 
 import { createQuote, updateQuote, updateQuoteStatus, convertQuoteToInstallationJob } from "@/actions/sales";
+import { getProspectJob } from "@/actions/prospects";
 import { SignaturePad } from "./signature-pad";
 import { SketchPad } from "./sketch-pad";
 import type { Quote, QuoteUnit, QuoteStatus, Salesperson } from "@/types/domain";
+import type { PipelineJob } from "@/features/sales/pipeline-client";
+import { looksLikePostalCode, stripAutofilledPostal } from "@/lib/looks-like-postal";
+
+const ProspectEditModal = dynamic(
+  () =>
+    import("@/features/sales/pipeline-client").then((m) => ({ default: m.ProspectEditModal })),
+  { ssr: false }
+);
 
 /** Empêche l'autofill navigateur (adresse → champs techniques). */
-const noAc = { autoComplete: "off" as const };
+const noAc = {
+  autoComplete: "off" as const,
+  autoCorrect: "off" as const,
+  spellCheck: false,
+};
 
 // ── Types locaux ─────────────────────────────────────────────────────────────
 
@@ -100,10 +114,10 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   warranty_months: u.warranty_months ?? "",
   evaporator: u.evaporator ?? "",
   pipe_feet: u.pipe_feet ?? "",
-  cap_long1_length: u.cap_long1_length ?? "",
-  cap_long1_color: u.cap_long1_color ?? "",
-  cap_long2_length: u.cap_long2_length ?? "",
-  cap_long2_color: u.cap_long2_color ?? "",
+  cap_long1_length: stripAutofilledPostal(u.cap_long1_length),
+  cap_long1_color: stripAutofilledPostal(u.cap_long1_color),
+  cap_long2_length: stripAutofilledPostal(u.cap_long2_length),
+  cap_long2_color: stripAutofilledPostal(u.cap_long2_color),
   support_type: u.support_type ?? "",
   floor_mount_type: u.floor_mount_type ?? "",
   difficulty: u.difficulty ?? "",
@@ -115,29 +129,22 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   serial_bypass: u.serial_bypass ?? false,
 });
 
-/** Place les unités DB dans les 6 slots (0-2 Option A, 3-5 Option B). */
+const MAX_UNITS_PER_OPTION = 8;
+
+/** Reconstruit les unités DB : au moins 1 slot vide par option (A puis B). */
 function slotsFromUnits(existing: QuoteUnit[]): UnitState[] {
-  const slots: UnitState[] = [
-    defaultUnit(false),
-    defaultUnit(false),
-    defaultUnit(false),
-    defaultUnit(true),
-    defaultUnit(true),
-    defaultUnit(true),
-  ];
   const optionA = existing
     .filter((u) => !u.is_alternative)
-    .sort((a, b) => a.unit_order - b.unit_order);
+    .sort((a, b) => a.unit_order - b.unit_order)
+    .map((u) => ({ ...toUnitState(u), is_alternative: false }));
   const optionB = existing
     .filter((u) => u.is_alternative)
-    .sort((a, b) => a.unit_order - b.unit_order);
-  optionA.slice(0, 3).forEach((u, i) => {
-    slots[i] = { ...toUnitState(u), is_alternative: false };
-  });
-  optionB.slice(0, 3).forEach((u, i) => {
-    slots[i + 3] = { ...toUnitState(u), is_alternative: true };
-  });
-  return slots;
+    .sort((a, b) => a.unit_order - b.unit_order)
+    .map((u) => ({ ...toUnitState(u), is_alternative: true }));
+  return [
+    ...(optionA.length ? optionA : [defaultUnit(false)]),
+    ...(optionB.length ? optionB : [defaultUnit(true)]),
+  ];
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -160,11 +167,14 @@ function calcTaxes(subtotal: number) {
 
 const fmt = (n: number) => n.toFixed(2);
 
+const lockedInp =
+  "border-input bg-muted/40 text-muted-foreground h-9 w-full rounded-lg border px-3 text-sm cursor-default print:bg-transparent print:text-foreground";
+
 // ── Statut ───────────────────────────────────────────────────────────────────
 
 const STATUS_INFO: Record<QuoteStatus, { label: string; color: string }> = {
   draft:    { label: "Brouillon",           color: "bg-secondary text-secondary-foreground" },
-  pending:  { label: "En attente",          color: "bg-yellow-100 text-yellow-800" },
+  pending:  { label: "Va nous rappeler",    color: "bg-yellow-100 text-yellow-800" },
   accepted: { label: "Acceptée",            color: "bg-green-100 text-green-800" },
   refused:  { label: "Refusée",             color: "bg-red-100 text-red-800" },
 };
@@ -214,17 +224,61 @@ export function QuoteForm({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "banner" | null>(null);
+  const [errorTick, setErrorTick] = useState(0);
   const [saved, setSaved] = useState(false);
   const [showRepartirModal, setShowRepartirModal] = useState(false);
+  const [showCallBackModal, setShowCallBackModal] = useState(false);
+  const [prospectJob, setProspectJob] = useState<PipelineJob | null>(null);
+  const [liveInstall, setLiveInstall] = useState<string | null>(installAddress);
   const [isDirty, setIsDirty] = useState(false);
   const [leaveHref, setLeaveHref] = useState<string | null>(null);
   /** Ignore le prochain clic de navigation interne après confirmation */
   const allowNextNav = useRef(false);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const nameRef = useRef<HTMLDivElement>(null);
+  const emailRef = useRef<HTMLDivElement>(null);
+  const phoneRef = useRef<HTMLDivElement>(null);
+  const durationRef = useRef<HTMLDivElement>(null);
 
   const [signature, setSignature] = useState<string | null>(initialQuote?.signature_data ?? null);
   const [sketch, setSketch] = useState<string | null>(initialQuote?.sketch_data ?? null);
 
   const markDirty = useCallback(() => setIsDirty(true), []);
+
+  useEffect(() => {
+    setLiveInstall(installAddress);
+  }, [installAddress]);
+
+  useEffect(() => {
+    if (!error || !errorField) return;
+    const frame = window.setTimeout(() => {
+      const el =
+        errorField === "name" ? nameRef.current :
+        errorField === "email" ? emailRef.current :
+        errorField === "phone" ? phoneRef.current :
+        errorField === "duration" ? durationRef.current :
+        errorRef.current;
+      el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+    return () => window.clearTimeout(frame);
+  }, [error, errorField, errorTick]);
+
+  const openProspectFiche = useCallback(() => {
+    if (!jobId) return;
+    if (alreadyConverted) {
+      router.push(`/a-planifier?job=${jobId}`);
+      return;
+    }
+    void (async () => {
+      const res = await getProspectJob(jobId);
+      if (!res.ok) {
+        setError(res.message);
+        return;
+      }
+      setProspectJob(res.job);
+    })();
+  }, [alreadyConverted, jobId, router]);
 
   const setSignatureDirty = useCallback((v: string | null) => {
     setSignature(v);
@@ -284,7 +338,6 @@ export function QuoteForm({
   });
 
   const existingUnits = initialUnits ?? [];
-  // 6 slots : 0-2 = Option A, 3-5 = Option B (placés via is_alternative, pas l'index brut)
   const [units, setUnits] = useState<UnitState[]>(() => slotsFromUnits(existingUnits));
 
   // Sous-total = somme des nets Option A — recalculé au montage (évite un sous-total DB périmé)
@@ -299,7 +352,7 @@ export function QuoteForm({
     setForm((f) => ({
       ...f,
       subtotal: String(principalNet.toFixed(2)),
-      has_subsidy: hasSubsidy || f.has_subsidy,
+      has_subsidy: hasSubsidy,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount from initial units
   }, []);
@@ -312,7 +365,14 @@ export function QuoteForm({
 
   const setU = (idx: number, k: keyof UnitState) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-      const val = e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value;
+      let val: string | boolean = e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value;
+      if (
+        typeof val === "string" &&
+        (k === "cap_long1_length" || k === "cap_long1_color" || k === "cap_long2_length" || k === "cap_long2_color") &&
+        looksLikePostalCode(val)
+      ) {
+        val = "";
+      }
       setIsDirty(true);
       setUnits((us) => {
         const next = [...us];
@@ -327,7 +387,7 @@ export function QuoteForm({
           setForm((f) => ({
             ...f,
             subtotal: String(principalNet.toFixed(2)),
-            has_subsidy: hasSubsidy || f.has_subsidy,
+            has_subsidy: hasSubsidy,
           }));
         }
         return next;
@@ -339,8 +399,6 @@ export function QuoteForm({
       .map((u, i) => ({
         ...u,
         unit_order: i + 1,
-        // Forcer le groupe selon le slot (0-2 = A, 3-5 = B)
-        is_alternative: i >= 3,
       }))
       .filter((u) => u.brand || u.model || u.description || parseFloat(u.unit_subtotal) > 0);
 
@@ -412,10 +470,10 @@ export function QuoteForm({
         warranty_months: u.warranty_months,
         evaporator: u.evaporator,
         pipe_feet: u.pipe_feet,
-        cap_long1_length: u.cap_long1_length,
-        cap_long1_color: u.cap_long1_color,
-        cap_long2_length: u.cap_long2_length,
-        cap_long2_color: u.cap_long2_color,
+        cap_long1_length: stripAutofilledPostal(u.cap_long1_length),
+        cap_long1_color: stripAutofilledPostal(u.cap_long1_color),
+        cap_long2_length: stripAutofilledPostal(u.cap_long2_length),
+        cap_long2_color: stripAutofilledPostal(u.cap_long2_color),
         support_type: u.support_type,
         floor_mount_type: u.floor_mount_type,
         is_alternative: u.is_alternative,
@@ -432,20 +490,33 @@ export function QuoteForm({
   /** Champs obligatoires : courriel, tél ou cell, durée */
   const validateQuoteRequired = useCallback((): boolean => {
     setError(null);
+    setErrorField(null);
+    if (!form.client_name.trim()) {
+      setError("Nom obligatoire — cliquez sur Modifier.");
+      setErrorField("name");
+      setErrorTick((n) => n + 1);
+      return false;
+    }
     if (!form.client_email.trim()) {
-      setError("Courriel obligatoire.");
+      setError("Courriel obligatoire — cliquez sur Modifier.");
+      setErrorField("email");
+      setErrorTick((n) => n + 1);
       return false;
     }
     if (!form.client_phone.trim() && !form.client_cell.trim()) {
-      setError("Téléphone ou cellulaire requis (au moins un des deux).");
+      setError("Téléphone ou cellulaire requis — cliquez sur Modifier.");
+      setErrorField("phone");
+      setErrorTick((n) => n + 1);
       return false;
     }
     if (form.estimated_duration_hours !== "4" && form.estimated_duration_hours !== "8") {
       setError("Durée des travaux requise : Demi-journée (4 h) ou Journée complète (8 h).");
+      setErrorField("duration");
+      setErrorTick((n) => n + 1);
       return false;
     }
     return true;
-  }, [form.client_email, form.client_phone, form.client_cell, form.estimated_duration_hours]);
+  }, [form.client_name, form.client_email, form.client_phone, form.client_cell, form.estimated_duration_hours]);
 
   const saveQuote = useCallback(async (): Promise<{ ok: true; createdId?: string } | { ok: false; message: string }> => {
     if (!validateQuoteRequired()) return { ok: false, message: "Validation échouée" };
@@ -465,6 +536,7 @@ export function QuoteForm({
 
   const handleSave = () => {
     setError(null);
+    setErrorField(null);
     startTransition(async () => {
       const res = await saveQuote();
       if (!res.ok) {
@@ -485,14 +557,10 @@ export function QuoteForm({
     });
   };
 
-  const handleStatusChange = (newStatus: QuoteStatus) => {
-    if (!quoteId) return;
-    startTransition(async () => {
-      const res = await updateQuoteStatus(quoteId, newStatus);
-      if (!res.ok) { setError(res.message); return; }
-      setForm((f) => ({ ...f, status: newStatus }));
-      setIsDirty(true);
-    });
+  const openCallBackModal = () => {
+    setEmailTo(form.client_email || "");
+    setEmailStatus(null);
+    setShowCallBackModal(true);
   };
 
   const validateRepartir = (): boolean => {
@@ -502,7 +570,10 @@ export function QuoteForm({
       .map((u, i) => ({ u, i }))
       .filter(({ u }) => u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0)
       .filter(({ u }) => !u.serial_number?.trim() && !u.serial_bypass)
-      .map(({ i }) => (i < 3 ? `Option A — Unité ${i + 1}` : `Option B — Unité ${i - 2}`));
+      .map(({ u, i }) => {
+        const n = units.slice(0, i).filter((x) => x.is_alternative === u.is_alternative).length + 1;
+        return `${u.is_alternative ? "Option B" : "Option A"} — Unité ${n}`;
+      });
 
     if (missingSerial.length > 0) {
       setError(`# de série manquant : ${missingSerial.join(", ")}`);
@@ -612,8 +683,12 @@ export function QuoteForm({
     });
   };
 
-  const handleSendEmail = async () => {
-    if (!jobId || !emailTo.trim()) return;
+  const handleSendEmail = async (): Promise<boolean> => {
+    if (!jobId || !emailTo.trim()) return false;
+    if ((parseFloat(form.subtotal) || 0) <= 0) {
+      setEmailStatus({ ok: false, message: "Impossible d'envoyer une soumission sans sous-total." });
+      return false;
+    }
     setEmailSending(true);
     setEmailStatus(null);
     try {
@@ -626,14 +701,41 @@ export function QuoteForm({
       if (data.ok) {
         setEmailStatus({ ok: true, message: `Soumission envoyée à ${emailTo.trim()}` });
         setEmailDialogOpen(false);
-      } else {
-        setEmailStatus({ ok: false, message: data.error ?? "Erreur lors de l'envoi" });
+        return true;
       }
+      setEmailStatus({ ok: false, message: data.error ?? "Erreur lors de l'envoi" });
+      return false;
     } catch {
       setEmailStatus({ ok: false, message: "Erreur réseau" });
+      return false;
     } finally {
       setEmailSending(false);
     }
+  };
+
+  const confirmCallBack = (sendEmail: boolean) => {
+    if (!quoteId) return;
+    startTransition(async () => {
+      if (isDirty) {
+        const savedRes = await saveQuote();
+        if (!savedRes.ok) {
+          if (savedRes.message !== "Validation échouée") setError(savedRes.message);
+          return;
+        }
+      }
+      const res = await updateQuoteStatus(quoteId, "pending");
+      if (!res.ok) { setError(res.message); return; }
+      setForm((f) => ({ ...f, status: "pending", will_call_back: true }));
+      if (sendEmail) {
+        if ((parseFloat(form.subtotal) || 0) <= 0) {
+          setEmailStatus({ ok: false, message: "Impossible d'envoyer une soumission sans sous-total." });
+          return;
+        }
+        const sent = await handleSendEmail();
+        if (!sent) return;
+      }
+      setShowCallBackModal(false);
+    });
   };
 
   const subtotal = parseFloat(form.subtotal) || 0;
@@ -642,14 +744,39 @@ export function QuoteForm({
   // Total net = Total (avec taxes) − Dépôt
   const computedTotalNet = Math.max(0, total - depositAmt);
   // Sous-total Option B = somme des nets (comme Option A)
-  const altSubtotal = units.slice(3, 6).reduce(
-    (acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)),
-    0
-  );
+  const altSubtotal = units
+    .filter((u) => u.is_alternative)
+    .reduce(
+      (acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)),
+      0
+    );
   const statusInfo = STATUS_INFO[form.status];
+  const canSendQuote = (parseFloat(form.subtotal) || 0) > 0;
 
   const [activeGroup, setActiveGroup] = useState<"a" | "b">("a");
-  const [activeUnit, setActiveUnit] = useState(0); // 0-2 in current group
+  const [activeUnit, setActiveUnit] = useState(0);
+
+  const addUnit = (alt: boolean) => {
+    const count = units.filter((u) => u.is_alternative === alt).length;
+    if (count >= MAX_UNITS_PER_OPTION) return;
+    setIsDirty(true);
+    setUnits((us) => {
+      const neu: UnitState = {
+        ...defaultUnit(alt),
+        difficulty: form.difficulty,
+        tech_count: form.tech_count,
+      };
+      if (!alt) {
+        const lastA = us.reduce((acc, u, i) => (!u.is_alternative ? i : acc), -1);
+        const next = [...us];
+        next.splice(lastA + 1, 0, neu);
+        return next;
+      }
+      return [...us, neu];
+    });
+    setActiveGroup(alt ? "b" : "a");
+    setActiveUnit(count);
+  };
 
   return (
     <div className="space-y-6">
@@ -671,18 +798,7 @@ export function QuoteForm({
 
           {/* N° soumission + statut */}
           <div className="text-right space-y-2">
-            <div className="flex items-center justify-end gap-2">
-              <div className="text-2xl font-bold">SOUMISSION</div>
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="print:hidden inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                title="Imprimer"
-              >
-                <Printer className="size-3.5" />
-                Imprimer
-              </button>
-            </div>
+            <div className="text-2xl font-bold">SOUMISSION</div>
             <div className="flex items-center justify-end gap-2">
               <span className="text-sm text-muted-foreground">N°</span>
               <input
@@ -701,16 +817,7 @@ export function QuoteForm({
           </div>
         </div>
 
-        {/* Ligne drapeaux */}
         <div className="mt-4 flex flex-wrap gap-6 text-sm border-t pt-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.has_subsidy} onChange={setF("has_subsidy")} className="rounded" />
-            Subvention
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.will_call_back} onChange={setF("will_call_back")} className="rounded" />
-            Va nous rappeler
-          </label>
           <div className="flex items-center gap-2 ml-auto">
             <span className="text-xs text-muted-foreground">Date soumission</span>
             <input type="date" className={`${inp} w-36`} value={form.quote_date} onChange={setF("quote_date")} {...noAc} />
@@ -722,20 +829,26 @@ export function QuoteForm({
       <div className="bg-background rounded-xl border p-5">
         <div className="flex items-center justify-between mb-3 border-b pb-1">
           <p className="font-semibold text-sm">Informations client</p>
-          {!initialQuote && defaultClient?.name && (
-            <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-0.5 font-medium">
-              ✓ Pré-rempli depuis le RDV — modifiable
-            </span>
+          {jobId && (
+            <button
+              type="button"
+              onClick={openProspectFiche}
+              className="print:hidden inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium hover:bg-muted"
+            >
+              <Pencil className="size-3.5" />
+              Modifier
+            </button>
           )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-2" ref={nameRef}>
             <label className={lbl}>Nom <span className="text-destructive">*</span></label>
-            <input className={inp} value={form.client_name} onChange={setF("client_name")} placeholder="Marie Tremblay" />
+            <input className={lockedInp} value={form.client_name} readOnly tabIndex={-1} />
           </div>
           {/* Adresse facturation + installation */}
           {(() => {
             const install =
+              liveInstall ??
               installAddress ??
               defaultClient?.install_address ??
               null;
@@ -745,74 +858,70 @@ export function QuoteForm({
               install.trim().toLowerCase() !== billing.trim().toLowerCase()
             );
 
-            if (addressesDiffer) {
-              return (
-                <>
+            return (
+              <>
+                <div className="sm:col-span-2">
+                  <label className={lbl}>Adresse d&apos;installation</label>
+                  <input
+                    className={lockedInp}
+                    value={install || form.client_address}
+                    readOnly
+                    tabIndex={-1}
+                  />
+                </div>
+                {addressesDiffer ? (
                   <div className="sm:col-span-2">
                     <label className={lbl}>Adresse de facturation</label>
-                    <input className={inp} value={form.client_address} onChange={setF("client_address")} placeholder="123 rue King, Sherbrooke" />
+                    <input
+                      className={lockedInp}
+                      value={billing}
+                      readOnly
+                      tabIndex={-1}
+                    />
                   </div>
-                  <div className="sm:col-span-2">
-                    <label className={lbl}>Adresse d&apos;installation</label>
-                    <div className="flex items-center gap-2">
-                      <input
-                        className={`${inp} flex-1 bg-muted/40 text-muted-foreground cursor-default`}
-                        value={install}
-                        readOnly
-                        tabIndex={-1}
-                      />
-                      <span className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 whitespace-nowrap shrink-0">
-                        ✓ GPS
-                      </span>
-                    </div>
-                  </div>
-                </>
-              );
-            }
-
-            return (
-              <div className="sm:col-span-2">
-                <label className={lbl}>Adresse</label>
-                <input className={inp} value={form.client_address} onChange={setF("client_address")} placeholder="123 rue King, Sherbrooke" />
-                {install && (
-                  <p className="mt-1.5 text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-md px-2.5 py-1.5">
-                    L&apos;adresse de facturation est identique à l&apos;adresse d&apos;installation.
-                  </p>
+                ) : (
+                  !!install && (
+                    <p className="sm:col-span-2 text-xs italic text-muted-foreground print:hidden">
+                      L&apos;adresse de facturation est identique à l&apos;adresse d&apos;installation.
+                    </p>
+                  )
                 )}
-              </div>
+              </>
             );
           })()}
-          <div>
+          <div ref={phoneRef}>
             <label className={lbl}>
               Téléphone <span className="text-destructive">*</span>
               <span className="font-normal text-muted-foreground"> (ou cellulaire)</span>
             </label>
-            <input className={inp} type="tel" value={form.client_phone} onChange={setF("client_phone")} placeholder="819-555-1234" />
+            <input className={lockedInp} type="tel" value={form.client_phone} readOnly tabIndex={-1} />
           </div>
           <div>
             <label className={lbl}>
               Cellulaire <span className="text-destructive">*</span>
               <span className="font-normal text-muted-foreground"> (ou téléphone)</span>
             </label>
-            <input className={inp} type="tel" value={form.client_cell} onChange={setF("client_cell")} />
+            <input className={lockedInp} type="tel" value={form.client_cell} readOnly tabIndex={-1} />
           </div>
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-2" ref={emailRef}>
             <label className={lbl}>Courriel <span className="text-destructive">*</span></label>
-            <input className={inp} type="email" value={form.client_email} onChange={setF("client_email")} placeholder="marie@example.com" />
+            <input className={lockedInp} type="email" value={form.client_email} readOnly tabIndex={-1} />
           </div>
         </div>
       </div>
 
-      {/* Unités — 2 groupes × 3 unités */}
+      {/* Unités — Option A / B, nombre dynamique */}
       <div className="bg-background rounded-xl border p-5">
         <p className={sectionTitle}>Équipements</p>
 
         {/* Sélecteur Option A / Option B */}
         <div className="flex gap-2 mb-4 print:hidden">
           {(["a", "b"] as const).map((grp) => {
-            const offset = grp === "a" ? 0 : 3;
-            const hasFilled = units.slice(offset, offset + 3).some(
-              (u) => u.brand || u.model || u.description || parseFloat(u.unit_subtotal) > 0
+            const alt = grp === "b";
+            const hasFilled = units.some(
+              (u) =>
+                u.is_alternative === alt &&
+                (u.brand || u.model || u.description || parseFloat(u.unit_subtotal) > 0)
             );
             return (
               <button
@@ -838,23 +947,25 @@ export function QuoteForm({
 
         {/* Onglets unités dans le groupe actif */}
         {(["a", "b"] as const).map((grp) => {
-          const offset = grp === "a" ? 0 : 3;
-          const groupUnits = units.slice(offset, offset + 3);
+          const alt = grp === "b";
+          const indexed = units
+            .map((u, i) => ({ u, i }))
+            .filter(({ u }) => u.is_alternative === alt);
           const isActive = grp === activeGroup;
           const grpLabel = grp === "a" ? "Option A" : "Option B";
 
           return (
             <div key={grp} className={isActive ? "" : "hidden print:block"}>
               {/* Print: entête Option B seulement si rempli */}
-              {grp === "b" && groupUnits.some((u) => u.brand || u.model || u.description || parseFloat(u.unit_subtotal) > 0) && (
+              {grp === "b" && indexed.some(({ u }) => u.brand || u.model || u.description || parseFloat(u.unit_subtotal) > 0) && (
                 <p className="hidden print:block font-bold text-sm text-amber-700 border-t pt-4 mt-6 mb-3">
                   Option B
                 </p>
               )}
 
               {/* Onglets unité */}
-              <div className="flex gap-1 mb-4 print:hidden">
-                {groupUnits.map((u, subIdx) => (
+              <div className="flex flex-wrap gap-1 mb-4 print:hidden">
+                {indexed.map(({ u }, subIdx) => (
                   <button
                     key={subIdx}
                     type="button"
@@ -873,11 +984,21 @@ export function QuoteForm({
                     )}
                   </button>
                 ))}
+                {indexed.length < MAX_UNITS_PER_OPTION && (
+                  <button
+                    type="button"
+                    onClick={() => addUnit(alt)}
+                    className="px-3 py-1.5 rounded-lg text-sm font-medium border border-dashed text-muted-foreground hover:bg-muted hover:text-foreground inline-flex items-center gap-1"
+                    title={`Ajouter une unité (${grpLabel})`}
+                  >
+                    <Plus className="size-3.5" />
+                    Unité
+                  </button>
+                )}
               </div>
 
               {/* Contenu de chaque unité du groupe */}
-              {groupUnits.map((u, subIdx) => {
-                const i = offset + subIdx; // index global
+              {indexed.map(({ u, i }, subIdx) => {
                 const filled = !!(u.brand.trim() || u.model.trim() || u.description.trim() || parseFloat(u.unit_subtotal) > 0);
                 const isVisible = isActive && activeUnit === subIdx;
                 return (
@@ -938,19 +1059,57 @@ export function QuoteForm({
                       </div>
                       <div>
                         <label className={lbl}>Cap Long 1 — Long</label>
-                        <input className={inp} value={u.cap_long1_length} onChange={setU(i, "cap_long1_length")} placeholder="50 #" {...noAc} />
+                        <input
+                          className={inp}
+                          name={`huppe-u${i}-cap1-len`}
+                          {...noAc}
+                          autoComplete="new-password"
+                          data-1p-ignore=""
+                          data-lpignore="true"
+                          value={u.cap_long1_length}
+                          onChange={setU(i, "cap_long1_length")}
+                          placeholder="50 #"
+                        />
                       </div>
                       <div>
                         <label className={lbl}>Cap Long 1 — Coul.</label>
-                        <input className={inp} value={u.cap_long1_color} onChange={setU(i, "cap_long1_color")} placeholder="Blanc" {...noAc} />
+                        <input
+                          className={inp}
+                          name={`huppe-u${i}-cap1-col`}
+                          {...noAc}
+                          autoComplete="new-password"
+                          data-1p-ignore=""
+                          data-lpignore="true"
+                          value={u.cap_long1_color}
+                          onChange={setU(i, "cap_long1_color")}
+                          placeholder="Blanc"
+                        />
                       </div>
                       <div>
                         <label className={lbl}>Cap Long 2 — Long</label>
-                        <input className={inp} value={u.cap_long2_length} onChange={setU(i, "cap_long2_length")} {...noAc} />
+                        <input
+                          className={inp}
+                          name={`huppe-u${i}-cap2-len`}
+                          {...noAc}
+                          autoComplete="new-password"
+                          data-1p-ignore=""
+                          data-lpignore="true"
+                          value={u.cap_long2_length}
+                          onChange={setU(i, "cap_long2_length")}
+                        />
                       </div>
                       <div>
                         <label className={lbl}>Cap Long 2 — Coul.</label>
-                        <input className={inp} value={u.cap_long2_color} onChange={setU(i, "cap_long2_color")} {...noAc} />
+                        <input
+                          className={inp}
+                          name={`huppe-u${i}-cap2-col`}
+                          {...noAc}
+                          autoComplete="new-password"
+                          data-1p-ignore=""
+                          data-lpignore="true"
+                          value={u.cap_long2_color}
+                          onChange={setU(i, "cap_long2_color")}
+                        />
                       </div>
 
                       {/* Support */}
@@ -1049,7 +1208,10 @@ export function QuoteForm({
       <div className="bg-background rounded-xl border p-5 print:break-inside-avoid">
         <p className={sectionTitle}>Autres détails d&apos;installation</p>
 
-        <div className="mb-4">
+        <div
+          ref={durationRef}
+          className={`mb-4 rounded-lg ${errorField === "duration" ? "ring-2 ring-destructive/60 p-3 -m-1" : ""}`}
+        >
           <label className={`${lbl} flex items-center gap-1`}>
             Durée des travaux <span className="text-destructive">*</span>
             <span className="text-[10px] text-muted-foreground font-normal">(obligatoire)</span>
@@ -1061,7 +1223,12 @@ export function QuoteForm({
                 name="estimated_duration_hours"
                 value="4"
                 checked={form.estimated_duration_hours === "4"}
-                onChange={() => { markDirty(); setForm((f) => ({ ...f, estimated_duration_hours: "4" })); }}
+                onChange={() => {
+                  markDirty();
+                  setError(null);
+                  setErrorField(null);
+                  setForm((f) => ({ ...f, estimated_duration_hours: "4" }));
+                }}
               />
               Demi-journée (4 h)
             </label>
@@ -1071,11 +1238,19 @@ export function QuoteForm({
                 name="estimated_duration_hours"
                 value="8"
                 checked={form.estimated_duration_hours === "8"}
-                onChange={() => { markDirty(); setForm((f) => ({ ...f, estimated_duration_hours: "8" })); }}
+                onChange={() => {
+                  markDirty();
+                  setError(null);
+                  setErrorField(null);
+                  setForm((f) => ({ ...f, estimated_duration_hours: "8" }));
+                }}
               />
               Journée complète (8 h)
             </label>
           </div>
+          {errorField === "duration" && error && (
+            <p className="mt-2 text-sm text-destructive print:hidden">{error}</p>
+          )}
         </div>
 
         {/* Niveau / tech — une fois pour toute la job */}
@@ -1310,6 +1485,11 @@ export function QuoteForm({
             <p className="text-sm text-muted-foreground">
               Un PDF de la soumission sera joint au courriel.
             </p>
+            {!canSendQuote && (
+              <p className="text-sm text-destructive">
+                Impossible d&apos;envoyer : le sous-total est à 0 $.
+              </p>
+            )}
             <div>
               <label className="block text-xs font-medium mb-1 text-muted-foreground">Adresse courriel du client</label>
               <input
@@ -1336,7 +1516,7 @@ export function QuoteForm({
               <button
                 type="button"
                 onClick={handleSendEmail}
-                disabled={emailSending || !emailTo.trim()}
+                disabled={emailSending || !emailTo.trim() || !canSendQuote}
                 className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
               >
                 {emailSending ? (
@@ -1390,7 +1570,14 @@ export function QuoteForm({
       )}
 
       {/* Actions */}
-      {error && <p className="text-destructive text-sm rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 print:hidden">{error}</p>}
+      {error && (
+        <p
+          ref={errorRef}
+          className="text-destructive text-sm rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-2 print:hidden"
+        >
+          {error}
+        </p>
+      )}
       {saved && <p className="text-emerald-600 text-sm print:hidden">✓ Soumission sauvegardée</p>}
       {emailStatus?.ok && <p className="text-emerald-600 text-sm print:hidden">✓ {emailStatus.message}</p>}
       {isDirty && !saved && (
@@ -1435,66 +1622,164 @@ export function QuoteForm({
         </div>
       )}
 
-      <div className="flex flex-wrap gap-3 pb-8 print:hidden">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={pending}
-          className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-        >
-          {pending ? "Enregistrement..." : quoteId ? "Sauvegarder" : "Créer la soumission"}
-        </button>
-
-        {/* PDF / Courriel — uniquement si la soumission existe */}
-        {quoteId && jobId && (
-          <>
-            <a
-              href={`/api/pdf/soumission/${jobId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
-            >
-              <Printer className="size-3.5" />
-              Aperçu PDF
-            </a>
+      <div id="soumission-actions" className="space-y-3 pb-8 print:hidden">
+        <div className="flex flex-wrap items-center gap-3">
+          {(!quoteId || isDirty) && (
             <button
               type="button"
-              onClick={() => { setEmailDialogOpen(true); setEmailStatus(null); setEmailTo(form.client_email || ""); }}
-              className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
+              onClick={handleSave}
+              disabled={pending}
+              className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
             >
-              <Mail className="size-3.5" />
-              Envoyer par courriel
+              {pending ? "Enregistrement..." : "Sauvegarder"}
             </button>
-          </>
-        )}
+          )}
+          {quoteId && jobId && (
+            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+              <a
+                href={`/api/pdf/soumission/${jobId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
+              >
+                <Printer className="size-3.5" />
+                Aperçu PDF
+              </a>
+              <button
+                type="button"
+                disabled={!canSendQuote}
+                title={!canSendQuote ? "Ajoutez un sous-total avant d'envoyer au client" : undefined}
+                onClick={() => { setEmailDialogOpen(true); setEmailStatus(null); setEmailTo(form.client_email || ""); }}
+                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+              >
+                <Mail className="size-3.5" />
+                Envoyer par courriel
+              </button>
+            </div>
+          )}
+        </div>
 
-        {/* Changements de statut */}
-        {quoteId && form.status === "draft" && (
-          <button
-            type="button"
-            onClick={() => handleStatusChange("pending")}
-            disabled={pending}
-            className="h-[38px] px-5 rounded-lg bg-yellow-500 text-white text-sm font-medium hover:bg-yellow-600 disabled:opacity-50"
-          >
-            Envoyer en attente
-          </button>
-        )}
-        {quoteId && !alreadyConverted && (
-          <button
-            type="button"
-            onClick={handleRepartirClick}
-            disabled={pending}
-            className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 border-2 border-primary"
-          >
-            → Répartir vers l&apos;installation
-          </button>
-        )}
-        {quoteId && alreadyConverted && (
-          <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200">
-            ✓ Réparti vers l&apos;installation
-          </span>
+        {quoteId && (
+          <div className="flex flex-wrap items-center gap-3">
+            {form.status === "draft" && (
+              <button
+                type="button"
+                onClick={openCallBackModal}
+                disabled={pending}
+                className="h-[38px] px-5 rounded-lg bg-yellow-500 text-white text-sm font-medium hover:bg-yellow-600 disabled:opacity-50"
+              >
+                Va nous rappeler
+              </button>
+            )}
+            {!alreadyConverted ? (
+              <button
+                type="button"
+                onClick={handleRepartirClick}
+                disabled={pending}
+                className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 sm:ml-auto"
+              >
+                → Répartir vers l&apos;installation
+              </button>
+            ) : (
+              <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200 sm:ml-auto">
+                ✓ Réparti vers l&apos;installation
+              </span>
+            )}
+          </div>
         )}
       </div>
+      {showCallBackModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
+          <div className="bg-background w-full max-w-md rounded-xl border p-5 shadow-lg space-y-4">
+            <h3 className="font-semibold text-base">Va nous rappeler</h3>
+            <p className="text-sm text-muted-foreground">
+              Envoyer le PDF de la soumission à l&apos;adresse courriel du client&nbsp;?
+            </p>
+            {!canSendQuote && (
+              <p className="text-sm text-destructive">
+                Impossible d&apos;envoyer : le sous-total est à 0 $. Ajoutez un montant aux unités.
+              </p>
+            )}
+            <div>
+              <label className="block text-xs font-medium mb-1 text-muted-foreground">Courriel</label>
+              <input
+                type="email"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                className="border-input bg-background h-8 w-full rounded border px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="client@example.com"
+                autoFocus
+              />
+            </div>
+            {emailStatus && !emailStatus.ok && (
+              <p className="text-destructive text-sm">{emailStatus.message}</p>
+            )}
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+              <button
+                type="button"
+                disabled={pending || emailSending}
+                onClick={() => { setShowCallBackModal(false); setEmailStatus(null); }}
+                className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                disabled={pending || emailSending}
+                onClick={() => confirmCallBack(false)}
+                className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Sans envoyer
+              </button>
+              <button
+                type="button"
+                disabled={pending || emailSending || !emailTo.trim() || !canSendQuote}
+                onClick={() => confirmCallBack(true)}
+                className="h-9 px-4 rounded-lg bg-yellow-500 text-white text-sm font-medium hover:bg-yellow-600 disabled:opacity-50 inline-flex items-center justify-center gap-2"
+              >
+                <Mail className="size-3.5" />
+                {emailSending ? "Envoi..." : "Envoyer le PDF"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {prospectJob && (
+        <ProspectEditModal
+          job={prospectJob}
+          salespeople={salespeople}
+          allowSlotBooking={false}
+          onClose={() => setProspectJob(null)}
+          onSaved={(data) => {
+            setForm((f) => ({
+              ...f,
+              client_name: data.client_name || f.client_name,
+              client_phone: data.client_phone || f.client_phone,
+              client_email: data.client_email || f.client_email,
+              client_address: data.billing_address,
+            }));
+            setLiveInstall(data.install_address);
+            setIsDirty(true);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+export function ScrollToQuoteActionsButton() {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        document.getElementById("soumission-actions")?.scrollIntoView({ behavior: "smooth", block: "end" })
+      }
+      className="print:hidden inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+      title="Aller en bas de page"
+    >
+      <ArrowDown className="size-3.5" />
+      Bas de page
+    </button>
   );
 }

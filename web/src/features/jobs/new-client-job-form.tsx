@@ -2,6 +2,8 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format, startOfWeek } from "date-fns";
+import { ExternalLink, MapPin, Phone } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -10,6 +12,14 @@ import { AddressAutocomplete } from "@/components/maps/address-autocomplete";
 import type { ResolvedPlace } from "@/components/maps/address-autocomplete";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -18,7 +28,10 @@ import {
   type NewClientJobFormValues,
   newClientJobFormSchema,
 } from "@/lib/validations/client-job";
+import { statusColor, statusLabel } from "@/lib/job-status";
+import { cn } from "@/lib/utils";
 
+import { checkInstallationAddressExists, type AddressMatch } from "@/actions/prospects";
 import { selectClass } from "@/lib/ui/form-styles";
 import { createClientAndJob } from "./actions/create-client-job";
 
@@ -31,6 +44,8 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
   const router = useRouter();
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [sameAddress, setSameAddress] = useState(false);
+  const [addressMatches, setAddressMatches] = useState<AddressMatch[] | null>(null);
+  const [pendingSubmitData, setPendingSubmitData] = useState<{ data: NewClientJobFormValues; thenSuggest: boolean } | null>(null);
 
   const form = useForm<NewClientJobFormValues>({
     resolver: zodResolver(newClientJobFormSchema),
@@ -95,22 +110,7 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
     }
   };
 
-  async function submitForm(data: NewClientJobFormValues, thenSuggest: boolean) {
-    setSubmitError(null);
-    if (!data.install_address_formatted?.trim()) {
-      form.setError("install_address_formatted", { message: "Adresse d'installation requise — sélectionnez une adresse dans la liste Google" });
-      return;
-    }
-    if (data.install_lat == null || data.install_lng == null) {
-      form.setError("install_address_formatted", { message: "Sélectionnez l'adresse dans la liste Google pour obtenir les coordonnées GPS" });
-      return;
-    }
-    // Si même adresse, s'assurer que billing = install
-    if (sameAddress) {
-      data.billing_address = data.install_address_formatted;
-      data.billing_city = data.install_city;
-      data.billing_postal = data.install_postal_code;
-    }
+  async function doCreate(data: NewClientJobFormValues, thenSuggest: boolean) {
     const result = await createClientAndJob(data);
     if (!result.ok) {
       setSubmitError(result.message);
@@ -132,7 +132,121 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
     router.refresh();
   }
 
+  async function submitForm(data: NewClientJobFormValues, thenSuggest: boolean) {
+    setSubmitError(null);
+    if (!data.install_address_formatted?.trim()) {
+      form.setError("install_address_formatted", { message: "Adresse d'installation requise — sélectionnez une adresse dans la liste Google" });
+      return;
+    }
+    if (data.install_lat == null || data.install_lng == null) {
+      form.setError("install_address_formatted", { message: "Sélectionnez l'adresse dans la liste Google pour obtenir les coordonnées GPS" });
+      return;
+    }
+    // Si même adresse, s'assurer que billing = install
+    if (sameAddress) {
+      data.billing_address = data.install_address_formatted;
+      data.billing_city = data.install_city;
+      data.billing_postal = data.install_postal_code;
+    }
+
+    // Vérifier si l'adresse d'installation existe déjà chez un autre client
+    const checkRes = await checkInstallationAddressExists(data.install_address_formatted);
+    if (checkRes.ok && checkRes.matches.length > 0) {
+      setAddressMatches(checkRes.matches);
+      setPendingSubmitData({ data, thenSuggest });
+      return;
+    }
+
+    await doCreate(data, thenSuggest);
+  }
+
   return (
+    <>
+    {/* Dialog confirmation adresse connue */}
+    <Dialog
+      open={addressMatches !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          setAddressMatches(null);
+          setPendingSubmitData(null);
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <MapPin className="size-4 text-amber-600" />
+            Adresse déjà connue
+          </DialogTitle>
+          <DialogDescription>
+            Cette adresse d&apos;installation existe déjà dans la base de données. Veux-tu tout de même créer un nouveau dossier ?
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 max-h-64 overflow-y-auto py-1">
+          {(addressMatches ?? []).map((match) => (
+            <div
+              key={match.installation_address_id}
+              className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 p-3 space-y-1.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold text-sm text-foreground">{match.client_name}</p>
+                {match.client_phone && (
+                  <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                    <Phone className="size-3" />
+                    {match.client_phone}
+                  </span>
+                )}
+                <Link
+                  href={`/clients/adresse/${match.installation_address_id}`}
+                  target="_blank"
+                  className="ml-auto inline-flex items-center gap-1 text-[11px] text-sky-600 hover:underline"
+                >
+                  <ExternalLink className="size-3" />
+                  Voir la fiche
+                </Link>
+              </div>
+              {match.jobs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {match.jobs.slice(0, 3).map((job) => (
+                    <span
+                      key={job.id}
+                      className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", statusColor(job.status))}
+                    >
+                      {statusLabel(job.status)}{job.quote_number ? ` — #${job.quote_number}` : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAddressMatches(null);
+              setPendingSubmitData(null);
+            }}
+          >
+            Annuler
+          </Button>
+          <Button
+            onClick={async () => {
+              if (!pendingSubmitData) return;
+              const { data, thenSuggest } = pendingSubmitData;
+              setAddressMatches(null);
+              setPendingSubmitData(null);
+              await doCreate(data, thenSuggest);
+            }}
+          >
+            Créer quand même
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
     <form className="space-y-6">
       <Card>
         <CardHeader>
@@ -289,7 +403,7 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
             <select id="status" className={selectClass} {...register("status")}>
               <option value="soumission_en_attente">Prospect</option>
               <option value="soumission_repartie">Visite planifiée</option>
-              <option value="en_attente">En attente</option>
+              <option value="en_attente">Va nous rappeler</option>
               <option value="a_planifier">À planifier</option>
               <option value="reparti">Réparti</option>
               <option value="retour_a_faire">Retour à faire</option>
@@ -330,5 +444,6 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
         </Button>
       </div>
     </form>
+    </>
   );
 }

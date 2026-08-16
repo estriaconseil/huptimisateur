@@ -10,7 +10,7 @@ import type { QuoteStatus } from "@/types/domain";
 
 const STATUS_INFO: Record<QuoteStatus, { label: string; color: string }> = {
   draft:    { label: "Brouillon",  color: "bg-secondary text-secondary-foreground" },
-  pending:  { label: "En attente", color: "bg-yellow-100 text-yellow-800" },
+  pending:  { label: "Va nous rappeler", color: "bg-yellow-100 text-yellow-800" },
   accepted: { label: "Acceptée",   color: "bg-green-100 text-green-800" },
   refused:  { label: "Refusée",    color: "bg-red-100 text-red-800" },
 };

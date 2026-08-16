@@ -4,17 +4,22 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addWeeks, format, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
-import { CalendarOff, ChevronLeft, ChevronRight, Loader2, MapPin, Plus, Sparkles, X } from "lucide-react";
+import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, FilePlus, Loader2, MapPin, Plus, Sparkles, X } from "lucide-react";
 
 import {
   findBestSlotsForProspect,
   getProspectsForSlot,
-  computeProspectDistances,
+  scoreProspectsForSlot,
   bookProspectToSlot,
   type ProspectForSlot,
   type ProspectSlotResult,
 } from "@/actions/sales";
-import { createProspect } from "@/actions/prospects";
+import {
+  createProspect,
+  createJobOnExistingAddress,
+  checkInstallationAddressExists,
+  type AddressMatch,
+} from "@/actions/prospects";
 import { DualAddressBlock, emptyDualAddress, type DualAddressState } from "@/features/sales/pipeline-client";
 import { createSalespersonBlock } from "@/actions/blocks";
 import { TravelDuration } from "@/lib/format-travel";
@@ -70,11 +75,11 @@ function ProspectsTab({
       setProspects(res.prospects);
       setPrevLabel(res.prevLabel);
 
-      // Étape 2 : distances en arrière-plan (sans bloquer l'affichage)
-      if (res.prospects.length > 0 && res.originLat && res.originLng) {
+      // Étape 2 : score prev/next (même logique que l'optimiseur de créneaux)
+      if (res.prospects.length > 0 && (res.prevOrigin || res.nextOrigin)) {
         setLoadingDist(true);
         const dests = res.prospects.map((p) => ({ lat: p.client_lat, lng: p.client_lng }));
-        computeProspectDistances(res.originLat, res.originLng, dests)
+        scoreProspectsForSlot(dests, res.prevOrigin, res.nextOrigin)
           .then((distances) => {
             setProspects((prev) => {
               if (!prev) return prev;
@@ -128,7 +133,7 @@ function ProspectsTab({
   if (!prospects?.length) {
     return (
       <p className="text-sm text-muted-foreground py-4 text-center">
-        Aucun prospect avec adresse GPS dans le pipeline.
+        Aucun prospect à placer (sans RDV confirmé) dans le pipeline.
         <br />Utilisez l&apos;onglet <strong>Nouveau client</strong> pour créer un RDV.
       </p>
     );
@@ -138,7 +143,7 @@ function ProspectsTab({
     <div className="space-y-1.5">
       <div className="flex items-center justify-between mb-2">
         <p className="text-xs text-muted-foreground">
-          Depuis : <strong>{prevLabel || "—"}</strong>
+          Trajet : <strong>{prevLabel || "—"}</strong>
         </p>
         {loadingDist
           ? <span className="flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="size-3 animate-spin" />Classement en cours…</span>
@@ -184,7 +189,12 @@ function ProspectsTab({
 
 // ── Onglet Nouveau client ─────────────────────────────────────────────────────
 
-type NewClientStep = "form" | "loading" | "slots";
+type NewClientStep = "form" | "intercept" | "loading" | "slots";
+
+const SLOT_OPEN_STATUSES = [
+  "soumission_en_attente", "soumission_repartie", "en_attente",
+  "a_planifier", "reparti", "retour_a_faire",
+] as const;
 
 function NewClientTab({
   slot,
@@ -207,6 +217,31 @@ function NewClientTab({
   const [booking, startBook] = useTransition();
   const [bookingKey, setBookingKey] = useState<string | null>(null);
 
+  // ── Interception adresse connue ──────────────────────────────────────────
+  const [addrMatches, setAddrMatches] = useState<AddressMatch[] | null>(null);
+  const [selectedMatchIdx, setSelectedMatchIdx] = useState(0);
+  const [ownerChoice, setOwnerChoice] = useState<"same" | "new">("new");
+  /** jobId créé via createJobOnExistingAddress — utilisé par bookSlot au lieu de createProspect */
+  const [interceptJobId, setInterceptJobId] = useState<string | null>(null);
+
+  // Vérifie dès que Google Places résout l'adresse
+  useEffect(() => {
+    if (form.install_address && form.install_lat != null) {
+      checkInstallationAddressExists(form.install_address).then((res) => {
+        if (res.ok && res.matches.length > 0) {
+          setAddrMatches(res.matches);
+          setSelectedMatchIdx(0);
+        } else {
+          setAddrMatches(null);
+        }
+      });
+    } else {
+      setAddrMatches(null);
+      setInterceptJobId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.install_address, form.install_lat]);
+
   const setAddr = useCallback((patch: Partial<DualAddressState>) => setForm((f) => ({ ...f, ...patch })), []);
 
   const addrState: DualAddressState = {
@@ -218,7 +253,15 @@ function NewClientTab({
 
   const findSlots = async () => {
     if (!form.install_lat || !form.install_lng) return;
+    if (!form.client_name.trim()) { setError("Le nom du client est requis."); return; }
     setError(null);
+
+    // Interception si adresse connue
+    if (addrMatches && addrMatches.length > 0) {
+      setStep("intercept");
+      return;
+    }
+
     setStep("loading");
     const res = await findBestSlotsForProspect(form.install_lat, form.install_lng);
     if (!res.ok) { setError(res.message); setStep("form"); return; }
@@ -226,35 +269,75 @@ function NewClientTab({
     setStep("slots");
   };
 
+  /** Confirme l'interception : crée la job via createJobOnExistingAddress + trouve les créneaux */
+  const handleInterceptConfirm = async () => {
+    if (!addrMatches) return;
+    const match = addrMatches[selectedMatchIdx];
+    setError(null);
+    setStep("loading");
+
+    const res = await createJobOnExistingAddress({
+      installationAddressId: match.installation_address_id,
+      mode: "blank",
+      newOwner:
+        ownerChoice === "new" && form.client_name.trim()
+          ? { name: form.client_name.trim(), phone: form.client_phone || null, email: form.client_email || null }
+          : undefined,
+      enrichWith:
+        ownerChoice === "same"
+          ? { phone: form.client_phone || null, email: form.client_email || null }
+          : undefined,
+    });
+
+    if (!res.ok) { setError(res.message); setStep("intercept"); return; }
+    setInterceptJobId(res.jobId);
+
+    const lat = res.installLat ?? form.install_lat!;
+    const lng = res.installLng ?? form.install_lng!;
+    const slotsRes = await findBestSlotsForProspect(lat, lng);
+    if (!slotsRes.ok) { setError(slotsRes.message); setStep("intercept"); return; }
+    setSlots(slotsRes.slots);
+    setStep("slots");
+  };
+
+  /**
+   * Réserve un créneau.
+   * - Chemin intercept : job déjà créée via createJobOnExistingAddress (interceptJobId).
+   * - Chemin normal   : crée d'abord le prospect via createProspect.
+   */
   const bookSlot = (s: ProspectSlotResult) => {
     if (!form.client_name.trim()) { setError("Le nom du client est requis."); return; }
     const key = `${s.date}|${s.start_time}`;
     setBookingKey(key);
     setError(null);
     startBook(async () => {
-      // 1. Créer le prospect (client + job dans le pipeline)
-      const prospectRes = await createProspect({
-        name: form.client_name,
-        phone: form.client_phone || null,
-        email: form.client_email || null,
-        billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
-        billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
-        billing_postal: (form.same_address ? form.install_postal : form.billing_postal) || null,
-        install_address: form.install_address || null,
-        install_city: form.install_city || null,
-        install_postal: form.install_postal || null,
-        install_lat: form.install_lat,
-        install_lng: form.install_lng,
-        installation_info: form.installation_info || null,
-        salesperson_id: s.salesperson_id || slot.salesperson_id || null,
-        // Placement calendrier (appel) → pas d'ownership, suggestions futures = tous vendeurs
-        salesperson_locked: false,
-      });
-      if (!prospectRes.ok) { setError(prospectRes.message); setBookingKey(null); return; }
+      let jobId: string;
 
-      // 2. Réserver le créneau
+      if (interceptJobId) {
+        jobId = interceptJobId;
+      } else {
+        const prospectRes = await createProspect({
+          name: form.client_name,
+          phone: form.client_phone || null,
+          email: form.client_email || null,
+          billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
+          billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
+          billing_postal: (form.same_address ? form.install_postal : form.billing_postal) || null,
+          install_address: form.install_address || null,
+          install_city: form.install_city || null,
+          install_postal: form.install_postal || null,
+          install_lat: form.install_lat,
+          install_lng: form.install_lng,
+          installation_info: form.installation_info || null,
+          salesperson_id: s.salesperson_id || slot.salesperson_id || null,
+          salesperson_locked: false,
+        });
+        if (!prospectRes.ok) { setError(prospectRes.message); setBookingKey(null); return; }
+        jobId = prospectRes.jobId;
+      }
+
       const bookRes = await bookProspectToSlot({
-        jobId: prospectRes.jobId,
+        jobId,
         salespersonId: s.salesperson_id,
         scheduledDate: s.date,
         startTime: s.start_time,
@@ -306,6 +389,12 @@ function NewClientTab({
           </div>
         </div>
         <DualAddressBlock state={addrState} onChange={setAddr} inp={inp} lbl={lbl} />
+        {addrMatches && addrMatches.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+            <span>Cette adresse est déjà dans la base de données. Vous pourrez choisir comment la rattacher.</span>
+          </div>
+        )}
         <div>
           <label className={lbl}>Notes / Info projet</label>
           <textarea
@@ -334,7 +423,96 @@ function NewClientTab({
     );
   }
 
-  // ── Étape 2 : chargement ──────────────────────────────────────────────────
+  // ── Étape interception : adresse déjà connue ──────────────────────────────
+  if (step === "intercept" && addrMatches) {
+    const match = addrMatches[selectedMatchIdx];
+    const hasOpenJob = match?.jobs.some((j) => (SLOT_OPEN_STATUSES as readonly string[]).includes(j.status));
+    const nameDiffers = form.client_name.trim().toLowerCase() !== match?.client_name.toLowerCase();
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Cette adresse est déjà dans la base de données. Choisissez le dossier à rattacher.
+        </p>
+        {addrMatches.map((m, idx) => {
+          const openJob = m.jobs.find((j) => (SLOT_OPEN_STATUSES as readonly string[]).includes(j.status));
+          return (
+            <label
+              key={m.installation_address_id}
+              className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${selectedMatchIdx === idx ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}
+            >
+              <input
+                type="radio"
+                name="slotMatch"
+                checked={selectedMatchIdx === idx}
+                onChange={() => setSelectedMatchIdx(idx)}
+                className="mt-0.5"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm">{m.client_name}</p>
+                {m.client_phone && <p className="text-xs text-muted-foreground">{m.client_phone}</p>}
+                <p className="text-[11px] text-muted-foreground truncate">{m.address_formatted}</p>
+                {openJob && (
+                  <p className="text-[11px] text-amber-700 font-medium mt-0.5">
+                    Job ouverte · {openJob.quote_number ? `#${openJob.quote_number}` : openJob.status}
+                  </p>
+                )}
+              </div>
+              <a
+                href={`/clients/adresse/${m.installation_address_id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="text-[11px] text-sky-600 hover:underline shrink-0 mt-0.5"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Fiche →
+              </a>
+            </label>
+          );
+        })}
+        {hasOpenJob && (
+          <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+            <span>Une soumission est déjà en cours pour ce lieu.</span>
+          </div>
+        )}
+        {nameDiffers && form.client_name.trim() && (
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">
+              Nom saisi : &laquo;&nbsp;{form.client_name}&nbsp;&raquo; · Dossier existant : &laquo;&nbsp;{match?.client_name}&nbsp;&raquo;
+            </p>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="radio" name="slotOwner" value="new" checked={ownerChoice === "new"} onChange={() => setOwnerChoice("new")} />
+              Nouveau propriétaire
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="radio" name="slotOwner" value="same" checked={ownerChoice === "same"} onChange={() => setOwnerChoice("same")} />
+              Même personne
+            </label>
+          </div>
+        )}
+        {error && <p className="text-destructive text-sm">{error}</p>}
+        <div className="space-y-2 pt-1">
+          <button
+            type="button"
+            onClick={handleInterceptConfirm}
+            className="w-full h-10 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 flex items-center justify-center gap-2"
+          >
+            <FilePlus className="size-4" />
+            Nouvelle soumission + créneau
+          </button>
+          <button
+            type="button"
+            onClick={() => { setStep("form"); setError(null); }}
+            className="w-full h-9 rounded-lg border text-sm font-medium hover:bg-muted"
+          >
+            ← Retour
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Étape chargement ──────────────────────────────────────────────────────
   if (step === "loading") {
     return (
       <div className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
@@ -344,13 +522,13 @@ function NewClientTab({
     );
   }
 
-  // ── Étape 3 : liste des créneaux ──────────────────────────────────────────
+  // ── Étape créneaux ────────────────────────────────────────────────────────
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm font-medium truncate">{form.client_name}</p>
         <button
-          onClick={() => setStep("form")}
+          onClick={() => { setStep("form"); setInterceptJobId(null); }}
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground shrink-0 ml-2"
         >
           <ChevronLeft className="size-3" />

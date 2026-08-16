@@ -218,10 +218,10 @@ export function DispatchBoard(props: Props) {
     const adjacentSlot = half === "pm" ? state.am : state.pm;
     if (adjacentSlot.kind === "busy") {
       const adjSched = schedules.find((s) => s.id === adjacentSlot.scheduleId);
-      const origin = adjSched?.job?.clients;
-      if (origin?.lat != null && origin?.lng != null) {
-        const lat = origin.lat;
-        const lng = origin.lng;
+      const originGps = adjSched?.job?.installation_address;
+      const lat = originGps?.lat ?? null;
+      const lng = originGps?.lng ?? null;
+      if (lat != null && lng != null) {
         const originLabel = `${adjSched?.job?.clients?.name ?? "job"} (${half === "pm" ? "AM" : "PM"})`;
         setPickerOriginLabel(originLabel);
         setPickerRankLoading(true);
@@ -229,8 +229,8 @@ export function DispatchBoard(props: Props) {
           { lat, lng },
           jobsForPicker.map((j) => ({
             id: j.id,
-            lat: j.clients?.lat ?? null,
-            lng: j.clients?.lng ?? null,
+            lat: j.installation_address?.lat ?? null,
+            lng: j.installation_address?.lng ?? null,
           }))
         ).then((res) => {
           setPickerRankLoading(false);

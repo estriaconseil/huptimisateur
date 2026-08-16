@@ -13,6 +13,7 @@ export type JobPickerRow = Pick<
   "id" | "estimated_duration_hours" | "status" | "installation_info" | "preferred_date" | "created_at"
 > & {
   clients: { name: string; city: string | null; lat: number | null; lng: number | null } | null;
+  installation_address: { lat: number | null; lng: number | null } | null;
 };
 
 export type RetourAFaireRow = {
@@ -65,7 +66,8 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         jobs (
           id,
           estimated_duration_hours,
-          clients ( name, city, phone, email, lat, lng, address_formatted )
+          clients ( name, city, phone, email, lat, lng, address_formatted ),
+          installation_addresses!installation_address_id ( lat, lng, city, address_formatted )
         )
       `
       )
@@ -84,7 +86,8 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         installation_info,
         preferred_date,
         created_at,
-        clients ( name, city, lat, lng )
+        clients ( name, city ),
+        installation_addresses!installation_address_id ( lat, lng )
       `
       )
       .eq("status", "a_planifier")
@@ -108,8 +111,10 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       preferred_date: string | null;
       created_at: string;
       clients: unknown;
+      installation_addresses: unknown;
     };
     const clients = unwrapRelation<{ name: string; city: string | null; lat: number | null; lng: number | null }>(row.clients);
+    const installation_address = unwrapRelation<{ lat: number | null; lng: number | null }>(row.installation_addresses);
     return {
       id: row.id,
       estimated_duration_hours: row.estimated_duration_hours as EstimatedDurationHours,
@@ -118,6 +123,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       preferred_date: row.preferred_date,
       created_at: row.created_at,
       clients,
+      installation_address,
     };
   });
 
@@ -135,6 +141,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       id: string;
       estimated_duration_hours: number;
       clients: unknown;
+      installation_addresses: unknown;
     }>(row.jobs);
     const job: EnrichedScheduleRow["job"] = jo
       ? {
@@ -149,6 +156,12 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
             lng: number | null;
             address_formatted: string | null;
           }>(jo.clients),
+          installation_address: unwrapRelation<{
+            lat: number | null;
+            lng: number | null;
+            city: string | null;
+            address_formatted: string | null;
+          }>(jo.installation_addresses),
         }
       : null;
     return {

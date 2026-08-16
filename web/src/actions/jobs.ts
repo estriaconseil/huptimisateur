@@ -136,7 +136,7 @@ export async function updateJobStatus(
   const { error } = await supabase.from("jobs").update(payload).eq("id", jobId);
   if (error) return { ok: false as const, message: error.message };
 
-  // Annuler le RDV lié si demandé (retour à Prospect / En attente depuis Visite planifiée)
+  // Annuler le RDV lié si demandé (retour à Prospect / Va nous rappeler depuis Visite planifiée)
   const appointmentId = current?.appointment_id ?? null;
   if (options?.cancelLinkedAppointment && appointmentId) {
     await supabase

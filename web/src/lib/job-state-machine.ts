@@ -45,7 +45,7 @@ export function allowedTransitions(from: JobStatus): JobStatus[] {
 export const STATUS_LABELS: Record<JobStatus, string> = {
   soumission_en_attente: "Prospect",
   soumission_repartie:   "Visite planifiée",
-  en_attente:            "En attente",
+  en_attente:            "Va nous rappeler",
   a_planifier:           "À planifier",
   reparti:               "Réparti",
   retour_a_faire:        "Retour à faire",

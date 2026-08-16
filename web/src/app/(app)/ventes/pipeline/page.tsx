@@ -22,6 +22,7 @@ export default async function VentesPipelinePage({
   const { data: { user } } = await supabase.auth.getUser();
 
   const [{ data: rawJobs }, { data: spData }, { data: profile }] = await Promise.all([
+    // TODO go-live: paginer / archiver les prospects inactifs (toutes les cartes sont chargées).
     supabase
       .from("jobs")
       .select(

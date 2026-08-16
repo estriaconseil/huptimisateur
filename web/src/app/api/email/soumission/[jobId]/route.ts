@@ -58,6 +58,13 @@ export async function POST(
   }
   const quote = q as Quote;
 
+  if (!(quote.subtotal > 0)) {
+    return NextResponse.json(
+      { ok: false, error: "Impossible d'envoyer une soumission sans sous-total." },
+      { status: 400 }
+    );
+  }
+
   // Unités
   const { data: rawUnits } = await supabase
     .from("quote_units")

@@ -3,6 +3,10 @@
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { duplicateQuote } from "@/actions/sales";
+import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
+import type { PipelineInstallationAddress, PipelineJob } from "@/features/sales/pipeline-client";
+import type { FollowUpFlag, JobStatus } from "@/types/domain";
 
 type Ok = { ok: true; jobId: string; installationAddressId: string | null };
 type Err = { ok: false; message: string };
@@ -238,4 +242,302 @@ export async function createProspectForExistingClient(input: {
   revalidatePath("/ventes/pipeline");
   revalidatePath("/clients");
   return { ok: true, jobId: job.id, installationAddressId: installAddr.id };
+}
+
+// ── checkInstallationAddressExists ───────────────────────────────────────────
+
+export type AddressMatch = {
+  installation_address_id: string;
+  address_formatted: string;
+  client_id: string;
+  client_name: string;
+  client_phone: string | null;
+  jobs: Array<{ id: string; status: string; quote_number: number | null }>;
+};
+
+/**
+ * Recherche cross-client : toutes les adresses d'installation avec le même texte
+ * (insensible à la casse). Utile pour prévenir les doublons lors de la création.
+ */
+export async function checkInstallationAddressExists(
+  installText: string
+): Promise<{ ok: true; matches: AddressMatch[] } | { ok: false; message: string }> {
+  if (!installText?.trim()) return { ok: true as const, matches: [] };
+
+  const supabase = await createServerSupabaseClient();
+  const safe = installText.trim().replace(/[%_\\]/g, "\\$&");
+
+  const { data, error } = await supabase
+    .from("installation_addresses")
+    .select(
+      `id, address_formatted, client_id,
+       clients ( name, phone ),
+       jobs ( id, status, quotes ( quote_number ) )`
+    )
+    .ilike("address_formatted", safe)
+    .limit(10);
+
+  if (error) return { ok: false as const, message: error.message };
+
+  const matches: AddressMatch[] = (data ?? []).map((row) => {
+    const client = (Array.isArray(row.clients) ? row.clients[0] : row.clients) as
+      | { name: string; phone: string | null }
+      | null;
+    const rawJobs = Array.isArray(row.jobs) ? row.jobs : row.jobs ? [row.jobs] : [];
+    const jobs = (rawJobs as Array<{ id: string; status: string; quotes?: unknown }>).map((j) => {
+      const qRaw = j.quotes;
+      const qList = Array.isArray(qRaw) ? qRaw : qRaw ? [qRaw] : [];
+      const latest = [...qList].sort((a, b) =>
+        ((b as { quote_number: number }).quote_number ?? 0) - ((a as { quote_number: number }).quote_number ?? 0)
+      )[0] as { quote_number: number } | undefined;
+      return { id: j.id, status: j.status, quote_number: latest?.quote_number ?? null };
+    });
+    return {
+      installation_address_id: row.id,
+      address_formatted: row.address_formatted ?? installText,
+      client_id: row.client_id,
+      client_name: client?.name ?? "—",
+      client_phone: client?.phone ?? null,
+      jobs,
+    };
+  });
+
+  return { ok: true as const, matches };
+}
+
+// ── createJobOnExistingAddress ────────────────────────────────────────────────
+
+type JobOk = { ok: true; jobId: string; installLat: number | null; installLng: number | null };
+type JobErr = { ok: false; message: string };
+
+/**
+ * Crée une nouvelle job Prospect sur une adresse d'installation DÉJÀ dans la BD.
+ *
+ * Deux chemins :
+ * - `newOwner`  : crée un nouveau client (billing copié de l'ancien) + nouvelle
+ *                 row installation_addresses (même texte / GPS, sans installation_info).
+ * - sans newOwner: réutilise le client et l'adresse existants.
+ *                  Si `enrichWith` est fourni, complète les champs vides du client.
+ *
+ * Si mode = "duplicate" : copie la dernière soumission du lieu (prix à zéro).
+ * Retourne le GPS de la row existante pour permettre findBestSlotsForProspect.
+ */
+export async function createJobOnExistingAddress(input: {
+  installationAddressId: string;
+  mode: "blank" | "duplicate";
+  /**
+   * Si fourni, utilise cette soumission comme source pour la duplication.
+   * Utile pour « Reprendre » depuis l'historique croisé (autre client, même lieu).
+   * Si absent en mode duplicate, prend automatiquement la dernière soumission du lieu.
+   */
+  sourceQuoteId?: string | null;
+  newOwner?: { name: string; phone?: string | null; email?: string | null };
+  enrichWith?: { phone?: string | null; email?: string | null };
+}): Promise<JobOk | JobErr> {
+  const supabase = await createServerSupabaseClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "Non authentifié" };
+
+  // 1. Charger la row adresse + client (billing pour copie éventuelle)
+  type AddrClientRow = {
+    id: string;
+    phone: string | null;
+    email: string | null;
+    billing_address: string | null;
+    billing_city: string | null;
+    billing_postal: string | null;
+  };
+
+  type AddrRow = {
+    id: string;
+    address_formatted: string | null;
+    city: string | null;
+    postal_code: string | null;
+    lat: number | null;
+    lng: number | null;
+    client_id: string;
+    clients: AddrClientRow | AddrClientRow[] | null;
+  };
+
+  const { data: addrRowRaw, error: addrErr } = await supabase
+    .from("installation_addresses")
+    .select("id, address_formatted, city, postal_code, lat, lng, client_id, clients ( id, phone, email, billing_address, billing_city, billing_postal )")
+    .eq("id", input.installationAddressId)
+    .single();
+
+  if (addrErr || !addrRowRaw) {
+    return { ok: false, message: addrErr?.message ?? "Adresse introuvable" };
+  }
+
+  const addrRow = addrRowRaw as unknown as AddrRow;
+
+  const existingClient = (
+    Array.isArray(addrRow.clients) ? addrRow.clients[0] : addrRow.clients
+  ) as AddrClientRow | null;
+
+  // 2. Trouver la dernière soumission de ce lieu (pour mode duplicate)
+  let latestQuoteId: string | null = input.sourceQuoteId ?? null;
+  if (input.mode === "duplicate" && !latestQuoteId) {
+    const { data: jobs } = await supabase
+      .from("jobs")
+      .select("id")
+      .eq("installation_address_id", input.installationAddressId);
+
+    const jobIds = (jobs ?? []).map((j) => j.id);
+    if (jobIds.length > 0) {
+      const { data: latestQuote } = await supabase
+        .from("quotes")
+        .select("id, quote_number")
+        .in("job_id", jobIds)
+        .order("quote_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      latestQuoteId = latestQuote?.id ?? null;
+    }
+  }
+
+  // 3. Résoudre le client + l'adresse d'installation cibles
+  let targetClientId: string = addrRow.client_id;
+  let targetInstallAddressId: string = addrRow.id;
+
+  if (input.newOwner) {
+    // Nouveau propriétaire : nouveau client, nouvelle row adresse (même texte + GPS)
+    const { data: newClient, error: cErr } = await supabase
+      .from("clients")
+      .insert({
+        name: input.newOwner.name.trim(),
+        phone: n(input.newOwner.phone),
+        email: n(input.newOwner.email),
+        billing_address: existingClient?.billing_address ?? n(addrRow.address_formatted),
+        billing_city: existingClient?.billing_city ?? n(addrRow.city),
+        billing_postal: existingClient?.billing_postal ?? n(addrRow.postal_code),
+      })
+      .select("id")
+      .single();
+
+    if (cErr || !newClient) return { ok: false, message: cErr?.message ?? "Erreur création client" };
+    targetClientId = newClient.id;
+
+    const { data: newAddr, error: aErr } = await supabase
+      .from("installation_addresses")
+      .insert({
+        client_id: newClient.id,
+        label: "Adresse principale",
+        address_formatted: addrRow.address_formatted,
+        city: addrRow.city,
+        postal_code: addrRow.postal_code,
+        lat: addrRow.lat,
+        lng: addrRow.lng,
+        // installation_info intentionnellement omis
+      })
+      .select("id")
+      .single();
+
+    if (aErr || !newAddr) return { ok: false, message: aErr?.message ?? "Erreur création adresse" };
+    targetInstallAddressId = newAddr.id;
+
+  } else if (input.enrichWith && existingClient) {
+    // Même personne : compléter les champs vides seulement
+    const enrichPatch: Record<string, string> = {};
+    if (!existingClient.phone && n(input.enrichWith.phone)) enrichPatch.phone = n(input.enrichWith.phone)!;
+    if (!existingClient.email && n(input.enrichWith.email)) enrichPatch.email = n(input.enrichWith.email)!;
+    if (Object.keys(enrichPatch).length > 0) {
+      await supabase.from("clients").update(enrichPatch).eq("id", existingClient.id);
+    }
+  }
+
+  // 4. Créer la job Prospect
+  const { data: job, error: jErr } = await supabase
+    .from("jobs")
+    .insert({
+      client_id: targetClientId,
+      installation_address_id: targetInstallAddressId,
+      status: "soumission_en_attente",
+      estimated_duration_hours: 4,
+      created_by: user.id,
+      salesperson_id: null,
+      salesperson_locked: false,
+    })
+    .select("id")
+    .single();
+
+  if (jErr || !job) return { ok: false, message: jErr?.message ?? "Erreur création job" };
+
+  // 5. Dupliquer la dernière soumission si demandé
+  if (input.mode === "duplicate" && latestQuoteId) {
+    const dupRes = await duplicateQuote(latestQuoteId, job.id);
+    if (!dupRes.ok) {
+      // Non fatal : la job est créée, on logue seulement
+      console.error("[createJobOnExistingAddress] duplicateQuote:", dupRes.message);
+    }
+  }
+
+  revalidatePath("/ventes/pipeline");
+  revalidatePath("/clients");
+
+  return {
+    ok: true,
+    jobId: job.id,
+    installLat: addrRow.lat ?? null,
+    installLng: addrRow.lng ?? null,
+  };
+}
+
+/** Charge un job au format fiche prospect (modale d’édition). */
+export async function getProspectJob(
+  jobId: string
+): Promise<{ ok: true; job: PipelineJob } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+  const { data, error } = await supabase
+    .from("jobs")
+    .select(
+      `id, status, follow_up_flag, appointment_id, salesperson_id, salesperson_locked,
+       installation_info, internal_notes, follow_up_date, created_at, installation_address_id,
+       clients ( id, name, phone, email, city, billing_address, billing_city, billing_postal ),
+       salespeople ( name ),
+       installation_addresses!installation_address_id ( lat, lng, address_formatted, city )`
+    )
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return { ok: false, message: "Impossible de charger la fiche prospect." };
+  }
+
+  let appointmentDate: string | null = null;
+  if (data.appointment_id) {
+    const { data: appt } = await supabase
+      .from("sales_appointments")
+      .select("scheduled_date")
+      .eq("id", data.appointment_id)
+      .maybeSingle();
+    appointmentDate = appt?.scheduled_date ?? null;
+  }
+
+  const { count } = await supabase
+    .from("quotes")
+    .select("id", { count: "exact", head: true })
+    .eq("job_id", jobId);
+
+  const job: PipelineJob = {
+    id: data.id,
+    status: data.status as JobStatus,
+    follow_up_flag: (data.follow_up_flag ?? null) as FollowUpFlag,
+    appointment_id: data.appointment_id ?? null,
+    appointment_date: appointmentDate,
+    has_quote: (count ?? 0) > 0,
+    salesperson_id: data.salesperson_id,
+    salesperson_locked: data.salesperson_locked ?? false,
+    installation_info: data.installation_info,
+    internal_notes: data.internal_notes,
+    follow_up_date: data.follow_up_date,
+    created_at: data.created_at,
+    installation_address_id: data.installation_address_id ?? null,
+    installation_address: unwrapRelation<PipelineInstallationAddress>(data.installation_addresses),
+    clients: unwrapRelation<NonNullable<PipelineJob["clients"]>>(data.clients),
+    salespeople: unwrapRelation<{ name: string }>(data.salespeople),
+  };
+
+  return { ok: true, job };
 }

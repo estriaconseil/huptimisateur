@@ -52,7 +52,7 @@ export async function getDistanceSuggestionsForJob(
     await Promise.all([
       supabase
         .from("jobs")
-        .select("id, estimated_duration_hours, client_id, installation_address_id, clients ( lat, lng ), installation_addresses!installation_address_id ( lat, lng )")
+        .select("id, estimated_duration_hours, client_id, installation_address_id, installation_addresses!installation_address_id ( lat, lng )")
         .eq("id", jobId)
         .maybeSingle(),
       supabase.from("teams").select("id, name, active, color, notes, created_at").order("name"),
@@ -61,7 +61,7 @@ export async function getDistanceSuggestionsForJob(
         .select(
           `id, job_id, team_id, scheduled_date, slot_type, status,
            jobs ( id, estimated_duration_hours,
-             clients ( name, lat, lng, city, phone, email, address_formatted ),
+             clients ( name, city, phone, email, address_formatted ),
              installation_addresses!installation_address_id ( lat, lng, city, address_formatted )
            )`
         )

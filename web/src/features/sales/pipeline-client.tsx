@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  FilePlus,
   FileText,
   History,
   Loader2,
@@ -39,7 +41,12 @@ import {
   type ProspectSlotResult,
   type SalespersonWeekData,
 } from "@/actions/sales";
-import { createProspect } from "@/actions/prospects";
+import {
+  createProspect,
+  createJobOnExistingAddress,
+  checkInstallationAddressExists,
+  type AddressMatch,
+} from "@/actions/prospects";
 import { updateClient, updateJob, addInstallationAddress, updateInstallationAddress } from "@/actions/clients";
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
@@ -264,7 +271,12 @@ export function DualAddressBlock({
 
 // ── Création rapide d'un prospect ─────────────────────────────────────────────
 
-type CreateStep = "form" | "loading-slots" | "slots";
+type CreateStep = "form" | "intercept" | "loading-slots" | "slots";
+
+const OPEN_JOB_STATUSES = [
+  "soumission_en_attente", "soumission_repartie", "en_attente",
+  "a_planifier", "reparti", "retour_a_faire",
+] as const;
 
 function QuickProspectModal({
   onClose,
@@ -289,6 +301,29 @@ function QuickProspectModal({
     salesperson_id: "",
     salesperson_locked: false,
   });
+
+  // ── Interception adresse connue ────────────────────────────────────────────
+  const [addrMatches, setAddrMatches] = useState<AddressMatch[] | null>(null);
+  const [interceptAction, setInterceptAction] = useState<"direct" | "rdv" | null>(null);
+  const [selectedMatchIdx, setSelectedMatchIdx] = useState(0);
+  const [ownerChoice, setOwnerChoice] = useState<"same" | "new">("new");
+
+  // Vérifie l'adresse dès que Google Places la résout (install_lat passe de null à une valeur)
+  useEffect(() => {
+    if (form.install_address && form.install_lat != null) {
+      checkInstallationAddressExists(form.install_address).then((res) => {
+        if (res.ok && res.matches.length > 0) {
+          setAddrMatches(res.matches);
+          setSelectedMatchIdx(0);
+        } else {
+          setAddrMatches(null);
+        }
+      });
+    } else {
+      setAddrMatches(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.install_address, form.install_lat]);
 
   const setAddr = useCallback((patch: Partial<DualAddressState>) => setForm((f) => ({ ...f, ...patch })), []);
 
@@ -331,6 +366,11 @@ function QuickProspectModal({
   };
 
   const handleCreateOnly = () => {
+    if (addrMatches && addrMatches.length > 0) {
+      setInterceptAction("direct");
+      setStep("intercept");
+      return;
+    }
     start(async () => {
       const jobId = await doCreate();
       if (!jobId) return;
@@ -344,6 +384,11 @@ function QuickProspectModal({
       setError("Sélectionnez l'adresse d'installation dans Google pour activer le GPS.");
       return;
     }
+    if (addrMatches && addrMatches.length > 0) {
+      setInterceptAction("rdv");
+      setStep("intercept");
+      return;
+    }
     start(async () => {
       const jobId = await doCreate();
       if (!jobId) return;
@@ -353,6 +398,46 @@ function QuickProspectModal({
       const res = await findBestSlotsForProspect(form.install_lat!, form.install_lng!, 10, filterSp);
       if (!res.ok) { setError(res.message); setStep("form"); return; }
       setSlots(res.slots);
+      setStep("slots");
+      router.refresh();
+    });
+  };
+
+  /** Confirme la création depuis l'écran d'interception */
+  const handleConfirmIntercept = () => {
+    if (!addrMatches || !interceptAction) return;
+    const match = addrMatches[selectedMatchIdx];
+    start(async () => {
+      setError(null);
+      const res = await createJobOnExistingAddress({
+        installationAddressId: match.installation_address_id,
+        mode: "blank",
+        newOwner:
+          ownerChoice === "new" && form.name.trim()
+            ? { name: form.name.trim(), phone: form.phone || null, email: form.email || null }
+            : undefined,
+        enrichWith:
+          ownerChoice === "same"
+            ? { phone: form.phone || null, email: form.email || null }
+            : undefined,
+      });
+      if (!res.ok) { setError(res.message); return; }
+
+      if (interceptAction === "direct") {
+        router.push(`/ventes/pipeline?job=${res.jobId}`);
+        onClose();
+        return;
+      }
+
+      // Chemin RDV : utiliser GPS de la row existante si dispo
+      const lat = res.installLat ?? form.install_lat!;
+      const lng = res.installLng ?? form.install_lng!;
+      setCreatedJobId(res.jobId);
+      setStep("loading-slots");
+      const filterSp = form.salesperson_locked ? (form.salesperson_id || null) : null;
+      const slotsRes = await findBestSlotsForProspect(lat, lng, 10, filterSp);
+      if (!slotsRes.ok) { setError(slotsRes.message); setStep("intercept"); return; }
+      setSlots(slotsRes.slots);
       setStep("slots");
       router.refresh();
     });
@@ -489,6 +574,113 @@ function QuickProspectModal({
           </div>
         )}
 
+        {/* ── Étape interception : adresse déjà connue ── */}
+        {step === "intercept" && addrMatches && (() => {
+          const match = addrMatches[selectedMatchIdx];
+          const hasOpenJob = match?.jobs.some((j) =>
+            (OPEN_JOB_STATUSES as readonly string[]).includes(j.status)
+          );
+          const nameDiffers = form.name.trim().toLowerCase() !== match?.client_name.toLowerCase();
+          return (
+            <div className="px-6 pb-6 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Cette adresse d&apos;installation est déjà dans la base de données.
+              </p>
+
+              {/* Liste des matches */}
+              <div className="space-y-2">
+                {addrMatches.map((m, idx) => {
+                  const openJob = m.jobs.find((j) => (OPEN_JOB_STATUSES as readonly string[]).includes(j.status));
+                  return (
+                    <label
+                      key={m.installation_address_id}
+                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${selectedMatchIdx === idx ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}
+                    >
+                      <input
+                        type="radio"
+                        name="match"
+                        checked={selectedMatchIdx === idx}
+                        onChange={() => setSelectedMatchIdx(idx)}
+                        className="mt-0.5"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-sm">{m.client_name}</p>
+                        {m.client_phone && <p className="text-xs text-muted-foreground">{m.client_phone}</p>}
+                        <p className="text-[11px] text-muted-foreground truncate">{m.address_formatted}</p>
+                        {openJob && (
+                          <p className="text-[11px] text-amber-700 font-medium mt-0.5">
+                            Job ouverte · {openJob.quote_number ? `#${openJob.quote_number}` : openJob.status}
+                          </p>
+                        )}
+                        {m.jobs.length === 0 && (
+                          <p className="text-[11px] text-muted-foreground mt-0.5 italic">Aucune soumission</p>
+                        )}
+                      </div>
+                      <a
+                        href={`/clients/adresse/${m.installation_address_id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-[11px] text-sky-600 hover:underline shrink-0 mt-0.5"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Fiche →
+                      </a>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {/* Bandeau avertissement si job ouverte */}
+              {hasOpenJob && (
+                <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                  <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
+                  <span>Une soumission est déjà en cours pour ce lieu. Vous pouvez quand même en créer une nouvelle.</span>
+                </div>
+              )}
+
+              {/* Choix proprio (si nom différent) */}
+              {nameDiffers && form.name.trim() && (
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium">
+                    Vous avez saisi &laquo;&nbsp;{form.name}&nbsp;&raquo; mais le dossier existant est au nom de &laquo;&nbsp;{match?.client_name}&nbsp;&raquo;.
+                  </p>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="ownerChoice" value="new" checked={ownerChoice === "new"} onChange={() => setOwnerChoice("new")} />
+                    Nouveau propriétaire (créer un nouveau client)
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="radio" name="ownerChoice" value="same" checked={ownerChoice === "same"} onChange={() => setOwnerChoice("same")} />
+                    Même personne (utiliser le client existant)
+                  </label>
+                </div>
+              )}
+
+              {error && <p className="text-destructive text-sm">{error}</p>}
+
+              <div className="space-y-2 pt-1">
+                <Button
+                  onClick={handleConfirmIntercept}
+                  disabled={pending}
+                  className="w-full h-10 gap-2"
+                >
+                  {pending
+                    ? <><Loader2 className="size-4 animate-spin" />En cours…</>
+                    : <><FilePlus className="size-4" />Nouvelle soumission{interceptAction === "rdv" ? " + créneau" : ""}</>
+                  }
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { setStep("form"); setError(null); }}
+                  disabled={pending}
+                  className="w-full h-9"
+                >
+                  ← Retour au formulaire
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* ── Étape 2 : chargement ── */}
         {step === "loading-slots" && (
           <div className="flex flex-col items-center gap-3 py-16 text-sm text-muted-foreground">
@@ -521,7 +713,7 @@ function QuickProspectModal({
 const PIPELINE_STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
   { value: "soumission_en_attente", label: "Prospect" },
   { value: "soumission_repartie",   label: "Visite planifiée" },
-  { value: "en_attente",            label: "En attente" },
+  { value: "en_attente",            label: "Va nous rappeler" },
   { value: "annule",                label: "Annulé" },
 ];
 
@@ -587,16 +779,29 @@ function CancelModal({
 
 type EditModalStep = "edit" | "loading-slots" | "slots";
 
-function ProspectEditModal({
+export type ProspectEditSaved = {
+  client_name: string;
+  client_phone: string;
+  client_email: string;
+  billing_address: string;
+  install_address: string;
+};
+
+export function ProspectEditModal({
   job,
   salespeople,
   onClose,
   onBooked,
+  onSaved,
+  allowSlotBooking = true,
 }: {
   job: PipelineJob;
   salespeople: Salesperson[];
   onClose: () => void;
   onBooked?: (msg: string) => void;
+  onSaved?: (data: ProspectEditSaved) => void;
+  /** false = ouvert depuis la soumission : pas de prise de RDV (évite de quitter la page). */
+  allowSlotBooking?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -708,9 +913,20 @@ function ProspectEditModal({
     return true;
   };
 
+  const emitSaved = () => {
+    onSaved?.({
+      client_name: form.client_name,
+      client_phone: form.client_phone,
+      client_email: form.client_email,
+      billing_address: form.same_address ? form.install_address : form.billing_address,
+      install_address: form.install_address,
+    });
+  };
+
   const handleSaveOnly = () => {
     start(async () => {
       if (!await persist()) return;
+      emitSaved();
       router.refresh();
       onClose();
     });
@@ -723,6 +939,7 @@ function ProspectEditModal({
     }
     start(async () => {
       if (!await persist()) return;
+      emitSaved();
       setStep("loading-slots");
       const res = await findBestSlotsForProspect(
         form.install_lat!,
@@ -738,6 +955,7 @@ function ProspectEditModal({
   };
 
   const handleBooked = (msg: string) => {
+    emitSaved();
     router.refresh();
     onClose();
     onBooked?.(msg);
@@ -879,23 +1097,27 @@ function ProspectEditModal({
             {error && <p className="text-destructive text-sm">{error}</p>}
 
             <div className="space-y-2 pb-1">
+              {allowSlotBooking && (
+                <Button
+                  onClick={handleSaveAndOptimize}
+                  disabled={pending}
+                  className="w-full h-10 gap-2"
+                >
+                  {pending
+                    ? <><Loader2 className="size-4 animate-spin" />En cours…</>
+                    : <><Sparkles className="size-4" />Sauvegarder et trouver un créneau</>
+                  }
+                </Button>
+              )}
               <Button
-                onClick={handleSaveAndOptimize}
-                disabled={pending}
-                className="w-full h-10 gap-2"
-              >
-                {pending
-                  ? <><Loader2 className="size-4 animate-spin" />En cours…</>
-                  : <><Sparkles className="size-4" />Sauvegarder et trouver un créneau</>
-                }
-              </Button>
-              <Button
-                variant="outline"
+                variant={allowSlotBooking ? "outline" : "default"}
                 onClick={handleSaveOnly}
                 disabled={pending}
                 className="w-full h-9"
               >
-                Sauvegarder seulement
+                {pending && !allowSlotBooking
+                  ? <><Loader2 className="size-4 animate-spin" />En cours…</>
+                  : allowSlotBooking ? "Sauvegarder seulement" : "Sauvegarder"}
               </Button>
               <Button
                 variant="ghost"
@@ -984,6 +1206,7 @@ function OptimizedList({
         salespersonId: s.salesperson_id,
         scheduledDate: s.date,
         startTime: s.start_time,
+        allowReschedule: true,
       });
       setBookingSlot(null);
       if (!res.ok) { setError(res.message); return; }
@@ -1132,6 +1355,7 @@ export function WeekCalendar({
         salespersonId: sp.salesperson_id,
         scheduledDate: dateStr,
         startTime: slot,
+        allowReschedule: true,
       });
       setBookingKey(null);
       if (!res.ok) { setError(res.message); return; }
@@ -1467,6 +1691,7 @@ function ProspectCard({
   const [statusPending, startStatus] = useTransition();
   const [flagPending, startFlag] = useTransition();
   const [acceptPending, startAccept] = useTransition();
+  const [newJobPending, startNewJob] = useTransition();
   const client = job.clients;
 
   const createdAt = format(new Date(job.created_at), "d MMM yyyy", { locale: fr });
@@ -1615,10 +1840,10 @@ function ProspectCard({
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
               {client?.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{client.phone}</span>}
-              {(job.installation_address?.city || client?.billing_city || client?.city) && (
+              {job.installation_address?.city && (
                 <span className="flex items-center gap-1">
                   <MapPin className="size-3" />
-                  {job.installation_address?.city || client?.billing_city || client?.city}
+                  {job.installation_address.city}
                 </span>
               )}
               <span>Créé le {createdAt}</span>
@@ -1691,6 +1916,28 @@ function ProspectCard({
                 {job.has_quote ? "Voir soumission" : "Créer soumission"}
               </Button>
             </a>
+            {job.has_quote && job.installation_address_id && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 h-8"
+                disabled={newJobPending}
+                title="Créer une nouvelle soumission pour la même adresse d'installation"
+                onClick={() => {
+                  startNewJob(async () => {
+                    const res = await createJobOnExistingAddress({
+                      installationAddressId: job.installation_address_id!,
+                      mode: "blank",
+                    });
+                    if (!res.ok) { alert(res.message); return; }
+                    router.push(`/ventes/pipeline?job=${res.jobId}`);
+                  });
+                }}
+              >
+                {newJobPending ? <Loader2 className="size-3.5 animate-spin" /> : <FilePlus className="size-3.5" />}
+                Nouvelle soumission
+              </Button>
+            )}
             <Button
               size="sm"
               variant={showOptimizer ? "default" : "outline"}

@@ -11,6 +11,145 @@ import type { Client, InstallationAddress, Job } from "@/types/domain";
 type Ok<T = void> = T extends void ? { ok: true } : { ok: true } & T;
 type Err = { ok: false; message: string };
 
+// ── searchClients ─────────────────────────────────────────────────────────────
+
+export type ClientSearchResult = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  billing_address: string | null;
+  billing_city: string | null;
+  billing_postal: string | null;
+  installation_addresses: Array<{
+    id: string;
+    label: string | null;
+    address_formatted: string | null;
+    city: string | null;
+    postal_code: string | null;
+    lat: number | null;
+    lng: number | null;
+  }>;
+  jobs: Array<{
+    id: string;
+    status: string;
+    installation_address_id: string | null;
+    quote_number: number | null;
+  }>;
+};
+
+export async function searchClients(
+  q: string
+): Promise<{ ok: true; data: ClientSearchResult[] } | Err> {
+  if (q.trim().length < 2) return { ok: true as const, data: [] };
+
+  const supabase = await createServerSupabaseClient();
+  const safe = q.trim().replace(/[%_\\]/g, "\\$&");
+  const pattern = `%${safe}%`;
+
+  // Recherche en parallèle : clients (nom/tél/ville) + adresses d'installation
+  const [clientsRes, addrsRes] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id")
+      .or(`name.ilike.${pattern},phone.ilike.${pattern},billing_city.ilike.${pattern}`)
+      .limit(25),
+    supabase
+      .from("installation_addresses")
+      .select("client_id")
+      .ilike("address_formatted", pattern)
+      .limit(25),
+  ]);
+
+  if (clientsRes.error) return { ok: false as const, message: clientsRes.error.message };
+
+  // Union des client_ids trouvés (max 25 uniques)
+  const ids = new Set<string>([
+    ...(clientsRes.data ?? []).map((r) => r.id),
+    ...(addrsRes.data ?? []).map((r) => r.client_id),
+  ]);
+  if (ids.size === 0) return { ok: true as const, data: [] };
+
+  const { data, error } = await supabase
+    .from("clients")
+    .select(
+      `id, name, phone, email, billing_address, billing_city, billing_postal,
+       installation_addresses ( id, label, address_formatted, city, postal_code, lat, lng ),
+       jobs ( id, status, installation_address_id, quotes ( quote_number ) )`
+    )
+    .in("id", [...ids].slice(0, 25))
+    .order("name");
+
+  if (error) return { ok: false as const, message: error.message };
+
+  const mapped = (data ?? []).map((r) => {
+    const row = r as {
+      id: string; name: string; phone: string | null; email: string | null;
+      billing_address: string | null; billing_city: string | null; billing_postal: string | null;
+      installation_addresses: unknown;
+      jobs: unknown;
+    };
+    const addrs = (Array.isArray(row.installation_addresses)
+      ? row.installation_addresses
+      : row.installation_addresses ? [row.installation_addresses] : []) as ClientSearchResult["installation_addresses"];
+    const rawJobs = Array.isArray(row.jobs) ? row.jobs : row.jobs ? [row.jobs] : [];
+    const jobs = (rawJobs as Array<{ id: string; status: string; installation_address_id: string | null; quotes?: unknown }>)
+      .map((j) => {
+        const qRaw = j.quotes;
+        const qList = Array.isArray(qRaw) ? qRaw : qRaw ? [qRaw] : [];
+        const latest = [...qList].sort((a, b) =>
+          ((b as { quote_number: number }).quote_number ?? 0) - ((a as { quote_number: number }).quote_number ?? 0)
+        )[0] as { quote_number: number } | undefined;
+        return {
+          id: j.id,
+          status: j.status,
+          installation_address_id: j.installation_address_id,
+          quote_number: latest?.quote_number ?? null,
+        };
+      });
+    return {
+      id: row.id,
+      name: row.name,
+      phone: row.phone,
+      email: row.email,
+      billing_address: row.billing_address,
+      billing_city: row.billing_city,
+      billing_postal: row.billing_postal,
+      installation_addresses: addrs,
+      jobs,
+    };
+  });
+
+  return { ok: true as const, data: mapped };
+}
+
+// ── reassignJobToClient ───────────────────────────────────────────────────────
+
+export async function reassignJobToClient(
+  jobId: string,
+  newClientId: string,
+  newInstallationAddressId?: string | null
+): Promise<{ ok: true } | Err> {
+  const supabase = await createServerSupabaseClient();
+
+  const patch: Record<string, string | null> = { client_id: newClientId };
+  if (newInstallationAddressId !== undefined) {
+    patch.installation_address_id = newInstallationAddressId ?? null;
+  }
+
+  const { error } = await supabase
+    .from("jobs")
+    .update(patch)
+    .eq("id", jobId);
+
+  if (error) return { ok: false as const, message: error.message };
+
+  revalidatePath("/clients");
+  revalidatePath("/ventes/pipeline");
+  revalidatePath("/a-planifier");
+  return { ok: true as const };
+}
+
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
 function n(s: string | null | undefined): string | null {

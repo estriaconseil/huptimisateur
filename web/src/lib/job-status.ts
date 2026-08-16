@@ -4,7 +4,7 @@ export function statusLabel(s: string): string {
   switch (s) {
     case "soumission_en_attente": return "Prospect";
     case "soumission_repartie":   return "Visite planifiée";
-    case "en_attente":            return "En attente";
+    case "en_attente":            return "Va nous rappeler";
     case "a_planifier":           return "À planifier";
     case "reparti":               return "Réparti";
     case "retour_a_faire":        return "Retour à faire";

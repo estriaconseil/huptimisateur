@@ -1,12 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Phone, MapPin } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { QuoteForm } from "@/features/sales/quote-form";
+import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-form";
 import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
-import { statusLabel } from "@/lib/job-status";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
@@ -25,7 +24,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
   const { data: job } = await supabase
     .from("jobs")
     .select(
-      `id, status, appointment_id, salesperson_id, installation_info,
+      `id, status, appointment_id, salesperson_id, installation_info, installation_address_id,
        clients ( id, name, phone, email, billing_address ),
        installation_addresses!installation_address_id(address_formatted, city)`
     )
@@ -97,41 +96,14 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
         {backLabel}
       </Link>
 
-      <div className="bg-background rounded-xl border p-5 mb-6 print:hidden">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-xl font-bold">{client?.name ?? "Client"}</h1>
-            <div className="flex flex-wrap gap-4 mt-2 text-sm text-muted-foreground">
-              {client?.phone && (
-                <span className="flex items-center gap-1">
-                  <Phone className="size-3.5" />
-                  {client.phone}
-                </span>
-              )}
-              {(jobInstall?.address_formatted ?? client?.billing_address) && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="size-3.5" />
-                  {jobInstall?.address_formatted ?? client?.billing_address}
-                </span>
-              )}
-            </div>
-          </div>
-          <span className="rounded-full px-3 py-0.5 text-xs font-medium bg-muted">
-            {statusLabel(job.status)}
-          </span>
+      <div className="mb-6 print:hidden flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold">
+            {quote ? `Soumission #${quote.quote_number}` : "Créer soumission"}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-0.5">{client?.name ?? "Client"}</p>
         </div>
-        {job.installation_info && (
-          <p className="mt-3 text-sm text-muted-foreground border-t pt-3">{job.installation_info}</p>
-        )}
-      </div>
-
-      <div className="mb-3 print:hidden">
-        <h2 className="text-lg font-semibold">
-          {quote ? `Soumission #${quote.quote_number}` : "Créer la soumission"}
-        </h2>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Sans rendez-vous calendrier — soumission directe (ex. directeur au téléphone)
-        </p>
+        <ScrollToQuoteActionsButton />
       </div>
 
       <QuoteForm

@@ -83,7 +83,7 @@ const JOB_STATUSES = [
   { value: "all",                   label: "Tous les statuts" },
   { value: "soumission_en_attente", label: "Prospect" },
   { value: "soumission_repartie",   label: "Visite planifiée" },
-  { value: "en_attente",            label: "En attente" },
+  { value: "en_attente",            label: "Va nous rappeler" },
   { value: "a_planifier",           label: "À planifier" },
   { value: "reparti",               label: "Réparti" },
   { value: "retour_a_faire",        label: "Retour à faire" },

@@ -8,14 +8,15 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
 import { todayYmd } from "@/lib/address";
+import { stripAutofilledPostal } from "@/lib/looks-like-postal";
 import { FIXED_TIME_SLOTS } from "@/features/sales/sales-utils";
 import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
 
-/** Statuts ventes avant « En attente » — seuls ceux-ci peuvent être promus. */
+/** Statuts ventes avant « Va nous rappeler » — seuls ceux-ci peuvent être promus. */
 const PRE_EN_ATTENTE = ["soumission_en_attente", "soumission_repartie"] as const;
 
 /**
- * Si la soumission a un sous-total > 0, passe le job lié en « en_attente ».
+ * Si la soumission a un sous-total > 0, passe le job lié en « Va nous rappeler » (`en_attente`).
  * Ne rétrograde jamais et n'écrase pas un statut d'installation.
  */
 async function promoteJobToEnAttenteIfPriced(
@@ -348,10 +349,10 @@ export async function createQuote(
         warranty_months: u.warranty_months || null,
         evaporator: u.evaporator || null,
         pipe_feet: u.pipe_feet || null,
-        cap_long1_length: u.cap_long1_length || null,
-        cap_long1_color: u.cap_long1_color || null,
-        cap_long2_length: u.cap_long2_length || null,
-        cap_long2_color: u.cap_long2_color || null,
+        cap_long1_length: stripAutofilledPostal(u.cap_long1_length) || null,
+        cap_long1_color: stripAutofilledPostal(u.cap_long1_color) || null,
+        cap_long2_length: stripAutofilledPostal(u.cap_long2_length) || null,
+        cap_long2_color: stripAutofilledPostal(u.cap_long2_color) || null,
         support_type: u.support_type || null,
         floor_mount_type: u.floor_mount_type || null,
         difficulty: u.difficulty || null,
@@ -453,10 +454,10 @@ export async function updateQuote(
         warranty_months: u.warranty_months || null,
         evaporator: u.evaporator || null,
         pipe_feet: u.pipe_feet || null,
-        cap_long1_length: u.cap_long1_length || null,
-        cap_long1_color: u.cap_long1_color || null,
-        cap_long2_length: u.cap_long2_length || null,
-        cap_long2_color: u.cap_long2_color || null,
+        cap_long1_length: stripAutofilledPostal(u.cap_long1_length) || null,
+        cap_long1_color: stripAutofilledPostal(u.cap_long1_color) || null,
+        cap_long2_length: stripAutofilledPostal(u.cap_long2_length) || null,
+        cap_long2_color: stripAutofilledPostal(u.cap_long2_color) || null,
         support_type: u.support_type || null,
         floor_mount_type: u.floor_mount_type || null,
         difficulty: u.difficulty || null,
@@ -503,7 +504,7 @@ export async function updateQuoteStatus(
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("quotes")
-    .update({ status })
+    .update(status === "pending" ? { status, will_call_back: true } : { status })
     .eq("id", quoteId);
 
   if (error) return { ok: false, message: error.message };
@@ -760,6 +761,8 @@ export async function bookProspectToSlot(input: {
   salespersonId: string;
   scheduledDate: string;
   startTime: string;
+  /** true = déplacer un RDV existant (fiche prospect). false = case vide du calendrier. */
+  allowReschedule?: boolean;
 }): Promise<{ ok: true; appointmentId: string } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -792,10 +795,23 @@ export async function bookProspectToSlot(input: {
     lat: number | null; lng: number | null; address_formatted: string | null;
   }>((job as { installation_addresses: unknown }).installation_addresses);
 
-  // Remplacement : libérer l'ancien RDV s'il existe
+  // Remplacement : uniquement si demandé (fiche prospect). Une case vide ne doit pas bouger un RDV confirmé.
   const previousApptId = (job as { appointment_id: string | null }).appointment_id;
   if (previousApptId) {
-    await supabase.from("sales_appointments").delete().eq("id", previousApptId);
+    const { data: prevAppt } = await supabase
+      .from("sales_appointments")
+      .select("status")
+      .eq("id", previousApptId)
+      .maybeSingle();
+    if (prevAppt?.status === "scheduled" && !input.allowReschedule) {
+      return {
+        ok: false,
+        message: "Ce prospect a déjà un RDV confirmé. Pour le déplacer, ouvrez sa fiche prospect.",
+      };
+    }
+    if (input.allowReschedule && prevAppt?.status === "scheduled") {
+      await supabase.from("sales_appointments").delete().eq("id", previousApptId);
+    }
   }
 
   // Créer le rendez-vous — GPS uniquement depuis l'adresse d'installation
@@ -947,6 +963,16 @@ function scoreTravelSeconds(
   if (tPrev !== null) return tPrev;
   if (tNext !== null) return tNext;
   return Infinity;
+}
+
+function validGps(
+  lat: number | null | undefined,
+  lng: number | null | undefined
+): { lat: number; lng: number } | null {
+  if (lat == null || lng == null) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat === 0 && lng === 0) return null;
+  return { lat, lng };
 }
 
 /**
@@ -1362,21 +1388,28 @@ export type ProspectForSlot = {
   client_lat: number;
   client_lng: number;
   distance_meters: number | null;
-  /** Temps de trajet en secondes (Distance Matrix). */
+  /** Score trajet (secondes) : moyenne prev/next si les deux, sinon le seul. */
   travel_seconds: number | null;
   prev_label: string;
 };
 
+export type SlotNeighborGps = { lat: number; lng: number };
+
 /**
- * Retourne les prospects du pipeline classés par distance depuis
- * l'emplacement précédent du vendeur (dernier RDV du jour ou domicile).
+ * Prospects encore à placer (pas de visite déjà confirmée).
+ * Le score trajet (étape 2) utilise prev/next comme findBestSlotsForProspect.
  */
 export async function getProspectsForSlot(
   salespersonId: string,
   date: string,
   startTime: string
-): Promise<{ ok: true; prospects: ProspectForSlot[]; prevLabel: string; originLat: number | null; originLng: number | null } | { ok: false; message: string }> {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+): Promise<{
+  ok: true;
+  prospects: ProspectForSlot[];
+  prevLabel: string;
+  prevOrigin: SlotNeighborGps | null;
+  nextOrigin: SlotNeighborGps | null;
+} | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
 
   // 1. Vendeur (home coords)
@@ -1388,66 +1421,99 @@ export async function getProspectsForSlot(
 
   if (!sp) return { ok: false, message: "Vendeur introuvable" };
 
-  // 2. RDV précédent ce jour-là (avant le créneau)
-  const { data: dayAppts } = await supabase
+  const home = validGps(sp.home_lat as number | null, sp.home_lng as number | null);
+  const slotTime = startTime.slice(0, 5);
+
+  // 2. Tous les RDV du jour (pour prev ET next)
+  const { data: dayApptsRaw } = await supabase
     .from("sales_appointments")
     .select("start_time, client_lat, client_lng, clients ( name ), installation_addresses!installation_address_id ( lat, lng )")
     .eq("salesperson_id", salespersonId)
     .eq("scheduled_date", date)
     .neq("status", "cancelled")
-    .lt("start_time", startTime)
-    .order("start_time", { ascending: false })
-    .limit(1);
+    .order("start_time", { ascending: true });
 
-  const prevRaw = dayAppts?.[0] ?? null;
-  const prevApptName = prevRaw
-    ? ((Array.isArray((prevRaw as unknown as { clients: unknown }).clients)
-        ? (prevRaw as unknown as { clients: { name: string }[] }).clients[0]
-        : (prevRaw as unknown as { clients: { name: string } | null }).clients)?.name ?? "—")
-    : null;
-  const prevAppt = prevRaw as {
+  type DayAppt = {
+    start_time: string;
     client_lat: number | null;
     client_lng: number | null;
+    clients: { name: string } | { name: string }[] | null;
     installation_addresses: { lat: number | null; lng: number | null } | { lat: number | null; lng: number | null }[] | null;
-  } | null;
-  const prevIa = prevAppt
-    ? (Array.isArray(prevAppt.installation_addresses) ? prevAppt.installation_addresses[0] : prevAppt.installation_addresses)
-    : null;
-  const originLat: number | null = prevAppt?.client_lat ?? prevIa?.lat ?? (sp.home_lat as number | null);
-  const originLng: number | null = prevAppt?.client_lng ?? prevIa?.lng ?? (sp.home_lng as number | null);
-  const prevLabel = prevApptName
-    ? `après ${prevApptName}`
-    : `départ domicile (${(sp as { name: string }).name})`;
+  };
 
-  // 3. Prospects du pipeline avec GPS d'installation uniquement
+  const apptGps = (row: DayAppt): SlotNeighborGps | null => {
+    const ia = Array.isArray(row.installation_addresses)
+      ? row.installation_addresses[0]
+      : row.installation_addresses;
+    return validGps(row.client_lat ?? ia?.lat ?? null, row.client_lng ?? ia?.lng ?? null);
+  };
+  const apptName = (row: DayAppt): string => {
+    const c = Array.isArray(row.clients) ? row.clients[0] : row.clients;
+    return c?.name ?? "RDV";
+  };
+
+  const dayAppts = ((dayApptsRaw ?? []) as unknown as DayAppt[]).map((a) => ({
+    time: (a.start_time ?? "").slice(0, 5),
+    name: apptName(a),
+    gps: apptGps(a),
+  }));
+
+  const prevAppt = dayAppts.filter((a) => a.time < slotTime).at(-1);
+  const nextAppt = dayAppts.find((a) => a.time > slotTime);
+
+  const prevOrigin = prevAppt?.gps ?? home;
+  const nextOrigin = nextAppt?.gps ?? null;
+
+  const prevLabel = nextAppt
+    ? `${prevAppt?.name ?? `Domicile ${sp.name}`} → … → ${nextAppt.name}`
+    : prevAppt
+      ? `après ${prevAppt.name}`
+      : `départ domicile (${sp.name})`;
+
+  // 3. Prospects encore à placer : pas de visite déjà confirmée
   const { data: jobs } = await supabase
     .from("jobs")
     .select(`
-      id, status,
+      id, status, appointment_id,
       clients ( name, phone, billing_city ),
       installation_addresses!installation_address_id ( lat, lng, address_formatted, city )
     `)
-    .in("status", ["soumission_en_attente", "soumission_repartie", "en_attente"])
+    .in("status", ["soumission_en_attente", "en_attente"])
     .order("created_at");
 
-  if (!jobs?.length) return { ok: true, prospects: [], prevLabel, originLat, originLng };
+  if (!jobs?.length) return { ok: true, prospects: [], prevLabel, prevOrigin, nextOrigin };
 
   // Filtrer ceux avec GPS d'installation
   type RawJob = {
     id: string;
     status: string;
+    appointment_id: string | null;
     clients: { name: string; phone: string | null; billing_city: string | null } | null;
     installation_addresses: { lat: number | null; lng: number | null; address_formatted: string | null; city: string | null } | null;
   };
 
-  const gpsJobs = (jobs as unknown as RawJob[]).filter((j) => {
+  const rawJobs = (jobs as unknown as RawJob[]) ?? [];
+
+  // Exclure ceux qui ont encore un RDV « scheduled » (ne pas proposer de déplacer un RDV confirmé)
+  const apptIds = rawJobs.map((j) => j.appointment_id).filter((id): id is string => !!id);
+  const blockedApptIds = new Set<string>();
+  if (apptIds.length > 0) {
+    const { data: liveAppts } = await supabase
+      .from("sales_appointments")
+      .select("id")
+      .in("id", apptIds)
+      .eq("status", "scheduled");
+    for (const a of liveAppts ?? []) blockedApptIds.add(a.id);
+  }
+
+  const gpsJobs = rawJobs.filter((j) => {
+    if (j.appointment_id && blockedApptIds.has(j.appointment_id)) return false;
     const ia = Array.isArray(j.installation_addresses) ? j.installation_addresses[0] : j.installation_addresses;
-    return ia?.lat != null && ia?.lng != null;
+    return validGps(ia?.lat ?? null, ia?.lng ?? null) != null;
   });
 
-  if (!gpsJobs.length) return { ok: true, prospects: [], prevLabel, originLat, originLng };
+  if (!gpsJobs.length) return { ok: true, prospects: [], prevLabel, prevOrigin, nextOrigin };
 
-  // Retourner immédiatement les prospects SANS distances (calcul séparé)
   const prospects: ProspectForSlot[] = gpsJobs.map((j) => {
     const c = Array.isArray(j.clients) ? j.clients[0] : j.clients;
     const ia = Array.isArray(j.installation_addresses) ? j.installation_addresses[0] : j.installation_addresses;
@@ -1466,7 +1532,47 @@ export async function getProspectsForSlot(
     };
   });
 
-  return { ok: true, prospects, prevLabel, originLat, originLng };
+  return { ok: true, prospects, prevLabel, prevOrigin, nextOrigin };
+}
+
+/**
+ * Score prev/next pour chaque destination (même règle que findBestSlotsForProspect).
+ * Prev = RDV avant ou domicile ; next = RDV après s'il existe.
+ */
+export async function scoreProspectsForSlot(
+  destinations: { lat: number; lng: number }[],
+  prevOrigin: SlotNeighborGps | null,
+  nextOrigin: SlotNeighborGps | null
+): Promise<{ meters: number | null; seconds: number | null }[]> {
+  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+  if (!apiKey || !destinations.length) {
+    return destinations.map(() => ({ meters: null, seconds: null }));
+  }
+
+  const empty = destinations.map(() => ({ meters: null as number | null, seconds: null as number | null }));
+  let prevMetrics = empty;
+  let nextMetrics = empty;
+
+  try {
+    if (prevOrigin) {
+      prevMetrics = await fetchDrivingMetricsFromOrigin(apiKey, prevOrigin, destinations);
+    }
+    if (nextOrigin) {
+      nextMetrics = await fetchDrivingMetricsFromOrigin(apiKey, nextOrigin, destinations);
+    }
+  } catch {
+    return empty;
+  }
+
+  return destinations.map((_, i) => {
+    const tPrev = prevMetrics[i]?.seconds ?? null;
+    const tNext = nextMetrics[i]?.seconds ?? null;
+    const score = scoreTravelSeconds(tPrev, tNext);
+    return {
+      seconds: score === Infinity ? null : score,
+      meters: prevMetrics[i]?.meters ?? nextMetrics[i]?.meters ?? null,
+    };
+  });
 }
 
 /**
@@ -1493,4 +1599,134 @@ export async function computeProspectDistances(
   } catch {
     return destinations.map(() => ({ meters: null, seconds: null }));
   }
+}
+
+// ── duplicateQuote ────────────────────────────────────────────────────────────
+
+/**
+ * Duplique une soumission existante en remettant tous les prix à zéro.
+ * Utile pour créer une nouvelle soumission mise à jour (prix changés, etc.)
+ * sans perdre la structure de l'ancienne.
+ *
+ * - `quotes.client_name` est conservé tel quel (snapshot historique).
+ * - `subtotal`, `deposit`, `montant_subvention`, `total_net` → 0 / null.
+ * - `quote_units.unit_subtotal`, `subsidy_amount` → 0.
+ * - `status` → "draft", `job_id` / `installation_job_id` / `appointment_id` → null.
+ */
+export async function duplicateQuote(
+  sourceQuoteId: string,
+  /** Si fourni, lie la nouvelle soumission à ce job (même job, nouvelle version). */
+  targetJobId?: string | null
+): Promise<{ ok: true; newQuoteId: string; newQuoteNumber: number } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  // 1. Charger la soumission source + ses unités
+  const { data: src, error: srcErr } = await supabase
+    .from("quotes")
+    .select(`
+      *,
+      quote_units ( * )
+    `)
+    .eq("id", sourceQuoteId)
+    .maybeSingle();
+
+  if (srcErr || !src) {
+    return { ok: false, message: srcErr?.message ?? "Soumission introuvable" };
+  }
+
+  // 2. Créer la nouvelle soumission avec prix à zéro
+  const { data: newQuote, error: insertErr } = await supabase
+    .from("quotes")
+    .insert({
+      client_name:             src.client_name,
+      client_address:          src.client_address,
+      client_work_address:     src.client_work_address,
+      client_phone:            src.client_phone,
+      client_cell:             src.client_cell,
+      client_email:            src.client_email,
+      has_subsidy:             src.has_subsidy,
+      will_call_back:          src.will_call_back,
+      ready_to_schedule:       false,
+      quote_date:              format(new Date(), "yyyy-MM-dd"),
+      // installation checklist
+      inst_prepiping:          src.inst_prepiping,
+      inst_drill_concrete:     src.inst_drill_concrete,
+      inst_through_attic:      src.inst_through_attic,
+      inst_through_basement:   src.inst_through_basement,
+      inst_through_garage:     src.inst_through_garage,
+      inst_through_closet:     src.inst_through_closet,
+      inst_appliance_change:   src.inst_appliance_change,
+      inst_through_stairs:     src.inst_through_stairs,
+      // électrique
+      electrical_amperage:     src.electrical_amperage,
+      electrical_panel:        src.electrical_panel,
+      electrical_included:     src.electrical_included,
+      electrical_not_included: src.electrical_not_included,
+      electrical_to_schedule:  src.electrical_to_schedule,
+      electrical_initials:     src.electrical_initials,
+      // durée estimée
+      estimated_duration_hours: src.estimated_duration_hours,
+      notes:                   src.notes,
+      salesperson_id:          src.salesperson_id,
+      // PRIX REMIS À ZÉRO
+      subtotal:                0,
+      deposit:                 null,
+      montant_subvention:      null,
+      total_net:               null,
+      // statut brouillon
+      status:                  "draft",
+      job_id:                  targetJobId ?? null,
+      installation_job_id:     null,
+      appointment_id:          null,
+      approved_by:             null,
+      signature_data:          null,
+      sketch_data:             null,
+    })
+    .select("id, quote_number")
+    .single();
+
+  if (insertErr || !newQuote) {
+    return { ok: false, message: insertErr?.message ?? "Erreur création soumission" };
+  }
+
+  // 3. Dupliquer les unités avec prix à zéro
+  const rawUnits = Array.isArray(src.quote_units) ? src.quote_units : src.quote_units ? [src.quote_units] : [];
+  if (rawUnits.length > 0) {
+    const { error: unitsErr } = await supabase.from("quote_units").insert(
+      (rawUnits as Array<Record<string, unknown>>).map((u) => ({
+        quote_id:            newQuote.id,
+        unit_order:          u.unit_order,
+        description:         u.description,
+        brand:               u.brand,
+        model:               u.model,
+        capacity_btu:        u.capacity_btu,
+        heating_capacity_25: u.heating_capacity_25,
+        warranty_parts:      u.warranty_parts,
+        warranty_months:     u.warranty_months,
+        evaporator:          u.evaporator,
+        pipe_feet:           u.pipe_feet,
+        cap_long1_length:    stripAutofilledPostal(u.cap_long1_length) || null,
+        cap_long1_color:     stripAutofilledPostal(u.cap_long1_color) || null,
+        cap_long2_length:    stripAutofilledPostal(u.cap_long2_length) || null,
+        cap_long2_color:     stripAutofilledPostal(u.cap_long2_color) || null,
+        support_type:        u.support_type,
+        floor_mount_type:    u.floor_mount_type,
+        difficulty:          u.difficulty,
+        tech_count:          u.tech_count,
+        is_alternative:      u.is_alternative ?? false,
+        serial_bypass:       u.serial_bypass ?? false,
+        // PRIX REMIS À ZÉRO
+        unit_subtotal:       0,
+        subsidy_amount:      0,
+      }))
+    );
+    if (unitsErr) {
+      return { ok: false, message: `Soumission créée mais erreur unités : ${unitsErr.message}` };
+    }
+  }
+
+  revalidatePath("/ventes/pipeline");
+  revalidatePath("/clients");
+
+  return { ok: true as const, newQuoteId: newQuote.id, newQuoteNumber: newQuote.quote_number as number };
 }

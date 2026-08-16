@@ -9,6 +9,7 @@ import {
   View,
 } from "@react-pdf/renderer";
 import type { Quote, QuoteUnit } from "@/types/domain";
+import { stripAutofilledPostal } from "@/lib/looks-like-postal";
 
 // ── Enregistrement polices ────────────────────────────────────────────────────
 // Helvetica est toujours disponible sans enregistrement dans react-pdf
@@ -54,7 +55,7 @@ const DIFF_LABELS: Record<string, string> = {
   easy: "Facile", medium: "Moyen", hard: "Difficile",
 };
 const STATUS_LABELS: Record<string, string> = {
-  draft: "Brouillon", pending: "En attente", accepted: "Acceptée", refused: "Refusée",
+  draft: "Brouillon", pending: "Va nous rappeler", accepted: "Acceptée", refused: "Refusée",
 };
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -189,12 +190,11 @@ function FieldRow({ children }: { children: React.ReactNode }) {
 // ── Bloc unité (réutilisable principal / alternatif) ─────────────────────────
 function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
   const hasSpecs = u.capacity_btu || u.heating_capacity_25 || u.warranty_parts || u.warranty_months;
-  const hasPiping = u.evaporator || u.pipe_feet || u.cap_long1_length || u.cap_long1_color || u.cap_long2_length || u.cap_long2_color;
+  const cap1 = [stripAutofilledPostal(u.cap_long1_length), stripAutofilledPostal(u.cap_long1_color)].filter(Boolean);
+  const cap2 = [stripAutofilledPostal(u.cap_long2_length), stripAutofilledPostal(u.cap_long2_color)].filter(Boolean);
+  const hasPiping = !!(u.evaporator || u.pipe_feet || cap1.length || cap2.length);
   const unitNet = Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0));
-  // Numéro d'unité dans l'option (1–3) : Option A = unit_order 1–3, Option B = 4–6 → 1–3
-  const unitNum = u.is_alternative
-    ? Math.max(1, (u.unit_order ?? 4) - 3)
-    : Math.max(1, Math.min(u.unit_order ?? idx + 1, 3));
+  const unitNum = idx + 1;
 
   return (
     <View wrap={false}>
@@ -271,16 +271,16 @@ function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
               <Text style={s.colValue}>{u.pipe_feet}</Text>
             </View>
           ) : <View style={cell} />}
-          {(u.cap_long1_length || u.cap_long1_color) ? (
+          {cap1.length ? (
             <View style={cell}>
               <Text style={s.colLabel}>Cap Long 1</Text>
-              <Text style={s.colValue}>{[u.cap_long1_length, u.cap_long1_color].filter(Boolean).join(" — ")}</Text>
+              <Text style={s.colValue}>{cap1.join(" — ")}</Text>
             </View>
           ) : <View style={cell} />}
-          {(u.cap_long2_length || u.cap_long2_color) ? (
+          {cap2.length ? (
             <View style={cellFull}>
               <Text style={s.colLabel}>Cap Long 2</Text>
-              <Text style={s.colValue}>{[u.cap_long2_length, u.cap_long2_color].filter(Boolean).join(" — ")}</Text>
+              <Text style={s.colValue}>{cap2.join(" — ")}</Text>
             </View>
           ) : <View style={cellFull} />}
         </FieldRow>
@@ -400,16 +400,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
           </View>
         </View>
 
-        {/* Drapeaux + date */}
         <View style={s.flagsRow}>
-          <View style={s.flagItem}>
-            <View style={quote.has_subsidy ? s.boxChecked : s.box} />
-            <Text style={s.flagLabel}>Subvention</Text>
-          </View>
-          <View style={s.flagItem}>
-            <View style={quote.will_call_back ? s.boxChecked : s.box} />
-            <Text style={s.flagLabel}>Va nous rappeler</Text>
-          </View>
           <View style={{ marginLeft: "auto", alignItems: "flex-end" }}>
             <Text style={s.dateLabel}>Date soumission</Text>
             <Text style={s.dateValue}>{quote.quote_date}</Text>
