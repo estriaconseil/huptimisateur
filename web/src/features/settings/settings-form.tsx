@@ -33,6 +33,10 @@ export function SettingsForm({ settings, role }: Props) {
   const [threshold, setThreshold] = useState(
     String(settings?.full_day_threshold_hours ?? 8)
   );
+  const [serialBypassGlobal, setSerialBypassGlobal] = useState(
+    settings?.serial_bypass_global ?? false
+  );
+  const canEditBypass = role === "admin" || role === "secretary";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -55,6 +59,7 @@ export function SettingsForm({ settings, role }: Props) {
         pm_start: pmStart,
         pm_end: pmEnd,
         full_day_threshold_hours: thresholdNum,
+        serial_bypass_global: serialBypassGlobal,
       });
 
       if (!res.ok) {
@@ -231,7 +236,37 @@ export function SettingsForm({ settings, role }: Props) {
         </CardContent>
       </Card>
 
-      {isAdmin && (
+      {/* Bypass global # de série */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Bypass global — # de série</CardTitle>
+          <CardDescription>
+            Permet à toute l'équipe de répartir vers l'installation sans entrer les numéros de série.
+            À utiliser temporairement en cas de pénurie de données ou de commandes en attente.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={serialBypassGlobal}
+              onChange={(e) => setSerialBypassGlobal(e.target.checked)}
+              disabled={!canEditBypass}
+              className="h-4 w-4 rounded border-input accent-primary"
+            />
+            <span className="text-sm font-medium">
+              Activer le bypass global des # de série
+            </span>
+          </label>
+          {serialBypassGlobal && (
+            <p className="text-amber-700 text-xs mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              ⚠ Bypass actif — les avertissements # de série sont ignorés pour toute l'équipe.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {(isAdmin || canEditBypass) && (
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={pending}>
             {pending ? "Enregistrement..." : "Enregistrer les paramètres"}

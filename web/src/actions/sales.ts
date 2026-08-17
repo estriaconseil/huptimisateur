@@ -531,6 +531,8 @@ export async function convertQuoteToInstallationJob(
   options?: {
     estimatedDurationHours?: 4 | 8;
     cancelSalesAppointment?: boolean;
+    /** Option retenue par le client (A ou B). Stockée sur la soumission. */
+    acceptedOption?: "a" | "b";
   }
 ): Promise<{ ok: true; jobId: string } | Err> {
   const supabase = await createServerSupabaseClient();
@@ -610,6 +612,9 @@ export async function convertQuoteToInstallationJob(
         job_id: existingJob.id,
         status: "accepted",
         estimated_duration_hours: duration,
+        ...(options?.acceptedOption
+          ? { accepted_option: options.acceptedOption, accepted_at: new Date().toISOString() }
+          : {}),
       })
       .eq("id", quoteId);
 
@@ -666,6 +671,9 @@ export async function convertQuoteToInstallationJob(
       client_id: client.id,
       status: "accepted",
       estimated_duration_hours: duration,
+      ...(options?.acceptedOption
+        ? { accepted_option: options.acceptedOption, accepted_at: new Date().toISOString() }
+        : {}),
     })
     .eq("id", quoteId);
 
@@ -1115,8 +1123,12 @@ export async function findBestSlotsForProspect(
   const apptsFor = (spId: string, date: string): ApptRow[] =>
     allAppts.filter((a) => a.salesperson_id === spId && a.scheduled_date === date);
 
+  // Seuil en secondes : un créneau ancré à un vrai client voisin ≤ ce seuil est prioritaire
+  // sur tout créneau dont l'origine est le domicile du vendeur (même si plus court en valeur absolue).
+  const ANCHOR_THRESHOLD_SEC = 20 * 60;
+
   // 5. Construire et scorer chaque créneau disponible
-  type ScoredSlot = ProspectSlotResult & { score: number };
+  type ScoredSlot = ProspectSlotResult & { score: number; anchoredToClient: boolean };
   const scored: ScoredSlot[] = [];
 
   for (const sp of salespeople) {
@@ -1169,6 +1181,13 @@ export async function findBestSlotsForProspect(
           ? `${prevLabel} → [prospect] → ${nextLabel}`
           : `Après : ${prevLabel}`;
 
+        // Tier 1 : au moins un voisin est un VRAI RDV client (pas le domicile) à ≤ 20 min.
+        // Cela garantit qu'enchaîner deux clients proches passe avant un départ domicile
+        // même si le domicile est légèrement plus proche en valeur absolue.
+        const anchoredToClient =
+          (prevAppt != null && tPrev != null && tPrev <= ANCHOR_THRESHOLD_SEC) ||
+          (nextAppt != null && tNext != null && tNext <= ANCHOR_THRESHOLD_SEC);
+
         scored.push({
           salesperson_id: sp.id,
           salesperson_name: sp.name,
@@ -1178,14 +1197,19 @@ export async function findBestSlotsForProspect(
           travel_seconds: score === Infinity ? null : score,
           context,
           score,
+          anchoredToClient,
         });
       }
     }
   }
 
-  // 6. Trier par score (plus court = mieux), retourner top N
-  scored.sort((a, b) => a.score - b.score);
-  const top = scored.slice(0, maxResults).map(({ score: _, ...rest }) => rest);
+  // 6. Trier : Tier 1 (ancré à un client proche) avant Tier 2 (domicile / client lointain),
+  //    puis par score croissant à l'intérieur de chaque tier.
+  scored.sort((a, b) => {
+    if (a.anchoredToClient !== b.anchoredToClient) return a.anchoredToClient ? -1 : 1;
+    return a.score - b.score;
+  });
+  const top = scored.slice(0, maxResults).map(({ score: _, anchoredToClient: __, ...rest }) => rest);
 
   return { ok: true, slots: top };
 }
@@ -1746,4 +1770,59 @@ export async function duplicateQuote(
   revalidatePath("/clients");
 
   return { ok: true as const, newQuoteId: newQuote.id, newQuoteNumber: newQuote.quote_number as number };
+}
+
+/**
+ * Acceptation formelle d'une soumission par le vendeur devant le client.
+ * - Enregistre l'option retenue (A ou B) et l'horodatage.
+ * - Convertit le job lié vers le statut "a_planifier" (pipeline installation).
+ * L'envoi du courriel PDF est géré côté client après l'appel à cette action.
+ */
+export async function acceptQuote(
+  quoteId: string,
+  acceptedOption: "a" | "b",
+): Promise<{ ok: true; jobId: string } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  // Récupérer la soumission pour valider les pré-requis
+  const { data: quote, error: qErr } = await supabase
+    .from("quotes")
+    .select("id, subtotal, estimated_duration_hours, status, quote_number, job_id, appointment_id")
+    .eq("id", quoteId)
+    .single();
+
+  if (qErr || !quote) {
+    return { ok: false, message: qErr?.message ?? "Soumission introuvable" };
+  }
+
+  if (!(Number(quote.subtotal) > 0)) {
+    return { ok: false, message: "Impossible d'accepter une soumission sans montant." };
+  }
+
+  if (!quote.estimated_duration_hours) {
+    return { ok: false, message: "La durée des travaux doit être sélectionnée avant d'accepter." };
+  }
+
+  const INSTALL_STATUSES_LOCAL = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+  if (quote.status === "accepted") {
+    // Déjà acceptée — vérifier si le job est déjà converti
+    if (quote.job_id) {
+      const { data: existingJob } = await supabase
+        .from("jobs")
+        .select("id, status")
+        .eq("id", quote.job_id)
+        .maybeSingle();
+      if (existingJob && INSTALL_STATUSES_LOCAL.includes(existingJob.status)) {
+        return { ok: false, message: "Cette soumission a déjà été acceptée et convertie." };
+      }
+    }
+  }
+
+  const res = await convertQuoteToInstallationJob(quoteId, {
+    estimatedDurationHours: quote.estimated_duration_hours as 4 | 8,
+    acceptedOption,
+    cancelSalesAppointment: true,
+  });
+
+  return res;
 }

@@ -235,7 +235,12 @@ export function QuoteForm({
   const [errorTick, setErrorTick] = useState(0);
   const [saved, setSaved] = useState(false);
   const [showAcceptModal, setShowAcceptModal] = useState(false);
-  const [acceptOption, setAcceptOption] = useState<"a" | "b">("a");
+  const [acceptOption, setAcceptOption] = useState<"a" | "b">(
+    initialQuote?.accepted_option === "b" ? "b" : "a"
+  );
+  const [acceptedOption, setAcceptedOption] = useState<"a" | "b" | null>(
+    initialQuote?.accepted_option ?? null
+  );
   const [acceptEmailTo, setAcceptEmailTo] = useState("");
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [acceptSending, setAcceptSending] = useState(false);
@@ -647,6 +652,7 @@ export function QuoteForm({
 
         const res = await acceptQuote(quoteIdToUse, acceptOption);
         if (!res.ok) { setAcceptError(res.message); return; }
+        setAcceptedOption(acceptOption);
 
         // Envoi email (optionnel)
         if (acceptEmailTo.trim()) {
@@ -800,11 +806,7 @@ export function QuoteForm({
     });
   };
 
-  const subtotal = parseFloat(form.subtotal) || 0;
-  const { tps, tvq, total } = calcTaxes(subtotal);
   const depositAmt = parseFloat(form.deposit) || 0;
-  // Total net = Total (avec taxes) − Dépôt
-  const computedTotalNet = Math.max(0, total - depositAmt);
   // Sous-total Option B = somme des nets (comme Option A)
   const altSubtotal = units
     .filter((u) => u.is_alternative)
@@ -814,8 +816,15 @@ export function QuoteForm({
     );
   const statusInfo = STATUS_INFO[form.status];
   const canSendQuote = (parseFloat(form.subtotal) || 0) > 0;
+  const retainedIsB = acceptedOption === "b";
+  const aSubtotal = parseFloat(form.subtotal) || 0;
+  const primarySub = retainedIsB ? altSubtotal : aSubtotal;
+  const { tps: primaryTps, tvq: primaryTvq, total: primaryTotal } = calcTaxes(primarySub);
+  const primaryNet = Math.max(0, primaryTotal - depositAmt);
 
-  const [activeGroup, setActiveGroup] = useState<"a" | "b">("a");
+  const [activeGroup, setActiveGroup] = useState<"a" | "b">(
+    initialQuote?.accepted_option === "b" ? "b" : "a"
+  );
   const [activeUnit, setActiveUnit] = useState(0);
 
   const addUnit = (alt: boolean) => {
@@ -871,10 +880,15 @@ export function QuoteForm({
                 title="Modifiable — utile pour saisir un # de soumission papier existant"
               />
             </div>
-            <div>
+            <div className="flex flex-col items-end gap-1">
               <span className={`inline-block rounded-full px-3 py-0.5 text-xs font-medium ${statusInfo.color}`}>
                 {statusInfo.label}
               </span>
+              {acceptedOption && (
+                <span className="inline-block rounded-full px-3 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-800">
+                  Option {acceptedOption.toUpperCase()} retenue
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -999,6 +1013,12 @@ export function QuoteForm({
                 }`}
               >
                 {grp === "a" ? "Option A" : "Option B"}
+                {acceptedOption === grp && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide opacity-90">retenue</span>
+                )}
+                {acceptedOption && acceptedOption !== grp && (
+                  <span className="text-[10px] font-bold uppercase tracking-wide opacity-80">proposition</span>
+                )}
                 {hasFilled && (
                   <span className="inline-block size-1.5 rounded-full bg-current opacity-70" />
                 )}
@@ -1466,21 +1486,26 @@ export function QuoteForm({
           {/* Droite : tableau de prix + texte légal */}
           <div>
             <div className="border rounded-lg overflow-hidden max-w-sm ml-auto w-full">
+              {acceptedOption && (
+                <div className="flex justify-between px-4 py-2 bg-emerald-100 text-emerald-900 text-xs font-bold border-b border-emerald-200">
+                  <span>Option {acceptedOption.toUpperCase()} — retenue</span>
+                </div>
+              )}
               <div className="flex justify-between px-4 py-2 bg-muted/40 text-sm">
                 <span className="text-muted-foreground text-xs">Sous-total <span className="opacity-60">(nets)</span></span>
-                <span className="font-medium">{fmt(parseFloat(form.subtotal) || 0)} $</span>
+                <span className="font-medium">{fmt(primarySub)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t text-muted-foreground">
                 <span>TPS (5%)</span>
-                <span>{fmt(tps)} $</span>
+                <span>{fmt(primaryTps)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t text-muted-foreground">
                 <span>TVQ (9.975%)</span>
-                <span>{fmt(tvq)} $</span>
+                <span>{fmt(primaryTvq)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2.5 bg-foreground text-background font-bold border-t text-base">
                 <span>TOTAL</span>
-                <span>{fmt(total)} $</span>
+                <span>{fmt(primaryTotal)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t">
                 <span className="text-muted-foreground">− Dépôt</span>
@@ -1504,14 +1529,14 @@ export function QuoteForm({
               </div>
               <div className="flex justify-between px-4 py-2.5 bg-emerald-50 text-emerald-900 font-bold border-t text-base">
                 <span>Total net</span>
-                <span>{fmt(computedTotalNet)} $</span>
+                <span>{fmt(primaryNet)} $</span>
               </div>
             </div>
             <p className="mt-3 max-w-sm ml-auto text-xs text-muted-foreground leading-relaxed italic">
               En acceptant la présente soumission, le client s&apos;engage à respecter le terme de paiement à l&apos;installation.
             </p>
-            {altSubtotal > 0 && (() => {
-              const { tps: aTps, tvq: aTvq, total: aTotal } = calcTaxes(altSubtotal);
+            {!acceptedOption && altSubtotal > 0 && (() => {
+              const { tps: bTps, tvq: bTvq, total: bTotal } = calcTaxes(altSubtotal);
               return (
                 <div className="mt-3 border border-amber-300 rounded-lg overflow-hidden max-w-sm ml-auto w-full">
                   <div className="flex justify-between px-4 py-2 bg-amber-50 text-amber-900 text-xs font-bold border-b border-amber-200">
@@ -1523,15 +1548,15 @@ export function QuoteForm({
                   </div>
                   <div className="flex justify-between px-4 py-2 text-sm text-muted-foreground border-t">
                     <span>TPS (5%)</span>
-                    <span>{fmt(aTps)} $</span>
+                    <span>{fmt(bTps)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2 text-sm text-muted-foreground border-t">
                     <span>TVQ (9.975%)</span>
-                    <span>{fmt(aTvq)} $</span>
+                    <span>{fmt(bTvq)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2.5 bg-amber-500 text-white font-bold border-t text-base">
                     <span>Total :</span>
-                    <span>{fmt(aTotal)} $</span>
+                    <span>{fmt(bTotal)} $</span>
                   </div>
                 </div>
               );
@@ -1692,29 +1717,37 @@ export function QuoteForm({
               {hasAlt && (
                 <div>
                   <p className="text-sm font-medium mb-2">Option choisie par le client :</p>
-                  <div className="flex gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="acceptOption"
-                        value="a"
-                        checked={acceptOption === "a"}
-                        onChange={() => setAcceptOption("a")}
-                        className="accent-green-600"
-                      />
-                      <span className="text-sm font-medium">Option A</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="acceptOption"
-                        value="b"
-                        checked={acceptOption === "b"}
-                        onChange={() => setAcceptOption("b")}
-                        className="accent-green-600"
-                      />
-                      <span className="text-sm font-medium">Option B</span>
-                    </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["a", "b"] as const).map((opt) => {
+                      const optSub = opt === "a" ? aSubtotal : altSubtotal;
+                      const optTotal = calcTaxes(optSub).total;
+                      const selected = acceptOption === opt;
+                      return (
+                        <label
+                          key={opt}
+                          className={`flex flex-col gap-1 cursor-pointer rounded-lg border p-3 ${
+                            selected
+                              ? "border-green-600 bg-green-50 ring-1 ring-green-600"
+                              : "hover:bg-muted"
+                          }`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="acceptOption"
+                              value={opt}
+                              checked={selected}
+                              onChange={() => setAcceptOption(opt)}
+                              className="accent-green-600"
+                            />
+                            <span className="text-sm font-semibold">Option {opt.toUpperCase()}</span>
+                          </span>
+                          <span className="text-xs text-muted-foreground pl-6">
+                            {fmt(optTotal)} $
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1786,7 +1819,7 @@ export function QuoteForm({
                   className="h-[38px] px-4 rounded-lg border text-sm font-medium inline-flex items-center gap-2 opacity-40 cursor-not-allowed"
                 >
                   <Printer className="size-3.5" />
-                  Aperçu PDF
+                  {acceptedOption || alreadyConverted ? "PDF client" : "Aperçu PDF"}
                 </button>
               ) : (
                 <a
@@ -1796,8 +1829,30 @@ export function QuoteForm({
                   className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted inline-flex items-center gap-2"
                 >
                   <Printer className="size-3.5" />
-                  Aperçu PDF
+                  {acceptedOption || alreadyConverted ? "PDF client" : "Aperçu PDF"}
                 </a>
+              )}
+              {(acceptedOption || alreadyConverted) && (
+                isDirty || !canSendQuote ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="h-[38px] px-4 rounded-lg border border-emerald-300 text-sm font-medium inline-flex items-center gap-2 opacity-40 cursor-not-allowed"
+                  >
+                    <Printer className="size-3.5" />
+                    PDF installation
+                  </button>
+                ) : (
+                  <a
+                    href={`/api/pdf/soumission/${jobId}?mode=install`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-[38px] px-4 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 text-sm font-medium hover:bg-emerald-100 inline-flex items-center gap-2"
+                  >
+                    <Printer className="size-3.5" />
+                    PDF installation
+                  </a>
+                )
               )}
               <button
                 type="button"
@@ -1858,7 +1913,7 @@ export function QuoteForm({
             ) : (
               <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200 sm:ml-auto">
                 <CheckCircle2 className="size-4 mr-1.5" />
-                Acceptée — en installation
+                Acceptée — Option {(acceptedOption ?? "a").toUpperCase()} en installation
               </span>
             )}
           </div>

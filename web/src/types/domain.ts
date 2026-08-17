@@ -142,6 +142,8 @@ export interface AppSettings {
   pm_start: string;
   pm_end: string;
   full_day_threshold_hours: number;
+  /** Bypass global du # de série — permet de répartir sans # série pour toutes les unités. */
+  serial_bypass_global: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -276,6 +278,10 @@ export interface Quote {
   approved_by: string | null;
   signature_data: string | null;
   status: QuoteStatus;
+  /** Option retenue par le client lors de l'acceptation ("a" | "b"). null si non encore acceptée. */
+  accepted_option: "a" | "b" | null;
+  /** Horodatage de l'acceptation. */
+  accepted_at: string | null;
   created_at: string;
   updated_at: string;
 }

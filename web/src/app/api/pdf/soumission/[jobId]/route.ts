@@ -24,10 +24,12 @@ function getLogoBase64(): string | null {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ jobId: string }> }
 ) {
   const { jobId } = await params;
+  const { searchParams } = req.nextUrl;
+  const mode = searchParams.get("mode") === "install" ? "install" : "customer";
   const supabase = await createServerSupabaseClient();
 
   // Vérification session
@@ -85,7 +87,7 @@ export async function GET(
   const logoBase64 = getLogoBase64();
 
   const element = React.createElement(
-    QuoteDocument, { quote, units, salespersonName, logoBase64, installAddress }
+    QuoteDocument, { quote, units, salespersonName, logoBase64, installAddress, mode }
   ) as ReactElement<DocumentProps>;
 
   const buffer = await renderToBuffer(element);
@@ -94,7 +96,7 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="soumission-${quote.quote_number}.pdf"`,
+      "Content-Disposition": `inline; filename="${mode === "install" ? "installation" : "soumission"}-${quote.quote_number}.pdf"`,
       "Cache-Control": "no-store",
     },
   });

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { addDays, addWeeks, format, parseISO, startOfWeek, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 import {
+  AlertTriangle,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -189,7 +190,7 @@ function OptimizerDialog({
       <div className="bg-background rounded-xl shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="px-5 pt-5 pb-4 border-b flex items-start justify-between gap-3 shrink-0">
           <div>
-            <h2 className="text-base font-semibold">Placer dans le calendrier</h2>
+            <h2 className="text-base font-semibold">Placer dans le calendrier d&apos;installation</h2>
             <p className="text-sm text-muted-foreground mt-0.5">
               {job.clients?.name ?? "Client"} · {job.estimated_duration_hours} h
             </p>
@@ -739,6 +740,7 @@ export function InstallJobsClient({
   scrollJobId,
   fetchError,
   fullDayThreshold,
+  serialBypassGlobal = false,
 }: {
   jobs: InstallJob[];
   weekIso: string;
@@ -746,6 +748,8 @@ export function InstallJobsClient({
   scrollJobId: string | null;
   fetchError: string | null;
   fullDayThreshold: number;
+  /** Bypass global activé dans les paramètres — masque les avertissements # série */
+  serialBypassGlobal?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -797,12 +801,26 @@ export function InstallJobsClient({
       if (tab !== "all" && job.status !== tab) return false;
       if (!q) return true;
       const name = job.clients?.name?.toLowerCase() ?? "";
-      const addr = job.clients?.address_formatted?.toLowerCase() ?? "";
-      const city =
+      const installAddr = job.installation_address?.address_formatted?.toLowerCase() ?? "";
+      const installCity =
+        (job.installation_address?.city ??
+          cityFromAddress(job.installation_address?.address_formatted))?.toLowerCase() ?? "";
+      const installPostal = job.installation_address?.postal_code?.toLowerCase() ?? "";
+      const billingAddr = job.clients?.address_formatted?.toLowerCase() ?? "";
+      const billingCity =
         (job.clients?.city ?? cityFromAddress(job.clients?.address_formatted))?.toLowerCase() ?? "";
       const info = job.installation_info?.toLowerCase() ?? "";
       const phone = job.clients?.phone?.toLowerCase() ?? "";
-      return name.includes(q) || addr.includes(q) || city.includes(q) || info.includes(q) || phone.includes(q);
+      return (
+        name.includes(q) ||
+        installAddr.includes(q) ||
+        installCity.includes(q) ||
+        installPostal.includes(q) ||
+        billingAddr.includes(q) ||
+        billingCity.includes(q) ||
+        info.includes(q) ||
+        phone.includes(q)
+      );
     });
   }, [jobs, tab, search]);
 
@@ -860,7 +878,7 @@ export function InstallJobsClient({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
             <input
               type="search"
-              placeholder="Rechercher client, ville, adresse, téléphone…"
+              placeholder="Rechercher client, adresse d'installation, ville, téléphone…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -917,8 +935,13 @@ export function InstallJobsClient({
             {filtered.map((job) => {
               const isHighlighted = job.id === scrollJobId;
               const clientName = job.clients?.name ?? "Client sans nom";
+              const installAddr = job.installation_address?.address_formatted ?? job.clients?.address_formatted ?? null;
               const city =
-                job.clients?.city ?? cityFromAddress(job.clients?.address_formatted) ?? null;
+                job.installation_address?.city ??
+                cityFromAddress(job.installation_address?.address_formatted) ??
+                job.clients?.city ??
+                cityFromAddress(job.clients?.address_formatted) ??
+                null;
               const pref = job.preferred_date
                 ? format(parseISO(job.preferred_date), "d MMMM yyyy", { locale: fr })
                 : null;
@@ -949,6 +972,11 @@ export function InstallJobsClient({
                           <Badge variant="outline" className="text-[10px]">
                             {durationLabel}
                           </Badge>
+                          {job.accepted_option && (
+                            <Badge className="text-[10px] bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
+                              Option {job.accepted_option.toUpperCase()} retenue
+                            </Badge>
+                          )}
                           {isHighlighted && (
                             <Badge className="text-[10px] bg-primary text-primary-foreground">
                               Nouveau
@@ -988,13 +1016,13 @@ export function InstallJobsClient({
                           </p>
                         )}
 
-                        {(city || job.clients?.address_formatted) && (
+                        {(city || installAddr) && (
                           <p className="text-muted-foreground text-xs flex items-start gap-1">
                             <MapPin className="size-3 mt-0.5 shrink-0" />
                             <span>
                               {city && <strong>{city}</strong>}
-                              {city && job.clients?.address_formatted && " — "}
-                              {job.clients?.address_formatted}
+                              {city && installAddr && " — "}
+                              {installAddr}
                             </span>
                           </p>
                         )}
@@ -1002,6 +1030,13 @@ export function InstallJobsClient({
                         {job.installation_info && (
                           <p className="text-muted-foreground line-clamp-2 text-xs">
                             {job.installation_info}
+                          </p>
+                        )}
+
+                        {job.missing_serial && !serialBypassGlobal && (
+                          <p className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-800 w-fit">
+                            <AlertTriangle className="size-3 shrink-0" />
+                            # de série manquant
                           </p>
                         )}
                       </div>
@@ -1034,7 +1069,7 @@ export function InstallJobsClient({
                           Notes
                         </button>
 
-                        {/* Voir la soumission */}
+                        {/* Voir la soumission / PDF installation */}
                         <Link
                           href={withQuoteOrigin(`/ventes/soumission/${job.id}`, "a-planifier")}
                           className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
@@ -1042,6 +1077,15 @@ export function InstallJobsClient({
                           <FileText className="size-3.5" />
                           Soumission
                         </Link>
+                        <a
+                          href={`/api/pdf/soumission/${job.id}?mode=install`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
+                        >
+                          <FileText className="size-3.5" />
+                          PDF install.
+                        </a>
 
                         {/* Placer dans le calendrier / voir au calendrier */}
                         {job.status !== "reparti" ? (

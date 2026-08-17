@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FilePlus,
@@ -1752,6 +1753,8 @@ function ProspectCard({
 
   const isVisitePlanifiee = job.status === "soumission_repartie";
   const hideSlotFinder = job.status === "en_attente" && job.has_quote;
+  // Afficher "Accepter" si la soumission existe et que le statut n'est pas déjà en installation
+  const showAccepterBtn = job.has_quote && job.status !== "annule";
 
   function handleSlotFinderClick() {
     if (showOptimizer) {
@@ -1899,23 +1902,37 @@ function ProspectCard({
         </div>
 
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <Link
-            href={`/ventes/soumission/${job.id}?from=pipeline`}
-            className={cn(
-              buttonVariants({ variant: job.has_quote ? "secondary" : "outline", size: "sm" }),
-              "h-8 gap-1.5",
-              job.has_quote
-                ? "bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
-                : "text-muted-foreground"
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Link
+              href={`/ventes/soumission/${job.id}?from=pipeline`}
+              className={cn(
+                buttonVariants({ variant: job.has_quote ? "secondary" : "outline", size: "sm" }),
+                "h-8 gap-1.5",
+                job.has_quote
+                  ? "bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
+                  : "text-muted-foreground"
+              )}
+            >
+              <FileText className="size-3.5" />
+              {job.has_quote && job.quote_number
+                ? `#${job.quote_number}`
+                : job.has_quote
+                  ? "Soumission"
+                  : "Créer soumission"}
+            </Link>
+            {showAccepterBtn && (
+              <Link
+                href={`/ventes/soumission/${job.id}?from=pipeline&accept=1`}
+                className={cn(
+                  buttonVariants({ size: "sm" }),
+                  "h-8 gap-1.5 bg-green-600 hover:bg-green-700 text-white border-0"
+                )}
+              >
+                <CheckCircle2 className="size-3.5" />
+                Accepter
+              </Link>
             )}
-          >
-            <FileText className="size-3.5" />
-            {job.has_quote && job.quote_number
-              ? `#${job.quote_number}`
-              : job.has_quote
-                ? "Soumission"
-                : "Créer soumission"}
-          </Link>
+          </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
             {flagPending
               ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" />

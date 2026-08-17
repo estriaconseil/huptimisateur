@@ -127,7 +127,7 @@ const s = StyleSheet.create({
   sketchPageFrame: { borderWidth: 1, borderColor: C.border, width: 556, height: 700 },
   sketchPageImage: { width: 554, height: 698, objectFit: "contain" },
 
-  // Page alternative
+  // Page alternative / option retenue
   altBanner: { backgroundColor: "#fffbeb", borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 10, borderWidth: 1, borderColor: "#fcd34d" },
   altBannerText: { fontSize: 9, fontWeight: "bold", color: "#92400e" },
 
@@ -345,30 +345,46 @@ export type QuoteDocumentProps = {
   logoBase64?: string | null;
   /** Adresse d'installation (chantier) — pour affichage distinct si différente de la facturation */
   installAddress?: string | null;
+  /**
+   * "customer" (défaut) : document complet envoyé/montré au client.
+   *   Si accepted_option est défini, l'option non retenue est étiquetée "Proposition".
+   * "install" : document épuré pour l'équipe d'installation.
+   *   Seules les unités de l'option retenue sont incluses.
+   */
+  mode?: "customer" | "install";
 };
 
 // ── Document ──────────────────────────────────────────────────────────────────
-export function QuoteDocument({ quote, units, salespersonName, logoBase64, installAddress = null }: QuoteDocumentProps) {
-  const sub = quote.subtotal ?? 0;
+export function QuoteDocument({ quote, units, salespersonName, logoBase64, installAddress = null, mode = "customer" }: QuoteDocumentProps) {
+  const accepted = quote.accepted_option ?? null;
+  const isInstall = mode === "install";
+  const chosen: "a" | "b" = accepted === "b" ? "b" : "a";
+
+  const isPriced = (u: QuoteUnit) => (u.unit_subtotal ?? 0) > 0;
+  const netOf = (list: QuoteUnit[]) =>
+    list.reduce((acc, u) => acc + Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0)), 0);
+  const byOrder = (a: QuoteUnit, b: QuoteUnit) => (a.unit_order ?? 0) - (b.unit_order ?? 0);
+
+  const aUnits = units.filter((u) => !u.is_alternative && isPriced(u)).sort(byOrder);
+  const bUnits = units.filter((u) => u.is_alternative && isPriced(u)).sort(byOrder);
+
+  // Page 1 = option retenue (B si choisie, sinon A). Page 2 = l'autre, client seulement.
+  const page1Units = chosen === "b" ? bUnits : aUnits;
+  const page2Units = isInstall ? [] : chosen === "b" ? aUnits : bUnits;
+  const page1Letter = chosen === "b" ? "B" : "A";
+  const page2Letter = chosen === "b" ? "A" : "B";
+
+  const aSub = netOf(aUnits);
+  const bSub = netOf(bUnits);
+  const sub = chosen === "b" ? bSub : (aSub > 0 ? aSub : (quote.subtotal ?? 0));
   const { tps, tvq, total } = calcTaxes(sub);
   const deposit = quote.deposit ?? 0;
   const computedTotalNet = Math.max(0, total - deposit);
 
-  const isPriced = (u: QuoteUnit) => (u.unit_subtotal ?? 0) > 0;
-  const principalUnits = units
-    .filter((u) => !u.is_alternative && isPriced(u))
-    .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
-  const altUnits = units
-    .filter((u) => u.is_alternative && isPriced(u))
-    .sort((a, b) => (a.unit_order ?? 0) - (b.unit_order ?? 0));
-  // Sous-total Option B = somme des nets (total − subvention)
-  const altSub = altUnits.reduce(
-    (acc, u) => acc + Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0)),
-    0
-  );
-  const { tps: altTps, tvq: altTvq, total: altTotal } = calcTaxes(altSub);
+  const otherSub = chosen === "b" ? aSub : bSub;
+  const { tps: otherTps, tvq: otherTvq, total: otherTotal } = calcTaxes(otherSub);
 
-  const jobMetaUnit = principalUnits[0] ?? units.find((u) => u.difficulty || u.tech_count) ?? null;
+  const jobMetaUnit = page1Units[0] ?? units.find((u) => u.difficulty || u.tech_count) ?? null;
 
   const instItems: { key: keyof Quote; label: string }[] = [
     { key: "inst_prepiping", label: "Prépiping" },
@@ -383,7 +399,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
 
   return (
     <Document
-      title={`Soumission #${quote.quote_number} — ${quote.client_name}`}
+      title={`${isInstall ? "Installation" : "Soumission"} #${quote.quote_number} — ${quote.client_name}${accepted ? ` — Option ${page1Letter}` : ""}`}
       author="Huppé Réfrigération"
       creator="Huppé CRM"
     >
@@ -399,8 +415,13 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
             <Text style={s.companyText}>2710, King Est, Sherbrooke, QC J1G 5H1{"\n"}Tél. 819 566-8061{"\n"}huppe@hupperefrigeration.com</Text>
           </View>
           <View style={s.titleBlock}>
-            <Text style={s.mainTitle}>SOUMISSION</Text>
+            <Text style={s.mainTitle}>{isInstall ? "INSTALLATION" : "SOUMISSION"}</Text>
             <Text style={s.quoteNum}>N° {quote.quote_number}</Text>
+            {accepted && (
+              <Text style={{ fontSize: 8, fontWeight: "bold", color: C.green, marginTop: 4 }}>
+                Option {page1Letter} retenue
+              </Text>
+            )}
           </View>
         </View>
 
@@ -465,14 +486,18 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
           </View>
         </View>
 
-        {/* ── Équipements Option A ───────────────────────────────── */}
-        {principalUnits.length > 0 && (
+        {/* ── Équipements option page 1 ──────────────────────────── */}
+        {page1Units.length > 0 && (
           <View style={s.section}>
             <View style={s.sectionHeader} minPresenceAhead={100}>
-              <Text style={s.sectionTitle}>Équipements — Option A</Text>
+              <Text style={s.sectionTitle}>
+                {accepted
+                  ? `Équipements — Option ${page1Letter} (retenue)`
+                  : `Équipements — Option ${page1Letter}`}
+              </Text>
             </View>
             <View style={s.sectionBody}>
-              {principalUnits.map((u, idx) => (
+              {page1Units.map((u, idx) => (
                 <UnitBlock key={u.id} u={u} idx={idx} />
               ))}
             </View>
@@ -546,7 +571,11 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
 
         {/* ── Financiers + signature ─────────────────────────────── */}
         <View style={s.section} wrap={false}>
-          <View style={s.sectionHeader}><Text style={s.sectionTitle}>Financiers</Text></View>
+          <View style={s.sectionHeader}>
+            <Text style={s.sectionTitle}>
+              {accepted ? `Financiers — Option ${page1Letter} (retenue)` : "Financiers"}
+            </Text>
+          </View>
           <View style={s.sectionBody}>
             <View style={{ flexDirection: "row", gap: 16 }}>
               {/* Gauche : représentant + signature */}
@@ -617,45 +646,57 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
         </Page>
       )}
 
-      {/* ── Page Option B ──────────────────────────────────── */}
-      {altUnits.length > 0 && (
+      {/* ── Page option non retenue (PDF client seulement) ──── */}
+      {page2Units.length > 0 && (
         <Page size="LETTER" style={s.page}>
           <View style={s.altBanner}>
-            <Text style={s.altBannerText}>SOUMISSION #{quote.quote_number} — {quote.client_name} — OPTION B</Text>
+            <Text style={s.altBannerText}>
+              {accepted
+                ? `SOUMISSION #${quote.quote_number} — ${quote.client_name} — OPTION ${page2Letter} (PROPOSITION — NON RETENUE)`
+                : `SOUMISSION #${quote.quote_number} — ${quote.client_name} — OPTION ${page2Letter}`}
+            </Text>
           </View>
 
           <View style={s.section}>
             <View style={s.sectionHeader} minPresenceAhead={100}>
-              <Text style={s.sectionTitle}>Équipements — Option B</Text>
+              <Text style={s.sectionTitle}>
+                {accepted
+                  ? `Équipements — Option ${page2Letter} (Proposition)`
+                  : `Équipements — Option ${page2Letter}`}
+              </Text>
             </View>
             <View style={s.sectionBody}>
-              {altUnits.map((u, idx) => (
+              {page2Units.map((u, idx) => (
                 <UnitBlock key={u.id} u={u} idx={idx} />
               ))}
             </View>
           </View>
 
-          {altSub > 0 && (
+          {!accepted && otherSub > 0 && (
             <View style={s.section} wrap={false}>
-              <View style={s.sectionHeader}><Text style={s.sectionTitle}>Financiers — Option B</Text></View>
+              <View style={s.sectionHeader}>
+                <Text style={s.sectionTitle}>
+                  {`Financiers — Option ${page2Letter}`}
+                </Text>
+              </View>
               <View style={s.sectionBody}>
                 <View style={{ marginLeft: "auto", maxWidth: 220 }}>
                   <View style={s.finTable}>
                     <View style={s.finRow}>
                       <Text style={s.finLabel}>Sous-total (nets)</Text>
-                      <Text style={s.finValue}>{fmt(altSub)} $</Text>
+                      <Text style={s.finValue}>{fmt(otherSub)} $</Text>
                     </View>
                     <View style={s.finRow}>
                       <Text style={s.finLabel}>TPS (5%)</Text>
-                      <Text style={s.finValue}>{fmt(altTps)} $</Text>
+                      <Text style={s.finValue}>{fmt(otherTps)} $</Text>
                     </View>
                     <View style={s.finRow}>
                       <Text style={s.finLabel}>TVQ (9.975%)</Text>
-                      <Text style={s.finValue}>{fmt(altTvq)} $</Text>
+                      <Text style={s.finValue}>{fmt(otherTvq)} $</Text>
                     </View>
                     <View style={s.finRowDark}>
                       <Text style={s.finLabelBold}>Total :</Text>
-                      <Text style={s.finValueBold}>{fmt(altTotal)} $</Text>
+                      <Text style={s.finValueBold}>{fmt(otherTotal)} $</Text>
                     </View>
                   </View>
                 </View>

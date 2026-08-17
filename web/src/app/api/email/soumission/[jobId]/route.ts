@@ -97,10 +97,10 @@ export async function POST(
     installAddress = addr?.address_formatted ?? null;
   }
 
-  // Génération PDF
+  // Génération PDF — mode "customer" : les deux options avec l'option non retenue étiquetée "Proposition"
   const logoBase64 = getLogoBase64();
   const element = React.createElement(
-    QuoteDocument, { quote, units, salespersonName, logoBase64, installAddress }
+    QuoteDocument, { quote, units, salespersonName, logoBase64, installAddress, mode: "customer" }
   ) as ReactElement<DocumentProps>;
   const pdfBuffer = await renderToBuffer(element);
 
