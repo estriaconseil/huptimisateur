@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useTransition, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { Mail, Printer, Pencil, ArrowDown, ArrowUp, Plus } from "lucide-react";
+import { Mail, Printer, Pencil, ArrowDown, ArrowUp, Plus, CheckCircle2 } from "lucide-react";
 import dynamic from "next/dynamic";
 
-import { createQuote, updateQuote, updateQuoteStatus, convertQuoteToInstallationJob } from "@/actions/sales";
+import { createQuote, updateQuote, updateQuoteStatus, acceptQuote } from "@/actions/sales";
 import { getProspectJob } from "@/actions/prospects";
 import { SignaturePad } from "./signature-pad";
 import { SketchPad } from "./sketch-pad";
@@ -228,12 +228,17 @@ export function QuoteForm({
   alreadyConverted = false,
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "serial" | "banner" | null>(null);
   const [errorTick, setErrorTick] = useState(0);
   const [saved, setSaved] = useState(false);
-  const [showRepartirModal, setShowRepartirModal] = useState(false);
+  const [showAcceptModal, setShowAcceptModal] = useState(false);
+  const [acceptOption, setAcceptOption] = useState<"a" | "b">("a");
+  const [acceptEmailTo, setAcceptEmailTo] = useState("");
+  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const [acceptSending, setAcceptSending] = useState(false);
   const [showCallBackModal, setShowCallBackModal] = useState(false);
   const [prospectJob, setProspectJob] = useState<PipelineJob | null>(null);
   const [liveInstall, setLiveInstall] = useState<string | null>(installAddress);
@@ -577,33 +582,99 @@ export function QuoteForm({
     });
   };
 
+  // Auto-ouvre la modale d'acceptation quand ?accept=1 est dans l'URL (venant du pipeline)
+  const autoAcceptTriggered = useRef(false);
+  useEffect(() => {
+    if (autoAcceptTriggered.current) return;
+    if (searchParams.get("accept") !== "1") return;
+    if (alreadyConverted) return;
+    if (!liveQuoteId) return;
+    autoAcceptTriggered.current = true;
+    setAcceptEmailTo(form.client_email || "");
+    setAcceptOption("a");
+    setAcceptError(null);
+    setShowAcceptModal(true);
+  }, [searchParams, alreadyConverted, liveQuoteId, form.client_email]);
+
   const openCallBackModal = () => {
     setEmailTo(form.client_email || "");
     setEmailStatus(null);
     setShowCallBackModal(true);
   };
 
-  const validateRepartir = (): boolean => {
-    if (!validateQuoteRequired()) return false;
-
-    const missingSerial = units
-      .map((u, i) => ({ u, i }))
-      .filter(({ u }) => !u.is_alternative)
-      .filter(({ u }) => u.brand.trim() || u.model.trim() || u.description.trim() || parseFloat(u.unit_subtotal) > 0)
-      .filter(({ u }) => !u.serial_number?.trim() && !u.serial_bypass)
-      .map(({ u, i }) => {
-        const n = units.slice(0, i).filter((x) => !x.is_alternative).length + 1;
-        return `Unité ${n}`;
-      });
-
-    if (missingSerial.length > 0) {
-      setError(`# de série manquant : ${missingSerial.join(", ")}`);
-      setErrorField("serial");
+  const handleAccepterClick = () => {
+    if (!liveQuoteId) {
+      setError("Sauvegardez la soumission avant d'accepter.");
+      setErrorField("banner");
       setErrorTick((n) => n + 1);
-      return false;
+      return;
     }
+    if (!validateQuoteRequired()) return;
+    if ((parseFloat(form.subtotal) || 0) <= 0) {
+      setError("Ajoutez un montant à la soumission avant d'accepter.");
+      setErrorField("banner");
+      setErrorTick((n) => n + 1);
+      return;
+    }
+    if (!form.estimated_duration_hours) {
+      setError("Sélectionnez la durée des travaux avant d'accepter.");
+      setErrorField("duration");
+      setErrorTick((n) => n + 1);
+      return;
+    }
+    setAcceptEmailTo(form.client_email || "");
+    setAcceptOption("a");
+    setAcceptError(null);
+    setShowAcceptModal(true);
+  };
 
-    return true;
+  const doAccepter = () => {
+    if (!liveQuoteId) return;
+    setAcceptError(null);
+    setAcceptSending(true);
+    startTransition(async () => {
+      try {
+        // Auto-sauvegarder si nécessaire
+        if (isDirty) {
+          const saved = await saveQuote();
+          if (!saved.ok) {
+            setAcceptError(saved.message !== "Validation échouée" ? saved.message : "Corrigez les erreurs du formulaire.");
+            return;
+          }
+        }
+        const quoteIdToUse = liveQuoteIdRef.current ?? liveQuoteId;
+        if (!quoteIdToUse) { setAcceptError("Identifiant de soumission introuvable."); return; }
+
+        const res = await acceptQuote(quoteIdToUse, acceptOption);
+        if (!res.ok) { setAcceptError(res.message); return; }
+
+        // Envoi email (optionnel)
+        if (acceptEmailTo.trim()) {
+          try {
+            const emailRes = await fetch(`/api/email/soumission/${res.jobId}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ to: acceptEmailTo.trim() }),
+            });
+            const emailData = await emailRes.json() as { ok: boolean; error?: string };
+            if (!emailData.ok) {
+              setAcceptError(`Soumission acceptée, mais erreur courriel : ${emailData.error ?? "inconnue"}`);
+              return;
+            }
+          } catch {
+            setAcceptError("Soumission acceptée, mais erreur lors de l'envoi du courriel.");
+            return;
+          }
+        }
+
+        setShowAcceptModal(false);
+        setIsDirty(false);
+        allowNextNav.current = true;
+        router.push(`/a-planifier?highlight=${res.jobId}`);
+      } finally {
+        setAcceptSending(false);
+      }
+    });
   };
 
   // ── Garde-fou : quitter avec modifications non sauvegardées ───────────────
@@ -671,38 +742,6 @@ export function QuoteForm({
       setLeaveHref(null);
       allowNextNav.current = true;
       router.push(href);
-    });
-  };
-
-  const handleRepartirClick = () => {
-    if (!liveQuoteId) return;
-    if ((parseFloat(form.subtotal) || 0) <= 0) return;
-    if (!validateRepartir()) return;
-    // Si un RDV ventes est lié, demander s'il faut l'annuler
-    if (appointmentId) {
-      setShowRepartirModal(true);
-      return;
-    }
-    doRepartir(false);
-  };
-
-  const doRepartir = (cancelSalesAppointment: boolean) => {
-    if (!liveQuoteId) return;
-    const duration = Number(form.estimated_duration_hours) as 4 | 8;
-    setShowRepartirModal(false);
-    startTransition(async () => {
-      const { quoteData, unitInputs } = buildPayload();
-      const saveRes = await updateQuote(liveQuoteId, quoteData, unitInputs);
-      if (!saveRes.ok) { setError(saveRes.message); return; }
-
-      const res = await convertQuoteToInstallationJob(liveQuoteId, {
-        estimatedDurationHours: duration,
-        cancelSalesAppointment,
-      });
-      if (!res.ok) { setError(res.message); return; }
-      setIsDirty(false);
-      allowNextNav.current = true;
-      router.push(`/a-planifier?highlight=${res.jobId}`);
     });
   };
 
@@ -1640,43 +1679,86 @@ export function QuoteForm({
         <p className="text-amber-700 text-xs print:hidden">● Modifications non sauvegardées</p>
       )}
 
-      {showRepartirModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
-          <div className="bg-background w-full max-w-md rounded-xl border p-5 shadow-lg space-y-4">
-            <h3 className="font-semibold text-base">Répartir vers l&apos;installation</h3>
-            <p className="text-sm text-muted-foreground">
-              Un rendez-vous vendeur est lié à cette fiche. Souhaitez-vous annuler ce RDV ventes
-              (il ne restera plus dans le calendrier vendeurs)&nbsp;?
-            </p>
-            <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => setShowRepartirModal(false)}
-                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => doRepartir(false)}
-                className="h-[38px] px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
-              >
-                Garder le RDV
-              </button>
-              <button
-                type="button"
-                disabled={pending}
-                onClick={() => doRepartir(true)}
-                className="h-[38px] px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-              >
-                Annuler le RDV et répartir
-              </button>
+      {showAcceptModal && (() => {
+        const hasAlt = units.some((u) => u.is_alternative && (parseFloat(u.unit_subtotal) > 0 || u.brand.trim() || u.model.trim()));
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
+            <div className="bg-background w-full max-w-md rounded-xl border p-5 shadow-lg space-y-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="size-5 text-green-600 shrink-0" />
+                <h3 className="font-semibold text-base">Acceptation de la soumission</h3>
+              </div>
+
+              {hasAlt && (
+                <div>
+                  <p className="text-sm font-medium mb-2">Option choisie par le client :</p>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="acceptOption"
+                        value="a"
+                        checked={acceptOption === "a"}
+                        onChange={() => setAcceptOption("a")}
+                        className="accent-green-600"
+                      />
+                      <span className="text-sm font-medium">Option A</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="acceptOption"
+                        value="b"
+                        checked={acceptOption === "b"}
+                        onChange={() => setAcceptOption("b")}
+                        className="accent-green-600"
+                      />
+                      <span className="text-sm font-medium">Option B</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium mb-1 text-muted-foreground">
+                  Envoyer le PDF au client (optionnel)
+                </label>
+                <input
+                  type="email"
+                  value={acceptEmailTo}
+                  onChange={(e) => setAcceptEmailTo(e.target.value)}
+                  className="border-input bg-background h-8 w-full rounded border px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  placeholder="client@example.com"
+                />
+              </div>
+
+              {acceptError && (
+                <p className="text-destructive text-sm">{acceptError}</p>
+              )}
+
+              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+                <button
+                  type="button"
+                  disabled={pending || acceptSending}
+                  onClick={() => { setShowAcceptModal(false); setAcceptError(null); }}
+                  className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  disabled={pending || acceptSending}
+                  onClick={doAccepter}
+                  className="h-9 px-5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  {acceptSending ? "Traitement..." : "Confirmer l\u2019acceptation"}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div id="soumission-actions" className="space-y-3 pb-8 print:hidden">
         <div className="flex flex-wrap items-center gap-3">
@@ -1759,22 +1841,24 @@ export function QuoteForm({
             {!alreadyConverted ? (
               <button
                 type="button"
-                onClick={handleRepartirClick}
-                disabled={pending || isDirty || !canSendQuote}
+                onClick={handleAccepterClick}
+                disabled={pending || !canSendQuote || !form.estimated_duration_hours}
                 title={
-                  isDirty
-                    ? "Sauvegardez avant de répartir"
-                    : !canSendQuote
-                      ? "Ajoutez un montant à la soumission"
+                  !canSendQuote
+                    ? "Ajoutez un montant à la soumission"
+                    : !form.estimated_duration_hours
+                      ? "Sélectionnez la durée des travaux"
                       : undefined
                 }
-                className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 sm:ml-auto"
+                className="h-[38px] px-5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50 inline-flex items-center gap-2 sm:ml-auto"
               >
-                → Répartir vers l&apos;installation
+                <CheckCircle2 className="size-4" />
+                Accepter
               </button>
             ) : (
               <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200 sm:ml-auto">
-                ✓ Réparti vers l&apos;installation
+                <CheckCircle2 className="size-4 mr-1.5" />
+                Acceptée — en installation
               </span>
             )}
           </div>

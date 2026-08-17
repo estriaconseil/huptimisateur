@@ -515,10 +515,13 @@ export async function getProspectJob(
     appointmentDate = appt?.scheduled_date ?? null;
   }
 
-  const { count } = await supabase
+  const { data: latestQuote, count } = await supabase
     .from("quotes")
-    .select("id", { count: "exact", head: true })
-    .eq("job_id", jobId);
+    .select("quote_number", { count: "exact" })
+    .eq("job_id", jobId)
+    .order("quote_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   const job: PipelineJob = {
     id: data.id,
@@ -527,6 +530,7 @@ export async function getProspectJob(
     appointment_id: data.appointment_id ?? null,
     appointment_date: appointmentDate,
     has_quote: (count ?? 0) > 0,
+    quote_number: latestQuote?.quote_number ?? null,
     salesperson_id: data.salesperson_id,
     salesperson_locked: data.salesperson_locked ?? false,
     installation_info: data.installation_info,

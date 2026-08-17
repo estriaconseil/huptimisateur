@@ -117,7 +117,7 @@ export default async function AdresseFichePage({
     console.error("[fiche adresse jobs]", jobsErr.message, jobsErr.hint);
     const fallback = await supabase
       .from("jobs")
-      .select("id, status, estimated_duration_hours, preferred_date, installation_info")
+      .select("id, status, estimated_duration_hours, preferred_date, installation_info, quotes!job_id ( id, quote_number )")
       .eq("installation_address_id", id)
       .order("created_at", { ascending: false });
     jobRows = fallback.data;
