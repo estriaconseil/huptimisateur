@@ -31,6 +31,38 @@ type RelatedEntry = {
   jobs: JobRow[];
 };
 
+type JobQueryRow = {
+  id: string;
+  status: string;
+  estimated_duration_hours: number;
+  preferred_date: string | null;
+  installation_info: string | null;
+  quotes?: unknown;
+};
+
+function mapJobRows(raw: JobQueryRow[]): JobRow[] {
+  return raw.map((j) => {
+    const qList = Array.isArray(j.quotes) ? j.quotes : j.quotes ? [j.quotes] : [];
+    const latest = [...qList].sort(
+      (a, b) =>
+        ((b as { quote_number: number }).quote_number ?? 0) -
+        ((a as { quote_number: number }).quote_number ?? 0)
+    )[0] as { id: string; quote_number: number } | undefined;
+    return {
+      id: j.id,
+      status: j.status,
+      estimated_duration_hours: j.estimated_duration_hours,
+      preferred_date: j.preferred_date,
+      installation_info: j.installation_info,
+      quote_number: latest?.quote_number ?? null,
+      quote_id: latest?.id ?? null,
+    };
+  });
+}
+
+const JOB_SELECT =
+  "id, status, estimated_duration_hours, preferred_date, installation_info, quotes!job_id ( id, quote_number )";
+
 // ── Helper : lien fiche selon statut ─────────────────────────────────────────
 function jobFicheLink(status: string, jobId: string) {
   if (["soumission_en_attente", "soumission_repartie", "en_attente"].includes(status))
@@ -49,48 +81,48 @@ export default async function AdresseFichePage({
   const { id } = await params;
   const supabase = await createServerSupabaseClient();
 
-  // 1. Charger l'adresse d'installation principale
+  // 1. Adresse seule — pas d'embed jobs (PostgREST le transformait en 404)
   const { data: addr, error: addrErr } = await supabase
     .from("installation_addresses")
     .select(
-      `id, label, address_formatted, city, postal_code, lat, lng, installation_info,
-       client_id,
-       clients ( id, name, phone, email, billing_address, billing_city, billing_postal ),
-       jobs (
-         id, status, estimated_duration_hours, preferred_date, installation_info,
-         quotes ( id, quote_number )
-       )`
+      "id, label, address_formatted, city, postal_code, lat, lng, installation_info, client_id"
     )
     .eq("id", id)
     .maybeSingle();
 
-  if (addrErr || !addr) notFound();
+  if (addrErr) {
+    console.error("[fiche adresse]", addrErr.message, addrErr.details, addrErr.hint);
+    throw new Error(addrErr.message);
+  }
+  if (!addr) notFound();
 
-  const client = (Array.isArray(addr.clients) ? addr.clients[0] : addr.clients) as {
+  const { data: clientRow } = await supabase
+    .from("clients")
+    .select("id, name, phone, email, billing_address, billing_city, billing_postal")
+    .eq("id", addr.client_id)
+    .maybeSingle();
+
+  const client = clientRow as {
     id: string; name: string; phone: string | null; email: string | null;
     billing_address: string | null; billing_city: string | null; billing_postal: string | null;
   } | null;
 
-  const rawJobs = Array.isArray(addr.jobs) ? addr.jobs : addr.jobs ? [addr.jobs] : [];
-  const jobs: JobRow[] = (rawJobs as Array<{
-    id: string; status: string; estimated_duration_hours: number; preferred_date: string | null;
-    installation_info: string | null; quotes?: unknown;
-  }>).map((j) => {
-    const qRaw = j.quotes;
-    const qList = Array.isArray(qRaw) ? qRaw : qRaw ? [qRaw] : [];
-    const latest = [...qList].sort((a, b) =>
-      ((b as { quote_number: number }).quote_number ?? 0) - ((a as { quote_number: number }).quote_number ?? 0)
-    )[0] as { id: string; quote_number: number } | undefined;
-    return {
-      id: j.id,
-      status: j.status,
-      estimated_duration_hours: j.estimated_duration_hours,
-      preferred_date: j.preferred_date,
-      installation_info: j.installation_info,
-      quote_number: latest?.quote_number ?? null,
-      quote_id: latest?.id ?? null,
-    };
-  });
+  let { data: jobRows, error: jobsErr } = await supabase
+    .from("jobs")
+    .select(JOB_SELECT)
+    .eq("installation_address_id", id)
+    .order("created_at", { ascending: false });
+
+  if (jobsErr) {
+    console.error("[fiche adresse jobs]", jobsErr.message, jobsErr.hint);
+    const fallback = await supabase
+      .from("jobs")
+      .select("id, status, estimated_duration_hours, preferred_date, installation_info")
+      .eq("installation_address_id", id)
+      .order("created_at", { ascending: false });
+    jobRows = fallback.data;
+  }
+  const jobs = mapJobRows((jobRows ?? []) as JobQueryRow[]);
 
   // 2. Historique cross-client (même texte d'adresse, autres installation_addresses)
   let related: RelatedEntry[] = [];
@@ -98,44 +130,32 @@ export default async function AdresseFichePage({
     const safe = addr.address_formatted.replace(/[%_\\]/g, "\\$&");
     const { data: others } = await supabase
       .from("installation_addresses")
-      .select(
-        `id, client_id,
-         clients ( name, phone ),
-         jobs ( id, status, estimated_duration_hours, preferred_date, installation_info, quotes ( id, quote_number ) )`
-      )
+      .select("id, client_id, clients!client_id ( name, phone )")
       .ilike("address_formatted", safe)
       .neq("id", id)
       .limit(10);
 
+    const otherIds = (others ?? []).map((row) => row.id);
+    const { data: relatedJobRows } = otherIds.length
+      ? await supabase.from("jobs").select(`installation_address_id, ${JOB_SELECT}`).in("installation_address_id", otherIds)
+      : { data: [] as never[] };
+
+    const jobsByAddr = new Map<string, JobRow[]>();
+    for (const raw of (relatedJobRows ?? []) as Array<JobQueryRow & { installation_address_id: string }>) {
+      const list = jobsByAddr.get(raw.installation_address_id) ?? [];
+      list.push(...mapJobRows([raw]));
+      jobsByAddr.set(raw.installation_address_id, list);
+    }
+
     related = (others ?? []).map((row) => {
       const c = (Array.isArray(row.clients) ? row.clients[0] : row.clients) as
         | { name: string; phone: string | null } | null;
-      const rJobs = Array.isArray(row.jobs) ? row.jobs : row.jobs ? [row.jobs] : [];
-      const mappedJobs: JobRow[] = (rJobs as Array<{
-        id: string; status: string; estimated_duration_hours: number; preferred_date: string | null;
-        installation_info: string | null; quotes?: unknown;
-      }>).map((j) => {
-        const qRaw = j.quotes;
-        const qList = Array.isArray(qRaw) ? qRaw : qRaw ? [qRaw] : [];
-        const latest = [...qList].sort((a, b) =>
-          ((b as { quote_number: number }).quote_number ?? 0) - ((a as { quote_number: number }).quote_number ?? 0)
-        )[0] as { id: string; quote_number: number } | undefined;
-        return {
-          id: j.id,
-          status: j.status,
-          estimated_duration_hours: j.estimated_duration_hours,
-          preferred_date: j.preferred_date,
-          installation_info: j.installation_info,
-          quote_number: latest?.quote_number ?? null,
-          quote_id: latest?.id ?? null,
-        };
-      });
       return {
         installation_address_id: row.id,
         client_id: row.client_id,
         client_name: c?.name ?? "—",
         client_phone: c?.phone ?? null,
-        jobs: mappedJobs,
+        jobs: jobsByAddr.get(row.id) ?? [],
       };
     });
   }

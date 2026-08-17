@@ -136,12 +136,6 @@ export async function POST(
 }
 
 function buildEmailHtml(quote: Quote, salespersonName: string | null): string {
-  const sub = quote.subtotal ?? 0;
-  const tps = Math.round(sub * 0.05 * 100) / 100;
-  const tvq = Math.round(sub * 0.09975 * 100) / 100;
-  const total = Math.round((sub + tps + tvq) * 100) / 100;
-  const fmt = (n: number) => n.toFixed(2);
-
   return `
 <!DOCTYPE html>
 <html lang="fr">
@@ -166,31 +160,6 @@ function buildEmailHtml(quote: Quote, salespersonName: string | null): string {
 
             <p style="margin:0 0 6px;">Bonjour${quote.client_name ? ` <strong>${quote.client_name}</strong>` : ""},</p>
             <p style="margin:0 0 16px;color:#555;">Veuillez trouver ci-joint votre soumission en format PDF. N'hésitez pas à nous contacter pour toute question.</p>
-
-            <!-- Récapitulatif -->
-            <table width="100%" cellpadding="6" cellspacing="0" style="border:1px solid #e0e0e0;border-radius:6px;font-size:13px;margin-bottom:20px;">
-              <tr style="background:#f7f7f7;">
-                <td style="padding:8px 12px;font-weight:bold;color:#666;">Sous-total</td>
-                <td style="padding:8px 12px;text-align:right;">${fmt(sub)} $</td>
-              </tr>
-              <tr>
-                <td style="padding:6px 12px;color:#666;">TPS (5%)</td>
-                <td style="padding:6px 12px;text-align:right;">${fmt(tps)} $</td>
-              </tr>
-              <tr>
-                <td style="padding:6px 12px;color:#666;">TVQ (9.975%)</td>
-                <td style="padding:6px 12px;text-align:right;">${fmt(tvq)} $</td>
-              </tr>
-              <tr style="background:#1a1a1a;">
-                <td style="padding:10px 12px;font-weight:bold;color:#ffffff;font-size:14px;">TOTAL</td>
-                <td style="padding:10px 12px;text-align:right;font-weight:bold;color:#ffffff;font-size:14px;">${fmt(total)} $</td>
-              </tr>
-              ${quote.total_net != null ? `
-              <tr style="background:#ecfdf5;">
-                <td style="padding:8px 12px;font-weight:bold;color:#065f46;">Total net</td>
-                <td style="padding:8px 12px;text-align:right;font-weight:bold;color:#065f46;">${fmt(quote.total_net)} $</td>
-              </tr>` : ""}
-            </table>
 
             ${salespersonName ? `<p style="margin:0 0 4px;color:#555;font-size:13px;">Représentant : <strong>${salespersonName}</strong></p>` : ""}
             <p style="margin:0;color:#555;font-size:13px;">Date : ${quote.quote_date}</p>

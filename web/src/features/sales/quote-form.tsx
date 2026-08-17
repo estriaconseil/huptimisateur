@@ -130,7 +130,8 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
 });
 
 function filledUnitNeedsSerial(u: UnitState): boolean {
-  const filled = !!(u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0);
+  if (u.is_alternative) return false;
+  const filled = !!(u.brand.trim() || u.model.trim() || u.description.trim() || parseFloat(u.unit_subtotal) > 0);
   return filled && !u.serial_number?.trim() && !u.serial_bypass;
 }
 
@@ -238,8 +239,10 @@ export function QuoteForm({
   const [liveInstall, setLiveInstall] = useState<string | null>(installAddress);
   const [isDirty, setIsDirty] = useState(false);
   const [leaveHref, setLeaveHref] = useState<string | null>(null);
+  const [liveQuoteId, setLiveQuoteId] = useState(quoteId);
   /** Ignore le prochain clic de navigation interne après confirmation */
   const allowNextNav = useRef(false);
+  const liveQuoteIdRef = useRef(quoteId);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const nameRef = useRef<HTMLDivElement>(null);
   const emailRef = useRef<HTMLDivElement>(null);
@@ -255,6 +258,12 @@ export function QuoteForm({
   useEffect(() => {
     setLiveInstall(installAddress);
   }, [installAddress]);
+
+  useEffect(() => {
+    if (!quoteId) return;
+    setLiveQuoteId(quoteId);
+    liveQuoteIdRef.current = quoteId;
+  }, [quoteId]);
 
   useEffect(() => {
     if (!error || !errorField) return;
@@ -536,8 +545,8 @@ export function QuoteForm({
   const saveQuote = useCallback(async (): Promise<{ ok: true; createdId?: string } | { ok: false; message: string }> => {
     if (!validateQuoteRequired()) return { ok: false, message: "Validation échouée" };
     const { quoteData, unitInputs } = buildPayload();
-    if (quoteId) {
-      const res = await updateQuote(quoteId, quoteData, unitInputs);
+    if (liveQuoteIdRef.current) {
+      const res = await updateQuote(liveQuoteIdRef.current, quoteData, unitInputs);
       if (!res.ok) return { ok: false, message: res.message };
       setIsDirty(false);
       return { ok: true };
@@ -546,8 +555,12 @@ export function QuoteForm({
     if (!res.ok) return { ok: false, message: res.message };
     setIsDirty(false);
     const createdId = "id" in res ? (res.id as string) : undefined;
+    if (createdId) {
+      liveQuoteIdRef.current = createdId;
+      setLiveQuoteId(createdId);
+    }
     return { ok: true, createdId };
-  }, [appointmentId, jobId, quoteId, buildPayload, validateQuoteRequired]);
+  }, [appointmentId, jobId, buildPayload, validateQuoteRequired]);
 
   const handleSave = () => {
     setError(null);
@@ -558,17 +571,9 @@ export function QuoteForm({
         if (res.message !== "Validation échouée") setError(res.message);
         return;
       }
-      if (!quoteId && res.createdId) {
-        allowNextNav.current = true;
-        if (appointmentId) {
-          router.replace(`/ventes/rdv/${appointmentId}`);
-        } else if (jobId) {
-          router.replace(`/ventes/soumission/${jobId}`);
-        }
-        return;
-      }
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
+      router.refresh();
     });
   };
 
@@ -583,11 +588,12 @@ export function QuoteForm({
 
     const missingSerial = units
       .map((u, i) => ({ u, i }))
-      .filter(({ u }) => u.brand.trim() || u.model.trim() || parseFloat(u.unit_subtotal) > 0)
+      .filter(({ u }) => !u.is_alternative)
+      .filter(({ u }) => u.brand.trim() || u.model.trim() || u.description.trim() || parseFloat(u.unit_subtotal) > 0)
       .filter(({ u }) => !u.serial_number?.trim() && !u.serial_bypass)
       .map(({ u, i }) => {
-        const n = units.slice(0, i).filter((x) => x.is_alternative === u.is_alternative).length + 1;
-        return `${u.is_alternative ? "Option B" : "Option A"} — Unité ${n}`;
+        const n = units.slice(0, i).filter((x) => !x.is_alternative).length + 1;
+        return `Unité ${n}`;
       });
 
     if (missingSerial.length > 0) {
@@ -669,7 +675,8 @@ export function QuoteForm({
   };
 
   const handleRepartirClick = () => {
-    if (!quoteId) return;
+    if (!liveQuoteId) return;
+    if ((parseFloat(form.subtotal) || 0) <= 0) return;
     if (!validateRepartir()) return;
     // Si un RDV ventes est lié, demander s'il faut l'annuler
     if (appointmentId) {
@@ -680,16 +687,15 @@ export function QuoteForm({
   };
 
   const doRepartir = (cancelSalesAppointment: boolean) => {
-    if (!quoteId) return;
+    if (!liveQuoteId) return;
     const duration = Number(form.estimated_duration_hours) as 4 | 8;
     setShowRepartirModal(false);
     startTransition(async () => {
-      // Persister la durée avant conversion
       const { quoteData, unitInputs } = buildPayload();
-      const saveRes = await updateQuote(quoteId, quoteData, unitInputs);
+      const saveRes = await updateQuote(liveQuoteId, quoteData, unitInputs);
       if (!saveRes.ok) { setError(saveRes.message); return; }
 
-      const res = await convertQuoteToInstallationJob(quoteId, {
+      const res = await convertQuoteToInstallationJob(liveQuoteId, {
         estimatedDurationHours: duration,
         cancelSalesAppointment,
       });
@@ -731,7 +737,7 @@ export function QuoteForm({
   };
 
   const confirmCallBack = (sendEmail: boolean) => {
-    if (!quoteId) return;
+    if (!liveQuoteId) return;
     startTransition(async () => {
       if (isDirty) {
         const savedRes = await saveQuote();
@@ -740,7 +746,7 @@ export function QuoteForm({
           return;
         }
       }
-      const res = await updateQuoteStatus(quoteId, "pending");
+      const res = await updateQuoteStatus(liveQuoteId, "pending");
       if (!res.ok) { setError(res.message); return; }
       setForm((f) => ({ ...f, status: "pending", will_call_back: true }));
       if (sendEmail) {
@@ -1197,7 +1203,7 @@ export function QuoteForm({
                             </div>
                           </div>
                         </div>
-                        {/* Ligne 2 : # Série + bypass */}
+                        {!u.is_alternative && (
                         <div
                           className={`flex flex-col sm:flex-row sm:items-start gap-2 ${
                             errorField === "serial" && filledUnitNeedsSerial(u)
@@ -1223,6 +1229,7 @@ export function QuoteForm({
                             Répartir sans # série
                           </label>
                         </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1673,7 +1680,7 @@ export function QuoteForm({
 
       <div id="soumission-actions" className="space-y-3 pb-8 print:hidden">
         <div className="flex flex-wrap items-center gap-3">
-          {(!quoteId || isDirty) && (
+          {(!liveQuoteId || isDirty) && (
             <button
               type="button"
               onClick={handleSave}
@@ -1683,13 +1690,17 @@ export function QuoteForm({
               {pending ? "Enregistrement..." : "Sauvegarder"}
             </button>
           )}
-          {quoteId && jobId && (
+          {liveQuoteId && jobId && (
             <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-              {isDirty ? (
+              {isDirty || !canSendQuote ? (
                 <button
                   type="button"
                   disabled
-                  title="Sauvegardez avant d'ouvrir l'aperçu"
+                  title={
+                    isDirty
+                      ? "Sauvegardez avant d'ouvrir l'aperçu"
+                      : "Ajoutez un montant à la soumission"
+                  }
                   className="h-[38px] px-4 rounded-lg border text-sm font-medium inline-flex items-center gap-2 opacity-40 cursor-not-allowed"
                 >
                   <Printer className="size-3.5" />
@@ -1713,7 +1724,7 @@ export function QuoteForm({
                   isDirty
                     ? "Sauvegardez avant d'envoyer"
                     : !canSendQuote
-                      ? "Ajoutez un sous-total avant d'envoyer au client"
+                      ? "Ajoutez un montant à la soumission"
                       : undefined
                 }
                 onClick={() => { setEmailDialogOpen(true); setEmailStatus(null); setEmailTo(form.client_email || ""); }}
@@ -1726,13 +1737,20 @@ export function QuoteForm({
           )}
         </div>
 
-        {quoteId && (
+        {liveQuoteId && (
           <div className="flex flex-wrap items-center gap-3">
             {form.status === "draft" && (
               <button
                 type="button"
                 onClick={openCallBackModal}
-                disabled={pending}
+                disabled={pending || isDirty || !canSendQuote}
+                title={
+                  isDirty
+                    ? "Sauvegardez avant de continuer"
+                    : !canSendQuote
+                      ? "Ajoutez un montant à la soumission"
+                      : undefined
+                }
                 className="h-[38px] px-5 rounded-lg bg-yellow-500 text-white text-sm font-medium hover:bg-yellow-600 disabled:opacity-50"
               >
                 Va nous rappeler
@@ -1742,8 +1760,14 @@ export function QuoteForm({
               <button
                 type="button"
                 onClick={handleRepartirClick}
-                disabled={pending || isDirty}
-                title={isDirty ? "Sauvegardez avant de répartir" : undefined}
+                disabled={pending || isDirty || !canSendQuote}
+                title={
+                  isDirty
+                    ? "Sauvegardez avant de répartir"
+                    : !canSendQuote
+                      ? "Ajoutez un montant à la soumission"
+                      : undefined
+                }
                 className="h-[38px] px-5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 sm:ml-auto"
               >
                 → Répartir vers l&apos;installation

@@ -822,7 +822,7 @@ export function InstallJobsClient({
         {/* ── En-tête ── */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Dashboard installation</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Pipeline installation</h1>
           </div>
           <div className="flex gap-2">
             <Link href="/dispatch" className={buttonVariants({ variant: "outline", size: "sm" })}>

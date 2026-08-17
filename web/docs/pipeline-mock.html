@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maquette v3 — Pipeline ventes</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; font: 14px/1.45 system-ui, sans-serif; color:#18181b; background:#fafafa; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 20px 72px; }
+    h1 { font-size: 24px; font-weight: 650; margin: 0 0 4px; letter-spacing: -0.02em; }
+    .muted { color:#71717a; }
+    .head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:20px; }
+    .btn-new {
+      height: 38px; border:0; border-radius:8px; padding:0 14px;
+      background:#2563eb; color:#fff; font: 13px/38px system-ui; font-weight:600; cursor:pointer;
+    }
+    .note-box { background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 12px; font-size:13px; margin:0 0 18px; color:#854d0e; }
+    .squares { display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin: 0 0 14px; }
+    .sq { border:1px solid #e4e4e7; background:#fff; border-radius:12px; padding:14px 16px; text-align:left; cursor:pointer; }
+    .sq .n { font-size:24px; font-weight:700; }
+    .sq .l { font-size:13px; color:#71717a; margin-top:2px; }
+    .sq.p { border-color:#fde68a; background:#fffbeb; }
+    .sq.p .n { color:#92400e; }
+    .sq.p.active { box-shadow: 0 0 0 2px #f59e0b; background:#fef3c7; }
+    .sq.v { border-color:#bfdbfe; background:#eff6ff; }
+    .sq.v .n { color:#1e40af; }
+    .sq.v.active { box-shadow: 0 0 0 2px #3b82f6; background:#dbeafe; }
+    .sq.w { border-color:#ddd6fe; background:#f5f3ff; }
+    .sq.w .n { color:#5b21b6; }
+    .sq.w.active { box-shadow: 0 0 0 2px #8b5cf6; background:#ede9fe; }
+    .bar { display:flex; gap:8px; flex-wrap:wrap; margin: 0 0 18px; }
+    .search-wrap { position:relative; flex:1; min-width:220px; }
+    .search-wrap input, select {
+      height:36px; border:1px solid #e4e4e7; border-radius:8px; padding:0 10px; background:#fff; font: 13px system-ui;
+    }
+    .search-wrap input { width:100%; padding-left:32px; }
+    .search-wrap span { position:absolute; left:10px; top:8px; color:#a1a1aa; }
+    .card {
+      background:#fff; border:1px solid #e4e4e7; border-radius:12px;
+      padding:14px 16px 14px 14px; margin:0 0 10px; border-left-width:4px;
+    }
+    .card.p { border-left-color:#f59e0b; }
+    .card.v { border-left-color:#3b82f6; }
+    .card.w { border-left-color:#8b5cf6; }
+    .top { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .name { font-weight:650; font-size:15px; }
+    .meta { font-size:12px; color:#71717a; margin-top:3px; }
+    .badge { display:inline-flex; border-radius:999px; padding:2px 8px; font-size:11px; font-weight:650; white-space:nowrap; }
+    .b-p { background:#fef3c7; color:#92400e; }
+    .b-v { background:#dbeafe; color:#1e40af; }
+    .b-w { background:#ede9fe; color:#5b21b6; }
+    .mid { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-top:10px; }
+    .quote {
+      display:inline-flex; align-items:center; gap:6px;
+      height:28px; padding:0 8px; border-radius:6px;
+      border:1px solid #6ee7b7; background:#ecfdf5;
+      color:#064e3b; font-weight:650; font-size:12px; text-decoration:none;
+    }
+    .quote:hover { background:#d1fae5; }
+    .quote svg { width:14px; height:14px; stroke:#047857; fill:none; stroke-width:2; }
+    .quote.empty {
+      font-weight:500; color:#52525b;
+      border-color:#e4e4e7; background:#fff;
+    }
+    .quote.empty:hover { background:#f4f4f5; }
+    .quote.empty svg { stroke:#52525b; }
+    .actions { display:flex; gap:6px; align-items:center; }
+    .ghost {
+      height:32px; border:1px solid #e4e4e7; background:#fff; border-radius:8px;
+      padding:0 10px; font:12px system-ui; cursor:pointer; color:#3f3f46;
+    }
+    .icon {
+      height:32px; width:32px; border:1px solid #e4e4e7; background:#fff;
+      border-radius:8px; cursor:pointer; color:#52525b;
+    }
+    .note-line { margin-top:10px; font-size:12px; color:#52525b; border-top:1px solid #f4f4f5; padding-top:8px; }
+    .note-line strong { font-weight:650; color:#3f3f46; }
+    .foot { font-size:12px; color:#71717a; margin-top:22px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div>
+        <h1>Pipeline ventes</h1>
+        <p class="muted" style="margin:0;font-size:13px">12 dossiers en cours de vente</p>
+      </div>
+      <button class="btn-new">+ Nouveau prospect</button>
+    </div>
+
+    <p class="note-box">
+      <strong>Maquette v4.</strong> Carrés du dashboard = mêmes couleurs que les cartes (ambre / bleu / violet).
+    </p>
+
+    <div class="squares">
+      <button class="sq p active"><div class="n">5</div><div class="l">Prospect</div></button>
+      <button class="sq v"><div class="n">4</div><div class="l">Visite planifiée</div></button>
+      <button class="sq w"><div class="n">3</div><div class="l">Va nous rappeler</div></button>
+    </div>
+
+    <div class="bar">
+      <div class="search-wrap"><span>⌕</span><input placeholder="Nom, adresse, téléphone, courriel…" /></div>
+      <select><option>Tous les vendeurs</option></select>
+      <select><option>Tous les drapeaux</option></select>
+    </div>
+
+    <div class="card p">
+      <div class="top">
+        <div>
+          <div class="name">Test Mike</div>
+          <div class="meta">Sherbrooke · 819-555-0100 · Jim Halpert</div>
+        </div>
+        <span class="badge b-p">Prospect</span>
+      </div>
+      <div class="mid">
+        <a class="quote empty" href="#">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Créer soumission
+        </a>
+        <div class="actions">
+          <button class="ghost">Trouver créneau</button>
+          <button class="icon" title="Modifier">✎</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card v">
+      <div class="top">
+        <div>
+          <div class="name">Fred Théroux</div>
+          <div class="meta">Magog · 438-888-6829 · Sophie Gagnon</div>
+        </div>
+        <span class="badge b-v">Visite planifiée</span>
+      </div>
+      <div class="mid">
+        <a class="quote" href="#">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          #30034
+        </a>
+        <div class="actions">
+          <button class="ghost">Trouver créneau</button>
+          <button class="icon" title="Modifier">✎</button>
+        </div>
+      </div>
+      <div class="note-line"><strong>Note :</strong> Rappeler mercredi — client en voyage jusqu’au 20.</div>
+    </div>
+
+    <div class="card w">
+      <div class="top">
+        <div>
+          <div class="name">Isabelle Gagné</div>
+          <div class="meta">Coaticook</div>
+        </div>
+        <span class="badge b-w">Va nous rappeler</span>
+      </div>
+      <div class="mid">
+        <a class="quote" href="#">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          #30012
+        </a>
+        <div class="actions">
+          <button class="ghost">Trouver créneau</button>
+          <button class="icon" title="Modifier">✎</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="foot">
+      <strong>Modifier</strong> ouvre déjà un champ Statut (Prospect / Visite planifiée / Va nous rappeler / Annulé) et les notes internes.<br />
+      Pas de 2e icône notes. S’il n’y a pas de note interne, la ligne « Note : » n’apparaît pas.
+    </p>
+  </div>
+</body>
+</html>

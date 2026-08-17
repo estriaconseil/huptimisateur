@@ -1,21 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   AlertTriangle,
   CalendarDays,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FilePlus,
   FileText,
-  History,
   Loader2,
   MapPin,
-  MessageSquare,
   Pencil,
-  Phone,
   Plus,
   Search,
   Sparkles,
@@ -24,8 +21,7 @@ import {
 import { addDays, addWeeks, format, parseISO, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -51,9 +47,9 @@ import { updateClient, updateJob, addInstallationAddress, updateInstallationAddr
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
 import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
-import { updateJobStatus, updateJobFlag, acceptJobAsPlanifier } from "@/actions/jobs";
+import { updateJobStatus, updateJobFlag } from "@/actions/jobs";
 import { statusLabel, statusColor, flagColor, flagLabel } from "@/lib/job-status";
-import { JobTimeline } from "@/features/jobs/job-timeline";
+import { cn } from "@/lib/utils";
 import { CANCELLATION_REASONS } from "@/types/domain";
 import type { JobStatus, FollowUpFlag, Salesperson } from "@/types/domain";
 
@@ -74,6 +70,7 @@ export type PipelineJob = {
   /** Date du RDV lié (YYYY-MM-DD) — pour badge RDV passé */
   appointment_date: string | null;
   has_quote: boolean;
+  quote_number: number | null;
   salesperson_id: string | null;
   /** Ownership volontaire → filtrer les suggestions sur ce vendeur. */
   salesperson_locked: boolean;
@@ -286,7 +283,7 @@ export function QuickProspectModal({
 }: {
   onClose: () => void;
   salespeople: Salesperson[];
-  onBooked?: (msg: string) => void;
+  onBooked?: (msg: string, bookedJobId?: string) => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -444,9 +441,9 @@ export function QuickProspectModal({
     });
   };
 
-  const handleBooked = (msg: string) => {
+  const handleBooked = (msg: string, bookedJobId?: string) => {
     onClose();
-    onBooked?.(msg);
+    onBooked?.(msg, bookedJobId ?? createdJobId ?? undefined);
   };
 
   const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -799,7 +796,7 @@ export function ProspectEditModal({
   job: PipelineJob;
   salespeople: Salesperson[];
   onClose: () => void;
-  onBooked?: (msg: string) => void;
+  onBooked?: (msg: string, bookedJobId?: string) => void;
   onSaved?: (data: ProspectEditSaved) => void;
   /** false = ouvert depuis la soumission : pas de prise de RDV (évite de quitter la page). */
   allowSlotBooking?: boolean;
@@ -955,11 +952,11 @@ export function ProspectEditModal({
     });
   };
 
-  const handleBooked = (msg: string) => {
+  const handleBooked = (msg: string, bookedJobId?: string) => {
     emitSaved();
     router.refresh();
     onClose();
-    onBooked?.(msg);
+    onBooked?.(msg, bookedJobId ?? job.id);
   };
 
   const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -1181,7 +1178,7 @@ function OptimizedList({
 }: {
   jobId: string;
   slots: ProspectSlotResult[];
-  onBooked: (msg: string) => void;
+  onBooked: (msg: string, bookedJobId?: string) => void;
 }) {
   const [booking, startBook] = useTransition();
   const [bookingSlot, setBookingSlot] = useState<string | null>(null);
@@ -1211,7 +1208,7 @@ function OptimizedList({
       });
       setBookingSlot(null);
       if (!res.ok) { setError(res.message); return; }
-      onBooked(`RDV confirmé — ${s.dateFormatted} à ${s.start_time} avec ${s.salesperson_name}`);
+      onBooked(`RDV confirmé — ${s.dateFormatted} à ${s.start_time} avec ${s.salesperson_name}`, jobId);
     });
   };
 
@@ -1280,7 +1277,7 @@ export function WeekCalendar({
   prospectLng: number;
   salespersonId?: string | null;
   excludeAppointmentId?: string | null;
-  onBooked?: (msg: string) => void;
+  onBooked?: (msg: string, bookedJobId?: string) => void;
   /** Si fourni, remplace le booking (ex. déplacement de RDV). */
   onSelectSlot?: (pick: WeekSlotPick) => void | Promise<void>;
 }) {
@@ -1359,7 +1356,7 @@ export function WeekCalendar({
       setBookingKey(null);
       if (!res.ok) { setError(res.message); return; }
       const dayLabel = format(parseISO(dateStr), "EEEE d MMM", { locale: fr });
-      onBooked(`RDV confirmé — ${dayLabel} à ${slot} avec ${sp.salesperson_name}`);
+      onBooked(`RDV confirmé — ${dayLabel} à ${slot} avec ${sp.salesperson_name}`, jobId);
     });
   };
 
@@ -1508,7 +1505,7 @@ function SlotChooser({
   prospectLng: number;
   salespersonId?: string | null;
   excludeAppointmentId?: string | null;
-  onBooked: (msg: string) => void;
+  onBooked: (msg: string, bookedJobId?: string) => void;
 }) {
   const [mode, setMode] = useState<"list" | "calendar">("list");
 
@@ -1561,10 +1558,12 @@ function ProspectOptimizer({
   job,
   onClose,
   onBooked,
+  heading = "Trouver un créneau",
 }: {
   job: PipelineJob;
   onClose: () => void;
-  onBooked: (msg: string) => void;
+  onBooked: (msg: string, bookedJobId?: string) => void;
+  heading?: string;
 }) {
   const [mode, setMode] = useState<OptimizerMode>("list");
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
@@ -1606,7 +1605,7 @@ function ProspectOptimizer({
       <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
         <p className="text-sm font-semibold flex items-center gap-1.5 min-w-0">
           <Sparkles className="size-4 text-primary shrink-0" />
-          Trouver un créneau
+          {heading}
         </p>
         <button
           type="button"
@@ -1675,25 +1674,24 @@ function ProspectCard({
   job,
   salespeople,
   onBooked,
+  highlighted = false,
 }: {
   job: PipelineJob;
   salespeople: Salesperson[];
-  onBooked: (msg: string) => void;
+  onBooked: (msg: string, bookedJobId?: string) => void;
+  highlighted?: boolean;
 }) {
   const router = useRouter();
   const [showOptimizer, setShowOptimizer] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [showTimeline, setShowTimeline] = useState(false);
   const [showDowngradeConfirm, setShowDowngradeConfirm] = useState(false);
+  const [showReplanConfirm, setShowReplanConfirm] = useState(false);
   const [pendingDowngradeStatus, setPendingDowngradeStatus] = useState<string | null>(null);
   const [statusPending, startStatus] = useTransition();
   const [flagPending, startFlag] = useTransition();
-  const [acceptPending, startAccept] = useTransition();
-  const [newJobPending, startNewJob] = useTransition();
   const client = job.clients;
 
-  const createdAt = format(new Date(job.created_at), "d MMM yyyy", { locale: fr });
   const followUp = job.follow_up_date
     ? format(new Date(job.follow_up_date + "T12:00:00"), "d MMM yyyy", { locale: fr })
     : null;
@@ -1752,18 +1750,33 @@ function ProspectCard({
     });
   };
 
-  const handleAccept = () => {
-    startAccept(async () => {
-      const res = await acceptJobAsPlanifier(job.id);
-      if (res.ok) {
-        onBooked(res.message);
-        router.refresh();
-      }
-    });
-  };
+  const isVisitePlanifiee = job.status === "soumission_repartie";
+  const hideSlotFinder = job.status === "en_attente" && job.has_quote;
+
+  function handleSlotFinderClick() {
+    if (showOptimizer) {
+      setShowOptimizer(false);
+      return;
+    }
+    if (isVisitePlanifiee && job.appointment_id) {
+      setShowReplanConfirm(true);
+      return;
+    }
+    setShowOptimizer(true);
+  }
+
+  const metaParts = [
+    job.installation_address?.city,
+    client?.phone,
+    job.salespeople?.name,
+  ].filter(Boolean);
 
   return (
-    <Card className="hover:shadow-sm transition-shadow">
+    <Card className={cn(
+      "hover:shadow-sm transition-shadow border-l-4",
+      pipelineAccent(job.status).bar,
+      highlighted && "ring-2 ring-emerald-500 shadow-md"
+    )}>
       <CancelModal
         open={showCancelModal}
         pending={statusPending}
@@ -1814,18 +1827,54 @@ function ProspectCard({
           </DialogContent>
         </Dialog>
       )}
+
+      {showReplanConfirm && (
+        <Dialog open onOpenChange={(o) => { if (!o) setShowReplanConfirm(false); }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Replanifier le rendez-vous ?</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p>
+                Un rendez-vous est déjà prévu
+                {job.appointment_date
+                  ? ` le ${format(new Date(job.appointment_date + "T12:00:00"), "d MMMM yyyy", { locale: fr })}`
+                  : ""}.
+              </p>
+              <p className="text-muted-foreground">
+                En choisissant un nouveau créneau, le rendez-vous actuel sera supprimé.
+              </p>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => {
+                  setShowReplanConfirm(false);
+                  setShowOptimizer(true);
+                }}
+                className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+              >
+                Continuer
+              </button>
+              <button
+                onClick={() => setShowReplanConfirm(false)}
+                className="flex-1 h-9 rounded-lg border text-sm font-medium hover:bg-muted"
+              >
+                Annuler
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       <CardContent className="p-4 space-y-3">
-        {/* Ligne 1 : nom + vendeur + GPS + drapeau */}
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold">{client?.name ?? "Client sans nom"}</span>
-              {job.salespeople
-                ? <Badge variant="outline" className="text-[10px]">{job.salespeople.name}</Badge>
-                : <span className="text-[10px] text-muted-foreground italic">Non assigné</span>
-              }
-              {job.installation_address?.lat && <span className="text-[10px] text-emerald-600 flex items-center gap-0.5"><MapPin className="size-2.5" />GPS</span>}
-              {/* Badge drapeau follow_up_flag */}
+              {job.installation_address?.lat && (
+                <span className="text-[10px] text-emerald-600 flex items-center gap-0.5">
+                  <MapPin className="size-2.5" />GPS
+                </span>
+              )}
               {job.follow_up_flag && (
                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${flagColor(job.follow_up_flag)}`}>
                   {flagLabel(job.follow_up_flag)}
@@ -1837,26 +1886,38 @@ function ProspectCard({
                 </span>
               )}
             </div>
-            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-              {client?.phone && <span className="flex items-center gap-1"><Phone className="size-3" />{client.phone}</span>}
-              {job.installation_address?.city && (
-                <span className="flex items-center gap-1">
-                  <MapPin className="size-3" />
-                  {job.installation_address.city}
-                </span>
-              )}
-              <span>Créé le {createdAt}</span>
-              {followUp && <span className="text-amber-600 font-medium">Relancer : {followUp}</span>}
-            </div>
-            {job.installation_info && (
-              <p className="text-xs text-muted-foreground line-clamp-2">{job.installation_info}</p>
+            {metaParts.length > 0 && (
+              <p className="text-xs text-muted-foreground mt-0.5 truncate">{metaParts.join(" · ")}</p>
+            )}
+            {followUp && (
+              <p className="text-xs text-amber-600 font-medium mt-0.5">Relancer : {followUp}</p>
             )}
           </div>
+          <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0", statusColor(job.status))}>
+            {statusLabel(job.status)}
+          </span>
+        </div>
 
-          {/* Actions */}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <Link
+            href={`/ventes/soumission/${job.id}?from=pipeline`}
+            className={cn(
+              buttonVariants({ variant: job.has_quote ? "secondary" : "outline", size: "sm" }),
+              "h-8 gap-1.5",
+              job.has_quote
+                ? "bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
+                : "text-muted-foreground"
+            )}
+          >
+            <FileText className="size-3.5" />
+            {job.has_quote && job.quote_number
+              ? `#${job.quote_number}`
+              : job.has_quote
+                ? "Soumission"
+                : "Créer soumission"}
+          </Link>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-            {/* Sélecteur drapeau */}
-            {(flagPending)
+            {flagPending
               ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
               : (
                 <select
@@ -1872,6 +1933,21 @@ function ProspectCard({
                 </select>
               )
             }
+            {!hideSlotFinder && (
+              <Button
+                size="sm"
+                variant={showOptimizer ? "default" : "outline"}
+                onClick={handleSlotFinderClick}
+                className="gap-1.5 h-8"
+              >
+                {showOptimizer ? <X className="size-3.5" /> : <Sparkles className="size-3.5" />}
+                {showOptimizer
+                  ? "Fermer"
+                  : isVisitePlanifiee
+                    ? "Replanifier un créneau"
+                    : "Trouver créneau"}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -1881,132 +1957,26 @@ function ProspectCard({
             >
               <Pencil className="size-3.5" />
             </Button>
-            {/* Notes / Historique */}
-            <Button
-              size="sm"
-              variant={showTimeline ? "secondary" : "ghost"}
-              onClick={() => setShowTimeline((s) => !s)}
-              className="h-8 px-2 gap-1"
-              title="Notes et historique"
-            >
-              <MessageSquare className="size-3.5" />
-            </Button>
-            {/* Bouton Accepter — uniquement pour en_attente avec soumission */}
-            {job.status === "en_attente" && job.has_quote && (
-              <Button
-                size="sm"
-                variant="default"
-                onClick={handleAccept}
-                disabled={acceptPending}
-                className="gap-1.5 h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
-                title="Accepter la soumission et transférer en installation"
-              >
-                {acceptPending ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle2 className="size-3.5" />}
-                Accepter
-              </Button>
-            )}
-            <a href={`/ventes/soumission/${job.id}?from=pipeline`}>
-              <Button
-                size="sm"
-                variant={job.has_quote ? "default" : "secondary"}
-                className={`gap-1.5 h-8 ${job.has_quote ? "" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
-              >
-                <FileText className="size-3.5" />
-                {job.has_quote ? "Voir soumission" : "Créer soumission"}
-              </Button>
-            </a>
-            {job.has_quote && job.installation_address_id && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-1.5 h-8"
-                disabled={newJobPending}
-                title="Créer une nouvelle soumission pour la même adresse d'installation"
-                onClick={() => {
-                  startNewJob(async () => {
-                    const res = await createJobOnExistingAddress({
-                      installationAddressId: job.installation_address_id!,
-                      mode: "blank",
-                    });
-                    if (!res.ok) { alert(res.message); return; }
-                    router.push(`/ventes/pipeline?job=${res.jobId}`);
-                  });
-                }}
-              >
-                {newJobPending ? <Loader2 className="size-3.5 animate-spin" /> : <FilePlus className="size-3.5" />}
-                Nouvelle soumission
-              </Button>
-            )}
-            <Button
-              size="sm"
-              variant={showOptimizer ? "default" : "outline"}
-              onClick={() => setShowOptimizer((s) => !s)}
-              className="gap-1.5"
-            >
-              {showOptimizer ? <X className="size-3.5" /> : <Sparkles className="size-3.5" />}
-              {showOptimizer ? "Fermer" : "Trouver créneau"}
-            </Button>
           </div>
         </div>
 
-        {/* Ligne 2 : sélecteur de statut rapide */}
-        <div className="flex items-center gap-2">
-          {statusPending
-            ? <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3 animate-spin" />Mise à jour…</span>
-            : (
-              <div className="flex flex-wrap gap-1.5">
-                {PIPELINE_STATUS_OPTIONS.map((o) => (
-                  <button
-                    key={o.value}
-                    onClick={() => {
-                      if (job.status === o.value) return;
-                      if (o.value === "soumission_repartie" && !job.appointment_id) return;
-                      handleStatusChange(o.value);
-                    }}
-                    disabled={
-                      statusPending ||
-                      (o.value === "soumission_repartie" && !job.appointment_id && job.status !== "soumission_repartie")
-                    }
-                    title={
-                      o.value === "soumission_repartie" && !job.appointment_id
-                        ? "Réservez un créneau pour passer en Visite planifiée"
-                        : undefined
-                    }
-                    className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition-colors ${
-                      job.status === o.value
-                        ? statusColor(o.value)
-                        : o.value === "soumission_repartie" && !job.appointment_id
-                          ? "border text-muted-foreground/40 cursor-not-allowed"
-                          : "border hover:bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            )
-          }
-        </div>
+        {job.internal_notes?.trim() && (
+          <p className="text-xs text-muted-foreground border-t pt-2">
+            <span className="font-semibold text-foreground">Note :</span>{" "}
+            {job.internal_notes.trim()}
+          </p>
+        )}
 
         {showOptimizer && (
           <ProspectOptimizer
             job={job}
+            heading={isVisitePlanifiee ? "Replanifier un créneau" : "Trouver un créneau"}
             onClose={() => setShowOptimizer(false)}
-            onBooked={(msg) => {
+            onBooked={(msg, bookedJobId) => {
               setShowOptimizer(false);
-              onBooked(msg);
+              onBooked(msg, bookedJobId ?? job.id);
             }}
           />
-        )}
-
-        {showTimeline && (
-          <div className="border-t pt-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-1.5">
-              <History className="size-3.5" />
-              Notes et historique
-            </p>
-            <JobTimeline jobId={job.id} />
-          </div>
         )}
       </CardContent>
 
@@ -2015,7 +1985,7 @@ function ProspectCard({
           job={job}
           salespeople={salespeople}
           onClose={() => setShowEdit(false)}
-          onBooked={(msg) => { setShowEdit(false); onBooked(msg); }}
+          onBooked={(msg, bookedJobId) => { setShowEdit(false); onBooked(msg, bookedJobId ?? job.id); }}
         />
       )}
     </Card>
@@ -2030,11 +2000,45 @@ const PIPELINE_STATUSES: JobStatus[] = [
   "en_attente",
 ];
 
+function pipelineAccent(status: string) {
+  switch (status) {
+    case "soumission_en_attente":
+      return {
+        bar: "border-l-amber-500",
+        square: "border-amber-200 bg-amber-50 hover:bg-amber-100/80",
+        squareActive: "border-amber-500 bg-amber-100 ring-2 ring-amber-500",
+        number: "text-amber-900",
+      };
+    case "soumission_repartie":
+      return {
+        bar: "border-l-blue-500",
+        square: "border-blue-200 bg-blue-50 hover:bg-blue-100/80",
+        squareActive: "border-blue-500 bg-blue-100 ring-2 ring-blue-500",
+        number: "text-blue-900",
+      };
+    case "en_attente":
+      return {
+        bar: "border-l-violet-500",
+        square: "border-violet-200 bg-violet-50 hover:bg-violet-100/80",
+        squareActive: "border-violet-500 bg-violet-100 ring-2 ring-violet-500",
+        number: "text-violet-900",
+      };
+    default:
+      return {
+        bar: "border-l-border",
+        square: "hover:bg-muted",
+        squareActive: "ring-2 ring-ring bg-accent",
+        number: "",
+      };
+  }
+}
+
 export function PipelineClient({
   jobs,
   salespeople,
   currentSalespersonId = null,
   openJobId = null,
+  highlightJobId = null,
 }: {
   jobs: PipelineJob[];
   salespeople: Salesperson[];
@@ -2042,6 +2046,8 @@ export function PipelineClient({
   currentSalespersonId?: string | null;
   /** Deep-link : ouvre la fiche prospect pour ce jobId (`?job=`) */
   openJobId?: string | null;
+  /** Anneau + scroll sur la carte, sans ouvrir la fiche (`?highlight=`) */
+  highlightJobId?: string | null;
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -2052,7 +2058,18 @@ export function PipelineClient({
     currentSalespersonId ?? "all"
   );
   const [deepLinkJob, setDeepLinkJob] = useState<PipelineJob | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(highlightJobId);
+  const highlightRef = useRef<HTMLLIElement | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    setHighlightId(highlightJobId);
+  }, [highlightJobId]);
+
+  useEffect(() => {
+    if (!highlightId || !highlightRef.current) return;
+    highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlightId, jobs]);
 
   // Ouvrir la fiche prospect depuis ?job=
   useEffect(() => {
@@ -2075,8 +2092,16 @@ export function PipelineClient({
     router.replace("/ventes/pipeline");
   }
 
-  const handleBooked = (msg: string) => {
+  const handleBooked = (msg: string, bookedJobId?: string) => {
     setToast(msg);
+    setDeepLinkJob(null);
+    if (bookedJobId) {
+      setFilterStatus("all");
+      setFilterFlag("all");
+      setSearch("");
+      setHighlightId(bookedJobId);
+      router.replace(`/ventes/pipeline?highlight=${bookedJobId}`);
+    }
     router.refresh();
     setTimeout(() => setToast(null), 5000);
   };
@@ -2136,11 +2161,6 @@ export function PipelineClient({
     [baseForCounts]
   );
 
-  const grouped = PIPELINE_STATUSES.map((status) => ({
-    status,
-    jobs: filteredJobs.filter((j) => j.status === status),
-  })).filter((g) => g.jobs.length > 0);
-
   return (
     <div className="space-y-5">
       {/* En-tête */}
@@ -2154,12 +2174,6 @@ export function PipelineClient({
           </p>
         </div>
         <div className="flex gap-2">
-          <a
-            href="/ventes"
-            className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
-          >
-            Calendrier ventes
-          </a>
           <Button onClick={() => setShowCreate(true)} className="h-[38px] gap-1.5">
             <Plus className="size-4" />
             Nouveau prospect
@@ -2167,92 +2181,27 @@ export function PipelineClient({
         </div>
       </div>
 
-      {/* Dashboard rapide — compteurs statuts × vendeurs */}
-      {!currentSalespersonId ? (
-        /* Vue admin/secrétaire : tableau croisé vendeur × statut */
-        <div className="rounded-xl border overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/40">
-                <th className="px-3 py-2 text-left font-medium text-muted-foreground">Vendeur</th>
-                {PIPELINE_STATUSES.map((s) => (
-                  <th key={s} className="px-3 py-2 text-center font-medium text-muted-foreground whitespace-nowrap">
-                    {statusLabel(s)}
-                  </th>
-                ))}
-                <th className="px-3 py-2 text-center font-medium text-muted-foreground">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Ligne "Tous" */}
-              <tr className="border-b hover:bg-muted/20">
-                <td className="px-3 py-2 font-medium">Tous</td>
-                {PIPELINE_STATUSES.map((s) => {
-                  const cnt = roleFiltered.filter((j) => j.status === s).length;
-                  return (
-                    <td key={s} className="px-3 py-2 text-center">
-                      <button
-                        onClick={() => setFilterStatus((prev) => prev === s ? "all" : s)}
-                        className={`tabular-nums font-bold rounded px-1.5 ${filterStatus === s ? statusColor(s) : "hover:bg-muted"}`}
-                      >
-                        {cnt}
-                      </button>
-                    </td>
-                  );
-                })}
-                <td className="px-3 py-2 text-center font-bold">{roleFiltered.length}</td>
-              </tr>
-              {/* Une ligne par vendeur */}
-              {salespeople.map((sp) => {
-                const spJobs = roleFiltered.filter((j) => j.salesperson_id === sp.id);
-                if (spJobs.length === 0) return null;
-                return (
-                  <tr key={sp.id} className="border-b last:border-0 hover:bg-muted/20">
-                    <td className="px-3 py-2 text-muted-foreground">{sp.name}</td>
-                    {PIPELINE_STATUSES.map((s) => {
-                      const cnt = spJobs.filter((j) => j.status === s).length;
-                      return (
-                        <td key={s} className="px-3 py-2 text-center">
-                          {cnt > 0 ? (
-                            <button
-                              onClick={() => {
-                                setFilterSalesperson(sp.id);
-                                setFilterStatus((prev) => prev === s ? "all" : s);
-                              }}
-                              className={`tabular-nums font-semibold rounded px-1.5 ${filterStatus === s && filterSalesperson === sp.id ? statusColor(s) : "hover:bg-muted"}`}
-                            >
-                              {cnt}
-                            </button>
-                          ) : <span className="text-muted-foreground/40">—</span>}
-                        </td>
-                      );
-                    })}
-                    <td className="px-3 py-2 text-center text-muted-foreground">{spJobs.length}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        /* Vue vendeur : ses compteurs seulement */
-        <div className="grid grid-cols-2 gap-2">
-          {statusCounts.map(({ status, count }) => (
+      {/* Dashboard — 3 carrés de statut */}
+      <div className="grid grid-cols-3 gap-2.5">
+        {statusCounts.map(({ status, count }) => {
+          const accent = pipelineAccent(status);
+          const active = filterStatus === status;
+          return (
             <button
               key={status}
+              type="button"
               onClick={() => setFilterStatus((s) => (s === status ? "all" : status))}
-              className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                filterStatus === status ? "border-primary bg-primary/5" : "hover:bg-muted"
-              }`}
+              className={cn(
+                "rounded-xl border p-3.5 text-left transition-colors",
+                active ? accent.squareActive : accent.square
+              )}
             >
-              <div className="text-2xl font-bold tabular-nums">{count}</div>
-              <div className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold mt-1 ${statusColor(status)}`}>
-                {statusLabel(status)}
-              </div>
+              <div className={cn("text-2xl font-bold tabular-nums", accent.number)}>{count}</div>
+              <div className="text-sm text-muted-foreground mt-0.5">{statusLabel(status)}</div>
             </button>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       {/* Barre de filtres */}
       <div className="flex flex-col sm:flex-row gap-2">
@@ -2303,36 +2252,6 @@ export function PipelineClient({
 
       </div>
 
-      {/* Tabs de statuts rapides */}
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          onClick={() => setFilterStatus("all")}
-          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-            filterStatus === "all"
-              ? "bg-primary text-primary-foreground ring-1 ring-primary"
-              : "border hover:bg-muted text-muted-foreground"
-          }`}
-        >
-          Tous <span className="tabular-nums">({roleFiltered.length})</span>
-        </button>
-        {PIPELINE_STATUSES.map((s) => {
-          const count = roleFiltered.filter((j) => j.status === s).length;
-          return (
-            <button
-              key={s}
-              onClick={() => setFilterStatus((prev) => (prev === s ? "all" : s))}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                filterStatus === s
-                  ? statusColor(s) + " ring-1 ring-current"
-                  : "border hover:bg-muted text-muted-foreground"
-              }`}
-            >
-              {statusLabel(s)} <span className="tabular-nums">({count})</span>
-            </button>
-          );
-        })}
-      </div>
-
       {/* Résultats */}
       {filteredJobs.length === 0 && (
         <Card>
@@ -2344,31 +2263,28 @@ export function PipelineClient({
         </Card>
       )}
 
-      {grouped.map(({ status, jobs: groupJobs }) => (
-        <div key={status}>
-          <div className="flex items-center gap-2 mb-3">
-            <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusColor(status)}`}>
-              {statusLabel(status)}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {groupJobs.length} dossier{groupJobs.length > 1 ? "s" : ""}
-            </span>
-          </div>
-          <ul className="space-y-2">
-            {groupJobs.map((job) => (
-              <li key={job.id}>
-                <ProspectCard job={job} salespeople={salespeople} onBooked={handleBooked} />
+      <ul className="space-y-2">
+        {PIPELINE_STATUSES.flatMap((status) =>
+          filteredJobs
+            .filter((j) => j.status === status)
+            .map((job) => (
+              <li key={job.id} ref={job.id === highlightId ? highlightRef : null}>
+                <ProspectCard
+                  job={job}
+                  salespeople={salespeople}
+                  onBooked={handleBooked}
+                  highlighted={job.id === highlightId}
+                />
               </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+            ))
+        )}
+      </ul>
 
       {showCreate && (
         <QuickProspectModal
           salespeople={salespeople}
           onClose={() => { setShowCreate(false); router.refresh(); }}
-          onBooked={(msg) => { setShowCreate(false); handleBooked(msg); }}
+          onBooked={(msg, bookedJobId) => { setShowCreate(false); handleBooked(msg, bookedJobId); }}
         />
       )}
 
@@ -2377,9 +2293,8 @@ export function PipelineClient({
           job={deepLinkJob}
           salespeople={salespeople}
           onClose={clearDeepLink}
-          onBooked={(msg) => {
-            clearDeepLink();
-            handleBooked(msg);
+          onBooked={(msg, bookedJobId) => {
+            handleBooked(msg, bookedJobId ?? deepLinkJob.id);
           }}
         />
       )}

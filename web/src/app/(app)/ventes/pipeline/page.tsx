@@ -12,10 +12,11 @@ const PIPELINE_STATUSES: JobStatus[] = [
 export default async function VentesPipelinePage({
   searchParams,
 }: {
-  searchParams: Promise<{ job?: string }>;
+  searchParams: Promise<{ job?: string; highlight?: string }>;
 }) {
   const sp = await searchParams;
   const openJobId = sp.job ?? null;
+  const highlightJobId = sp.highlight ?? null;
 
   const supabase = await createServerSupabaseClient();
 
@@ -110,8 +111,15 @@ export default async function VentesPipelinePage({
 
   // Soumissions liées (par job_id ou appointment_id)
   const quoteJobIds = new Set<string>();
+  const quoteNumberByJobId = new Map<string, number>();
+  function rememberQuote(jobId: string, quoteNumber: number | null) {
+    quoteJobIds.add(jobId);
+    if (quoteNumber == null) return;
+    const prev = quoteNumberByJobId.get(jobId) ?? 0;
+    if (quoteNumber > prev) quoteNumberByJobId.set(jobId, quoteNumber);
+  }
   if (jobIds.length > 0 || apptIds.length > 0) {
-    let q = supabase.from("quotes").select("job_id, appointment_id");
+    let q = supabase.from("quotes").select("job_id, appointment_id, quote_number");
     if (jobIds.length > 0 && apptIds.length > 0) {
       q = q.or(`job_id.in.(${jobIds.join(",")}),appointment_id.in.(${apptIds.join(",")})`);
     } else if (jobIds.length > 0) {
@@ -120,22 +128,19 @@ export default async function VentesPipelinePage({
       q = q.in("appointment_id", apptIds);
     }
     const { data: quotes } = await q;
+    const apptQuoteNumber = new Map<string, number>();
     for (const row of quotes ?? []) {
-      const qr = row as { job_id: string | null; appointment_id: string | null };
-      if (qr.job_id) quoteJobIds.add(qr.job_id);
-    }
-    // Map appointment → job for quotes that only have appointment_id
-    if (quotes?.length) {
-      const apptWithQuote = new Set(
-        (quotes as { appointment_id: string | null }[])
-          .map((x) => x.appointment_id)
-          .filter((id): id is string => !!id)
-      );
-      for (const r of (rawJobs ?? []) as RawRow[]) {
-        if (r.appointment_id && apptWithQuote.has(r.appointment_id)) {
-          quoteJobIds.add(r.id);
-        }
+      const qr = row as { job_id: string | null; appointment_id: string | null; quote_number: number | null };
+      if (qr.job_id) rememberQuote(qr.job_id, qr.quote_number);
+      if (qr.appointment_id && qr.quote_number != null) {
+        const prev = apptQuoteNumber.get(qr.appointment_id) ?? 0;
+        if (qr.quote_number > prev) apptQuoteNumber.set(qr.appointment_id, qr.quote_number);
       }
+    }
+    for (const r of (rawJobs ?? []) as RawRow[]) {
+      if (!r.appointment_id) continue;
+      const n = apptQuoteNumber.get(r.appointment_id);
+      if (n != null) rememberQuote(r.id, n);
     }
   }
 
@@ -150,6 +155,7 @@ export default async function VentesPipelinePage({
         ? (apptDateById.get(row.appointment_id) ?? null)
         : null,
       has_quote: quoteJobIds.has(row.id),
+      quote_number: quoteNumberByJobId.get(row.id) ?? null,
       salesperson_id: row.salesperson_id,
       salesperson_locked: row.salesperson_locked ?? false,
       installation_info: row.installation_info,
@@ -173,6 +179,7 @@ export default async function VentesPipelinePage({
         salespeople={salespeople}
         currentSalespersonId={currentSalespersonId}
         openJobId={openJobId}
+        highlightJobId={highlightJobId}
       />
     </div>
   );

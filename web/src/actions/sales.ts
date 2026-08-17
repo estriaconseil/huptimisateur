@@ -502,6 +502,19 @@ export async function updateQuoteStatus(
   status: QuoteStatus
 ): Promise<Ok | Err> {
   const supabase = await createServerSupabaseClient();
+
+  if (status === "pending") {
+    const { data: quote, error: qErr } = await supabase
+      .from("quotes")
+      .select("subtotal")
+      .eq("id", quoteId)
+      .maybeSingle();
+    if (qErr) return { ok: false, message: qErr.message };
+    if (!(Number(quote?.subtotal) > 0)) {
+      return { ok: false, message: "Impossible de passer à « Va nous rappeler » sans montant." };
+    }
+  }
+
   const { error } = await supabase
     .from("quotes")
     .update(status === "pending" ? { status, will_call_back: true } : { status })
@@ -529,6 +542,10 @@ export async function convertQuoteToInstallationJob(
     .single();
 
   if (qErr || !quote) return { ok: false, message: qErr?.message ?? "Soumission introuvable" };
+
+  if (!(Number(quote.subtotal) > 0)) {
+    return { ok: false, message: "Impossible de répartir une soumission sans montant." };
+  }
 
   const duration =
     options?.estimatedDurationHours ??

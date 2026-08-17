@@ -7,16 +7,15 @@ import { usePathname } from "next/navigation";
 import {
   CalendarDays,
   ChevronDown,
-  ClipboardList,
   FolderOpen,
   HardHat,
   ListTodo,
   ChevronLeft,
   ChevronRight,
+  Plus,
   Printer,
   Settings2,
   Users,
-  CalendarCheck,
   FileText,
   UserPlus,
   ShieldCheck,
@@ -39,9 +38,9 @@ const OPEN_SECTIONS_KEY = "huppe.sidebar.openSections";
 const COLLAPSED_KEY = "huppe.sidebar.collapsed";
 
 const installationItems: NavItem[] = [
-  { href: "/a-planifier", label: "Dashboard installation", icon: ListTodo },
-  { href: "/dispatch",    label: "Calendrier",          icon: CalendarDays },
-  { href: "/nouveau",     label: "Nouveau client / job", icon: ClipboardList },
+  { href: "/a-planifier", label: "Pipeline installation", icon: ListTodo },
+  { href: "/dispatch",    label: "Calendrier installations", icon: CalendarDays },
+  { href: "/nouveau",     label: "Nouveau client / job", icon: Plus },
 ];
 
 const clientItems: NavItem[] = [
@@ -50,7 +49,7 @@ const clientItems: NavItem[] = [
 
 const salesItems: NavItem[] = [
   { href: "/ventes/pipeline",     label: "Pipeline prospects", icon: ListTodo },
-  { href: "/ventes",              label: "Calendrier ventes",  icon: CalendarCheck },
+  { href: "/ventes",              label: "Calendrier ventes",  icon: CalendarDays },
   { href: "/ventes/soumissions",  label: "Soumissions",        icon: FileText },
 ];
 
@@ -69,6 +68,15 @@ const systemItems: NavItem[] = [
 const adminItems: NavItem[] = [
   { href: "/utilisateurs", label: "Utilisateurs", icon: ShieldCheck },
 ];
+
+const COLLAPSED_LABELS: Record<SectionId, string> = {
+  ventes: "Vente",
+  installations: "Install",
+  clients: "Client",
+  equipes: "Équipe",
+  systeme: "Système",
+  admin: "Admin",
+};
 
 function sectionContainsPath(items: NavItem[], pathname: string): boolean {
   return items.some(
@@ -91,7 +99,6 @@ function defaultOpenSections(isSalesperson: boolean, isAdmin: boolean): SectionI
 }
 
 function readOpenSections(fallback: SectionId[]): Set<SectionId> {
-  if (typeof window === "undefined") return new Set(fallback);
   try {
     const raw = localStorage.getItem(OPEN_SECTIONS_KEY);
     if (!raw) return new Set(fallback);
@@ -104,7 +111,6 @@ function readOpenSections(fallback: SectionId[]): Set<SectionId> {
 }
 
 function readCollapsed(): boolean {
-  if (typeof window === "undefined") return false;
   return localStorage.getItem(COLLAPSED_KEY) === "1";
 }
 
@@ -167,10 +173,15 @@ function NavGroup({
 }) {
   if (collapsed) {
     return (
-      <div className="mt-2 first:mt-0 space-y-0.5">
-        {items.map((item) => (
-          <NavLink key={item.href} item={item} pathname={pathname} collapsed />
-        ))}
+      <div className="mt-1.5 first:mt-0">
+        <p className="mb-0.5 px-0.5 text-center text-[8px] font-semibold uppercase tracking-[0.14em] text-sidebar-foreground/40 leading-tight">
+          {COLLAPSED_LABELS[id]}
+        </p>
+        <div className="space-y-0.5">
+          {items.map((item) => (
+            <NavLink key={item.href} item={item} pathname={pathname} collapsed />
+          ))}
+        </div>
       </div>
     );
   }
@@ -232,7 +243,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
   const isAdmin = role === "admin";
   const defaults = defaultOpenSections(isSalesperson, isAdmin);
 
-  const [openSections, setOpenSections] = useState<Set<SectionId>>(() => readOpenSections(defaults));
+  const [openSections, setOpenSections] = useState<Set<SectionId>>(() => new Set(defaults));
   const [collapsed, setCollapsed] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 

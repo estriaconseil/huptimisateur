@@ -326,12 +326,12 @@ function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
             <Text style={[s.colValue, { fontWeight: "bold", color: C.green }]}>{fmt(unitNet)} $</Text>
           </View>
         )}
-        {u.serial_number ? (
+        {!u.is_alternative && u.serial_number ? (
           <View style={cellFull}>
             <Text style={s.colLabel}># Série</Text>
             <Text style={s.colValue}>{u.serial_number}</Text>
           </View>
-        ) : <View style={cellFull} />}
+        ) : !u.is_alternative ? <View style={cellFull} /> : null}
       </FieldRow>
     </View>
   );
