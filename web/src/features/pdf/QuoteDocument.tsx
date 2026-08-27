@@ -82,42 +82,48 @@ const s = StyleSheet.create({
   dateValue: { fontSize: 9, fontWeight: "bold" },
 
   // Section
-  section: { marginBottom: 10, borderWidth: 1, borderColor: C.border, borderRadius: 4 },
-  sectionHeader: { backgroundColor: C.bg, paddingHorizontal: 8, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.border },
-  sectionTitle: { fontSize: 8, fontWeight: "bold", textTransform: "uppercase", letterSpacing: 0.5, color: C.muted },
-  sectionBody: { paddingHorizontal: 8, paddingVertical: 6 },
+  section: { marginBottom: 7, borderWidth: 1, borderColor: C.border, borderRadius: 3 },
+  sectionHeader: { backgroundColor: C.bg, paddingHorizontal: 7, paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: C.border },
+  sectionTitle: { fontSize: 7.5, fontWeight: "bold", textTransform: "uppercase", letterSpacing: 0.4, color: C.muted },
+  sectionBody: { paddingHorizontal: 7, paddingVertical: 5 },
 
   // Grille 2 colonnes
-  row2: { flexDirection: "row", gap: 10, marginBottom: 4 },
+  row2: { flexDirection: "row", gap: 8, marginBottom: 3 },
   col: { flex: 1 },
-  colLabel: { fontSize: 7, color: C.muted, marginBottom: 1 },
-  colValue: { fontSize: 9 },
+  colLabel: { fontSize: 6.5, color: C.muted, marginBottom: 0.5 },
+  colValue: { fontSize: 8.5 },
 
   // Unité
-  unitTitle: { fontSize: 9, fontWeight: "bold", marginBottom: 6, color: C.accent },
+  unitTitle: { fontSize: 9, fontWeight: "bold", marginBottom: 4, color: C.accent },
   unitGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
   unitCell: { width: "22%" },
   unitCellWide: { width: "47%" },
   unitCellFull: { width: "100%" },
-  tag: { paddingHorizontal: 5, paddingVertical: 1.5, backgroundColor: C.bg, borderRadius: 3, border: `1px solid ${C.border}`, marginRight: 4, marginBottom: 2 },
-  tagText: { fontSize: 7 },
+  tag: { paddingHorizontal: 4, paddingVertical: 1, backgroundColor: C.bg, borderRadius: 2, border: `1px solid ${C.border}`, marginRight: 3, marginBottom: 1 },
+  tagText: { fontSize: 6.5 },
   tagActive: { backgroundColor: C.accent, borderColor: C.accent },
-  tagActiveText: { fontSize: 7, color: C.white },
+  tagActiveText: { fontSize: 6.5, color: C.white },
 
   // Tableau financier
   finTable: { borderWidth: 1, borderColor: C.border, borderRadius: 4, overflow: "hidden" },
-  finRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 10, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: C.border },
-  finRowDark: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 10, paddingVertical: 5, backgroundColor: C.darkBg },
-  finRowGreen: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 10, paddingVertical: 4, backgroundColor: C.greenBg },
-  finLabel: { fontSize: 9, color: C.muted },
-  finValue: { fontSize: 9 },
-  finLabelBold: { fontSize: 10, fontWeight: "bold", color: C.white },
-  finValueBold: { fontSize: 10, fontWeight: "bold", color: C.white },
-  finLabelGreen: { fontSize: 9, fontWeight: "bold", color: C.green },
-  finValueGreen: { fontSize: 9, fontWeight: "bold", color: C.green },
+  finRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: C.border },
+  finRowDark: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 4, backgroundColor: C.darkBg },
+  finRowGreen: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 3, backgroundColor: C.greenBg },
+  finLabel: { fontSize: 8, color: C.muted },
+  finValue: { fontSize: 8 },
+  finLabelBold: { fontSize: 9, fontWeight: "bold", color: C.white },
+  finValueBold: { fontSize: 9, fontWeight: "bold", color: C.white },
+  finLabelGreen: { fontSize: 8, fontWeight: "bold", color: C.green },
+  finValueGreen: { fontSize: 8, fontWeight: "bold", color: C.green },
+
+  // Textes légaux financiers
+  legalBlock: { marginTop: 8, gap: 4 },
+  legalText: { fontSize: 7, color: C.muted, lineHeight: 1.35 },
+  legalTextBold: { fontSize: 7, fontWeight: "bold", color: C.primary, lineHeight: 1.35 },
+  legalTextWarn: { fontSize: 7, color: "#b91c1c", lineHeight: 1.35 },
 
   // Signature
-  sigImage: { width: 200, height: 60, marginTop: 4, border: `1px solid ${C.border}` },
+  sigImage: { width: 180, height: 50, marginTop: 2, border: `1px solid ${C.border}` },
   sigNotice: { fontSize: 7, color: C.muted, marginTop: 4, fontStyle: "italic" },
 
   // Croquis (page dédiée, format lettre)
@@ -132,17 +138,17 @@ const s = StyleSheet.create({
   altBannerText: { fontSize: 9, fontWeight: "bold", color: "#92400e" },
 
   // Checkbox list
-  checkRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
+  checkRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 },
   checkItem: { flexDirection: "row", alignItems: "center", gap: 3, width: "22%" },
-  checkLabel: { fontSize: 8 },
+  checkLabel: { fontSize: 7.5 },
 
   // Notes
-  notes: { fontSize: 8, color: C.primary, lineHeight: 1.5 },
+  notes: { fontSize: 8, color: C.primary, lineHeight: 1.4 },
 
   // Séparateur unités
-  unitSep: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 6 },
+  unitSep: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 4 },
 
-  divider: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 6 },
+  divider: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 4 },
 });
 
 // ── Sous-composants ───────────────────────────────────────────────────────────
@@ -166,11 +172,11 @@ function CheckBox({ checked, label }: { checked: boolean; label: string }) {
   );
 }
 
-function TagGroup({ label, options, value }: { label: string; options: { v: string; l: string }[]; value: string | null }) {
+function CompactTags({ label, options, value }: { label: string; options: { v: string; l: string }[]; value: string | null }) {
   return (
-    <View style={{ marginBottom: 2 }}>
+    <View style={{ flex: 1 }}>
       <Text style={s.colLabel}>{label}</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 2 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 1 }}>
         {options.map(({ v, l }) => (
           <View key={v} style={value === v ? [s.tag, s.tagActive] : s.tag}>
             <Text style={value === v ? s.tagActiveText : s.tagText}>{l}</Text>
@@ -181,158 +187,147 @@ function TagGroup({ label, options, value }: { label: string; options: { v: stri
   );
 }
 
-// ── Cellule de grille (marginRight explicite, pas de gap) ────────────────────
-const cell = { flex: 1, marginRight: 6 } as const;
-const cellHalf = { flex: 2, marginRight: 6 } as const;
-const cellFull = { flex: 1 } as const; // dernière cellule de la rangée, pas de marginRight
+/** Cellule fixe : label + valeur (— si vide) pour éviter les trous dans la grille. */
+function Spec({
+  label,
+  value,
+  flex = 1,
+  last = false,
+  bold = false,
+  color,
+}: {
+  label: string;
+  value?: string | number | null;
+  flex?: number;
+  last?: boolean;
+  bold?: boolean;
+  color?: string;
+}) {
+  const display = value === null || value === undefined || value === "" ? "—" : String(value);
+  return (
+    <View style={{ flex, marginRight: last ? 0 : 5 }}>
+      <Text style={s.colLabel}>{label}</Text>
+      <Text style={[s.colValue, bold ? { fontWeight: "bold" } : {}, color ? { color } : {}]}>{display}</Text>
+    </View>
+  );
+}
 
-// ── Rangée de champs ─────────────────────────────────────────────────────────
-function FieldRow({ children }: { children: React.ReactNode }) {
-  return <View style={{ flexDirection: "row", marginBottom: 5 }}>{children}</View>;
+function DenseRow({ children }: { children: React.ReactNode }) {
+  return <View style={{ flexDirection: "row", marginBottom: 3, alignItems: "flex-start" }}>{children}</View>;
+}
+
+function LegalFooter() {
+  return (
+    <View style={s.legalBlock}>
+      <Text style={[s.legalText, { fontStyle: "italic" }]}>
+        En acceptant la présente soumission, le client s'engage à respecter le terme de paiement à l'installation.
+      </Text>
+      <Text style={s.legalText}>
+        <Text style={s.legalTextBold}>Modes de paiements acceptés : </Text>
+        Chèque, comptant, Visa, Mastercard. Financement disponible
+      </Text>
+      <Text style={s.legalTextWarn}>
+        Un frais administratif de 40,00$ est applicable sur tout appel de service couvert par la garantie du fabricant. Aucun frais de déplacement ou de diagnostic. Les appels de service qui ne sont pas couverts par la garantie du fabricant seront facturables au taux horaire régulier. Les détails de garantie seront fournis avec la facturation. * Aucun frais applicable la première année.
+      </Text>
+    </View>
+  );
 }
 
 // ── Bloc unité (réutilisable principal / alternatif) ─────────────────────────
 function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
-  const hasSpecs = u.capacity_btu || u.heating_capacity_25 || u.warranty_parts || u.warranty_months;
-  const cap1 = [stripAutofilledPostal(u.cap_long1_length), stripAutofilledPostal(u.cap_long1_color)].filter(Boolean);
-  const cap2 = [stripAutofilledPostal(u.cap_long2_length), stripAutofilledPostal(u.cap_long2_color)].filter(Boolean);
-  const hasPiping = !!(u.evaporator || u.pipe_feet || cap1.length || cap2.length);
-  const unitNet = Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0));
+  const tempLabel = u.operating_temp_c != null ? `${u.operating_temp_c} °C` : "—";
+  const cap1L = stripAutofilledPostal(u.cap_long1_length) || "—";
+  const cap1C = stripAutofilledPostal(u.cap_long1_color) || "—";
+  const cap2L = stripAutofilledPostal(u.cap_long2_length) || "—";
+  const cap2C = stripAutofilledPostal(u.cap_long2_color) || "—";
   const unitNum = idx + 1;
+  const hasSerial = !!(u.serial_number?.trim() || u.serial_evaporator?.trim());
 
   return (
     <View wrap={false}>
       {idx > 0 && <View style={s.unitSep} />}
       <Text style={s.unitTitle}>
         Unité {unitNum}
-        {u.brand || u.model ? `  —  ${[u.brand, u.model].filter(Boolean).join(" / ")}` : ""}
+        {u.description ? `  —  ${u.description}` : ""}
+        {!u.description && (u.brand || u.model) ? `  —  ${[u.brand, u.model].filter(Boolean).join(" / ")}` : ""}
       </Text>
 
-      {/* Description */}
-      {u.description && (
-        <View style={{ marginBottom: 5 }}>
-          <Text style={s.colLabel}>Description / Emplacement</Text>
-          <Text style={s.colValue}>{u.description}</Text>
-        </View>
-      )}
+      {/* Ligne : Marque + Modèle */}
+      <DenseRow>
+        <Spec label="Marque" value={u.brand} flex={1} />
+        <Spec label="Modèle" value={u.model} flex={3} last />
+      </DenseRow>
 
-      {/* Marque + Modèle */}
-      {(u.brand || u.model) && (
-        <FieldRow>
-          <View style={cell}>
-            <Text style={s.colLabel}>Marque</Text>
-            <Text style={s.colValue}>{u.brand ?? "—"}</Text>
-          </View>
-          <View style={cellFull}>
-            <Text style={s.colLabel}>Modèle</Text>
-            <Text style={s.colValue}>{u.model ?? "—"}</Text>
-          </View>
-        </FieldRow>
-      )}
+      {/* Ligne : Capacité + Plage + Cap. chauf. */}
+      <DenseRow>
+        <Spec label="Capacité (BTU)" value={u.capacity_btu} />
+        <Spec label="Plage fonctionnement" value={u.operating_temp_c != null ? `${u.operating_temp_c} °C` : null} />
+        <Spec label={`Cap. chauf. à ${tempLabel}`} value={u.heating_capacity_25} last />
+      </DenseRow>
 
-      {/* Spécifications techniques */}
-      {hasSpecs && (
-        <FieldRow>
-          {u.capacity_btu ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Capacité (BTU)</Text>
-              <Text style={s.colValue}>{u.capacity_btu}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {u.heating_capacity_25 ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Cap. Chauf. -25°C</Text>
-              <Text style={s.colValue}>{u.heating_capacity_25}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {u.warranty_parts ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Garantie pièces</Text>
-              <Text style={s.colValue}>{u.warranty_parts}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {u.warranty_months ? (
-            <View style={cellFull}>
-              <Text style={s.colLabel}>Garantie M-O</Text>
-              <Text style={s.colValue}>{u.warranty_months}</Text>
-            </View>
-          ) : <View style={cellFull} />}
-        </FieldRow>
-      )}
+      {/* Ligne : Garanties + pieds */}
+      <DenseRow>
+        <Spec label="Garantie pièces" value={u.warranty_parts} />
+        <Spec label="Garantie M-O" value={u.warranty_months} />
+        <Spec label="Pieds tuyaux" value={u.pipe_feet} last />
+      </DenseRow>
 
-      {/* Tuyauterie */}
-      {hasPiping && (
-        <FieldRow>
-          {u.evaporator ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Évaporateur</Text>
-              <Text style={s.colValue}>{u.evaporator}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {u.pipe_feet ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Pieds tuyaux</Text>
-              <Text style={s.colValue}>{u.pipe_feet}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {cap1.length ? (
-            <View style={cell}>
-              <Text style={s.colLabel}>Cap Long 1</Text>
-              <Text style={s.colValue}>{cap1.join(" — ")}</Text>
-            </View>
-          ) : <View style={cell} />}
-          {cap2.length ? (
-            <View style={cellFull}>
-              <Text style={s.colLabel}>Cap Long 2</Text>
-              <Text style={s.colValue}>{cap2.join(" — ")}</Text>
-            </View>
-          ) : <View style={cellFull} />}
-        </FieldRow>
-      )}
+      {/* Ligne : 4 Cap Long */}
+      <DenseRow>
+        <Spec label="Cap Long 1 — Long" value={cap1L === "—" ? null : cap1L} />
+        <Spec label="Cap Long 1 — Coul." value={cap1C === "—" ? null : cap1C} />
+        <Spec label="Cap Long 2 — Long" value={cap2L === "—" ? null : cap2L} />
+        <Spec label="Cap Long 2 — Coul." value={cap2C === "—" ? null : cap2C} last />
+      </DenseRow>
 
-      {/* Support + Au sol */}
-      {(u.support_type || u.floor_mount_type) && (
-        <FieldRow>
+      {/* Support + Au sol — compact */}
+      {(u.support_type || u.floor_mount_type || u.floor_mount_other) && (
+        <View style={{ flexDirection: "row", marginBottom: 3, gap: 8 }}>
           {u.support_type && (
-            <View style={cell}>
-              <TagGroup label="Support" value={u.support_type} options={Object.entries(SUPPORT_LABELS).map(([v, l]) => ({ v, l }))} />
+            <CompactTags
+              label="Support"
+              value={u.support_type}
+              options={Object.entries(SUPPORT_LABELS).map(([v, l]) => ({ v, l }))}
+            />
+          )}
+          {(u.floor_mount_type || u.floor_mount_other) && (
+            <View style={{ flex: 1 }}>
+              <CompactTags
+                label="Au sol"
+                value={u.floor_mount_type ?? ""}
+                options={Object.entries(FLOOR_LABELS).map(([v, l]) => ({ v, l }))}
+              />
+              {u.floor_mount_other ? (
+                <Text style={[s.colValue, { marginTop: 1, fontSize: 8 }]}>Autre : {u.floor_mount_other}</Text>
+              ) : null}
             </View>
           )}
-          {u.floor_mount_type && (
-            <View style={cellFull}>
-              <TagGroup label="Au sol" value={u.floor_mount_type} options={Object.entries(FLOOR_LABELS).map(([v, l]) => ({ v, l }))} />
-            </View>
-          )}
-        </FieldRow>
+        </View>
       )}
 
-      {/* Total − Subvention = Net + # Série */}
-      <FieldRow>
-        {(u.unit_subtotal ?? 0) > 0 && (
-          <View style={cell}>
-            <Text style={s.colLabel}>Total unité</Text>
-            <Text style={[s.colValue, { fontWeight: "bold", color: C.accent }]}>{fmt(u.unit_subtotal ?? 0)} $</Text>
-          </View>
-        )}
-        <View style={cell}>
-          <Text style={s.colLabel}>Subvention</Text>
-          <Text style={[s.colValue, { color: C.green }]}>
-            {(u.subsidy_amount ?? 0) > 0 ? `−${fmt(u.subsidy_amount ?? 0)} $` : "0.00 $"}
-          </Text>
-        </View>
-        {(u.unit_subtotal ?? 0) > 0 && (
-          <View style={cell}>
-            <Text style={s.colLabel}>Net unité</Text>
-            <Text style={[s.colValue, { fontWeight: "bold", color: C.green }]}>{fmt(unitNet)} $</Text>
-          </View>
-        )}
-        {!u.is_alternative && u.serial_number ? (
-          <View style={cellFull}>
-            <Text style={s.colLabel}># Série</Text>
-            <Text style={s.colValue}>{u.serial_number}</Text>
-          </View>
-        ) : !u.is_alternative ? <View style={cellFull} /> : null}
-      </FieldRow>
+      {/* Prix */}
+      <DenseRow>
+        <Spec
+          label="Total unité"
+          value={(u.unit_subtotal ?? 0) > 0 ? `${fmt(u.unit_subtotal ?? 0)} $` : null}
+          bold
+          color={C.accent}
+        />
+        <Spec
+          label="Subvention"
+          value={(u.subsidy_amount ?? 0) > 0 ? `−${fmt(u.subsidy_amount ?? 0)} $` : "0.00 $"}
+          color={C.green}
+          last
+        />
+      </DenseRow>
+
+      {/* # série — ligne dédiée pour ne pas déformer la grille */}
+      {hasSerial && (
+        <DenseRow>
+          <Spec label="# Série compresseur" value={u.serial_number?.trim() || null} />
+          <Spec label="# Série évaporateur" value={u.serial_evaporator?.trim() || null} last />
+        </DenseRow>
+      )}
     </View>
   );
 }
@@ -361,8 +356,10 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const chosen: "a" | "b" = accepted === "b" ? "b" : "a";
 
   const isPriced = (u: QuoteUnit) => (u.unit_subtotal ?? 0) > 0;
-  const netOf = (list: QuoteUnit[]) =>
-    list.reduce((acc, u) => acc + Math.max(0, (u.unit_subtotal ?? 0) - (u.subsidy_amount ?? 0)), 0);
+  const grossOf = (list: QuoteUnit[]) =>
+    list.reduce((acc, u) => acc + (u.unit_subtotal ?? 0), 0);
+  const subsidiesOf = (list: QuoteUnit[]) =>
+    list.reduce((acc, u) => acc + (u.subsidy_amount ?? 0), 0);
   const byOrder = (a: QuoteUnit, b: QuoteUnit) => (a.unit_order ?? 0) - (b.unit_order ?? 0);
 
   const aUnits = units.filter((u) => !u.is_alternative && isPriced(u)).sort(byOrder);
@@ -374,12 +371,13 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const page1Letter = chosen === "b" ? "B" : "A";
   const page2Letter = chosen === "b" ? "A" : "B";
 
-  const aSub = netOf(aUnits);
-  const bSub = netOf(bUnits);
+  const aSub = grossOf(aUnits);
+  const bSub = grossOf(bUnits);
   const sub = chosen === "b" ? bSub : (aSub > 0 ? aSub : (quote.subtotal ?? 0));
   const { tps, tvq, total } = calcTaxes(sub);
-  const deposit = quote.deposit ?? 0;
-  const computedTotalNet = Math.max(0, total - deposit);
+  const subsidies = chosen === "b" ? subsidiesOf(bUnits) : subsidiesOf(aUnits);
+  const totalDue = total;
+  const computedTotalNet = Math.max(0, totalDue - subsidies);
 
   const otherSub = chosen === "b" ? aSub : bSub;
   const { tps: otherTps, tvq: otherTvq, total: otherTotal } = calcTaxes(otherSub);
@@ -595,11 +593,11 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
                   )}
                 </View>
               </View>
-              {/* Droite : prix + texte légal */}
-              <View style={{ width: 220 }}>
+              {/* Droite : prix */}
+              <View style={{ width: 200 }}>
                 <View style={s.finTable}>
                   <View style={s.finRow}>
-                    <Text style={s.finLabel}>Sous-total (nets)</Text>
+                    <Text style={s.finLabel}>Sous-total</Text>
                     <Text style={s.finValue}>{fmt(sub)} $</Text>
                   </View>
                   <View style={s.finRow}>
@@ -615,19 +613,23 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
                     <Text style={s.finValueBold}>{fmt(total)} $</Text>
                   </View>
                   <View style={s.finRow}>
-                    <Text style={s.finLabel}>− Dépôt</Text>
-                    <Text style={s.finValue}>{fmt(deposit)} $</Text>
+                    <Text style={s.finLabelBold}>Total dû</Text>
+                    <Text style={s.finValueBold}>{fmt(totalDue)} $</Text>
                   </View>
+                  {subsidies > 0 && (
+                    <View style={s.finRow}>
+                      <Text style={s.finLabel}>− Subventions (info)</Text>
+                      <Text style={s.finValue}>{fmt(subsidies)} $</Text>
+                    </View>
+                  )}
                   <View style={s.finRowGreen}>
-                    <Text style={s.finLabelGreen}>Total net</Text>
+                    <Text style={s.finLabelGreen}>Total net (indicatif)</Text>
                     <Text style={s.finValueGreen}>{fmt(computedTotalNet)} $</Text>
                   </View>
                 </View>
-                <Text style={[s.sigNotice, { marginTop: 6 }]}>
-                  En acceptant la présente soumission, le client s'engage à respecter le terme de paiement à l'installation.
-                </Text>
               </View>
             </View>
+            <LegalFooter />
           </View>
         </View>
 
@@ -683,7 +685,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
                 <View style={{ marginLeft: "auto", maxWidth: 220 }}>
                   <View style={s.finTable}>
                     <View style={s.finRow}>
-                      <Text style={s.finLabel}>Sous-total (nets)</Text>
+                      <Text style={s.finLabel}>Sous-total</Text>
                       <Text style={s.finValue}>{fmt(otherSub)} $</Text>
                     </View>
                     <View style={s.finRow}>

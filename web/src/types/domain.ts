@@ -144,6 +144,8 @@ export interface AppSettings {
   full_day_threshold_hours: number;
   /** Bypass global du # de série — permet de répartir sans # série pour toutes les unités. */
   serial_bypass_global: boolean;
+  /** Bases de numérotation par année, ex. {"2026":60000,"2027":70000} */
+  quote_number_bases: Record<string, number> | null;
   created_at: string;
   updated_at: string;
 }
@@ -309,7 +311,10 @@ export interface QuoteUnit {
   tech_count: number | null;
   unit_subtotal: number;
   serial_number: string | null;
-  /** Unité faisant partie du groupe alternatif (exclue du total principal, page PDF séparée). */
+  serial_evaporator: string | null;
+  operating_temp_c: number | null;
+  floor_mount_other: string | null;
+  /** Unité faisant partie du groupe alternatif (page 2 du PDF). */
   is_alternative: boolean;
   /** Montant de subvention applicable à cette unité spécifique. */
   subsidy_amount: number;

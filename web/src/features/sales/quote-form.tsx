@@ -49,12 +49,13 @@ type UnitState = {
   tech_count: string;
   unit_subtotal: string;
   serial_number: string;
+  serial_evaporator: string;
+  operating_temp_c: string;
+  floor_mount_other: string;
   /** Unité de l'Option B (page 2 du PDF). */
   is_alternative: boolean;
   /** Subvention spécifique à cette unité. */
   subsidy_amount: string;
-  /** Répartir sans # série pour cette unité. */
-  serial_bypass: boolean;
 };
 
 type FormState = {
@@ -83,7 +84,6 @@ type FormState = {
   electrical_initials: string;
   notes: string;
   subtotal: string;
-  deposit: string;
   montant_subvention: string;
   total_net: string;
   /** "" | "4" | "8" — durée travaux évaluée à la soumission */
@@ -96,12 +96,16 @@ type FormState = {
   status: QuoteStatus;
 };
 
+const OPERATING_TEMPS = [-15, -20, -25, -26, -27, -30] as const;
+const WARRANTY_YEARS = Array.from({ length: 12 }, (_, n) => n + 1);
+
 const defaultUnit = (alt = false): UnitState => ({
   description: "", brand: "", model: "", capacity_btu: "", heating_capacity_25: "",
   warranty_parts: "", warranty_months: "", evaporator: "", pipe_feet: "",
   cap_long1_length: "", cap_long1_color: "", cap_long2_length: "", cap_long2_color: "",
-  support_type: "", floor_mount_type: "", difficulty: "", tech_count: "", unit_subtotal: "0",
-  serial_number: "", is_alternative: alt, subsidy_amount: "0", serial_bypass: false,
+  support_type: "", floor_mount_type: "", floor_mount_other: "", operating_temp_c: "",
+  difficulty: "", tech_count: "", unit_subtotal: "0",
+  serial_number: "", serial_evaporator: "", is_alternative: alt, subsidy_amount: "0",
 });
 
 const toUnitState = (u: QuoteUnit): UnitState => ({
@@ -124,15 +128,32 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   tech_count: u.tech_count?.toString() ?? "",
   unit_subtotal: u.unit_subtotal?.toString() ?? "0",
   serial_number: u.serial_number ?? "",
+  serial_evaporator: u.serial_evaporator ?? "",
+  operating_temp_c: u.operating_temp_c != null ? String(u.operating_temp_c) : "",
+  floor_mount_other: u.floor_mount_other ?? "",
   is_alternative: u.is_alternative ?? false,
   subsidy_amount: u.subsidy_amount?.toString() ?? "0",
-  serial_bypass: u.serial_bypass ?? false,
 });
 
-function filledUnitNeedsSerial(u: UnitState): boolean {
-  if (u.is_alternative) return false;
-  const filled = !!(u.brand.trim() || u.model.trim() || u.description.trim() || parseFloat(u.unit_subtotal) > 0);
-  return filled && !u.serial_number?.trim() && !u.serial_bypass;
+function grossSubtotal(units: UnitState[], optionB: boolean): number {
+  return units
+    .filter((u) => u.is_alternative === optionB)
+    .reduce((acc, u) => acc + (parseFloat(u.unit_subtotal) || 0), 0);
+}
+
+function totalSubsidies(units: UnitState[], optionB: boolean): number {
+  return units
+    .filter((u) => u.is_alternative === optionB)
+    .reduce((acc, u) => acc + (parseFloat(u.subsidy_amount) || 0), 0);
+}
+
+function calcOptionFinancials(units: UnitState[], optionB: boolean) {
+  const subtotal = grossSubtotal(units, optionB);
+  const subsidies = totalSubsidies(units, optionB);
+  const { tps, tvq, total } = calcTaxes(subtotal);
+  const totalDue = total; // Pas de dépôt — le client paie le total TTC
+  const totalNet = Math.max(0, totalDue - subsidies);
+  return { subtotal, subsidies, tps, tvq, total, totalDue, totalNet };
 }
 
 const MAX_UNITS_PER_OPTION = 8;
@@ -159,6 +180,7 @@ const inp =
   "border-input bg-background focus-visible:ring-ring flex h-8 w-full rounded border px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-offset-1";
 const lbl = "block text-xs font-medium mb-0.5 text-muted-foreground";
 const sectionTitle = "font-semibold text-sm mb-3 border-b pb-1";
+const reqMark = <span className="text-destructive text-base font-bold leading-none">*</span>;
 
 // ── TPS / TVQ ─────────────────────────────────────────────────────────────────
 
@@ -231,7 +253,7 @@ export function QuoteForm({
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "serial" | "banner" | null>(null);
+  const [errorField, setErrorField] = useState<"name" | "email" | "phone" | "duration" | "banner" | null>(null);
   const [errorTick, setErrorTick] = useState(0);
   const [saved, setSaved] = useState(false);
   const [showAcceptModal, setShowAcceptModal] = useState(false);
@@ -283,7 +305,6 @@ export function QuoteForm({
         errorField === "email" ? emailRef.current :
         errorField === "phone" ? phoneRef.current :
         errorField === "duration" ? durationRef.current :
-        errorField === "serial" ? document.querySelector("[data-serial-error]") :
         errorRef.current;
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 50);
@@ -352,7 +373,6 @@ export function QuoteForm({
     electrical_initials: initialQuote?.electrical_initials ?? "",
     notes: initialQuote?.notes ?? "",
     subtotal: String(initialQuote?.subtotal ?? "0"),
-    deposit: String(initialQuote?.deposit ?? ""),
     montant_subvention: String(initialQuote?.montant_subvention ?? ""),
     total_net: String(initialQuote?.total_net ?? ""),
     estimated_duration_hours: initialDuration,
@@ -366,26 +386,13 @@ export function QuoteForm({
   const existingUnits = initialUnits ?? [];
   const [units, setUnits] = useState<UnitState[]>(() => slotsFromUnits(existingUnits));
 
+  // Sous-total = somme des bruts Option A — recalculé au montage
   useEffect(() => {
-    if (errorField !== "serial") return;
-    if (!units.some(filledUnitNeedsSerial)) {
-      setError(null);
-      setErrorField(null);
-    }
-  }, [units, errorField]);
-
-  // Sous-total = somme des nets Option A — recalculé au montage (évite un sous-total DB périmé)
-  useEffect(() => {
-    const principalNet = units
-      .filter((u) => !u.is_alternative)
-      .reduce(
-        (acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)),
-        0
-      );
+    const principalGross = grossSubtotal(units, false);
     const hasSubsidy = units.some((u) => (parseFloat(u.subsidy_amount) || 0) > 0);
     setForm((f) => ({
       ...f,
-      subtotal: String(principalNet.toFixed(2)),
+      subtotal: String(principalGross.toFixed(2)),
       has_subsidy: hasSubsidy,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount from initial units
@@ -398,7 +405,7 @@ export function QuoteForm({
     };
 
   const setU = (idx: number, k: keyof UnitState) =>
-    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       let val: string | boolean = e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value;
       if (
         typeof val === "string" &&
@@ -412,15 +419,13 @@ export function QuoteForm({
         const next = [...us];
         next[idx] = { ...next[idx], [k]: val };
 
-        // Sous-total = somme des nets (total − subvention) des unités Option A
+        // Sous-total = somme des bruts unités Option A
         if (k === "unit_subtotal" || k === "subsidy_amount") {
-          const principalNet = next
-            .filter((u) => !u.is_alternative)
-            .reduce((acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)), 0);
+          const principalGross = grossSubtotal(next, false);
           const hasSubsidy = next.some((u) => (parseFloat(u.subsidy_amount) || 0) > 0);
           setForm((f) => ({
             ...f,
-            subtotal: String(principalNet.toFixed(2)),
+            subtotal: String(principalGross.toFixed(2)),
             has_subsidy: hasSubsidy,
           }));
         }
@@ -462,26 +467,12 @@ export function QuoteForm({
         electrical_to_schedule: form.electrical_to_schedule,
         electrical_initials: form.electrical_initials,
         notes: form.notes,
-        subtotal: (() => {
-          // Sous-total = somme des nets unités principales
-          const principalNet = units
-            .filter((u) => !u.is_alternative)
-            .reduce((acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)), 0);
-          return Math.round(principalNet * 100) / 100;
-        })(),
-        deposit: form.deposit ? parseFloat(form.deposit) : null,
-        montant_subvention: null,
+        subtotal: Math.round(grossSubtotal(units, false) * 100) / 100,
+        deposit: null,
+        montant_subvention: Math.round(totalSubsidies(units, false) * 100) / 100,
         total_net: (() => {
-          const principalNet = units
-            .filter((u) => !u.is_alternative)
-            .reduce((acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)), 0);
-          const sub = Math.round(principalNet * 100) / 100;
-          const dep = parseFloat(form.deposit) || 0;
-          const tpsAmt = Math.round(sub * TPS_RATE * 100) / 100;
-          const tvqAmt = Math.round(sub * TVQ_RATE * 100) / 100;
-          const tot = Math.round((sub + tpsAmt + tvqAmt) * 100) / 100;
-          const net = Math.max(0, tot - dep);
-          return net;
+          const fin = calcOptionFinancials(units, false);
+          return fin.totalNet;
         })(),
         estimated_duration_hours:
           form.estimated_duration_hours === "4" || form.estimated_duration_hours === "8"
@@ -510,13 +501,15 @@ export function QuoteForm({
         cap_long2_color: stripAutofilledPostal(u.cap_long2_color),
         support_type: u.support_type,
         floor_mount_type: u.floor_mount_type,
+        floor_mount_other: u.floor_mount_other || null,
+        operating_temp_c: u.operating_temp_c ? parseInt(u.operating_temp_c, 10) : null,
         is_alternative: u.is_alternative,
         subsidy_amount: parseFloat(u.subsidy_amount) || 0,
-        serial_bypass: u.serial_bypass,
         difficulty: form.difficulty,
         tech_count: form.tech_count ? parseInt(form.tech_count) : null,
         unit_subtotal: parseFloat(u.unit_subtotal) || 0,
         serial_number: u.serial_number || null,
+        serial_evaporator: u.serial_evaporator || null,
       })),
     };
   }, [form, units, signature, sketch, nextQuoteNumber]);
@@ -564,11 +557,10 @@ export function QuoteForm({
     const res = await createQuote({ appointmentId, jobId }, quoteData, unitInputs);
     if (!res.ok) return { ok: false, message: res.message };
     setIsDirty(false);
-    const createdId = "id" in res ? (res.id as string) : undefined;
-    if (createdId) {
-      liveQuoteIdRef.current = createdId;
-      setLiveQuoteId(createdId);
-    }
+    const createdId = res.id;
+    liveQuoteIdRef.current = createdId;
+    setLiveQuoteId(createdId);
+    setForm((f) => ({ ...f, quote_number: String(res.quote_number) }));
     return { ok: true, createdId };
   }, [appointmentId, jobId, buildPayload, validateQuoteRequired]);
 
@@ -594,12 +586,14 @@ export function QuoteForm({
     if (searchParams.get("accept") !== "1") return;
     if (alreadyConverted) return;
     if (!liveQuoteId) return;
+    if (!validateQuoteRequired()) return;
+    if ((parseFloat(form.subtotal) || 0) <= 0) return;
     autoAcceptTriggered.current = true;
     setAcceptEmailTo(form.client_email || "");
     setAcceptOption("a");
     setAcceptError(null);
     setShowAcceptModal(true);
-  }, [searchParams, alreadyConverted, liveQuoteId, form.client_email]);
+  }, [searchParams, alreadyConverted, liveQuoteId, form.client_email, form.subtotal, validateQuoteRequired]);
 
   const openCallBackModal = () => {
     setEmailTo(form.client_email || "");
@@ -806,21 +800,11 @@ export function QuoteForm({
     });
   };
 
-  const depositAmt = parseFloat(form.deposit) || 0;
-  // Sous-total Option B = somme des nets (comme Option A)
-  const altSubtotal = units
-    .filter((u) => u.is_alternative)
-    .reduce(
-      (acc, u) => acc + Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)),
-      0
-    );
+  const retainedIsB = acceptedOption === "b";
+  const primaryFin = calcOptionFinancials(units, retainedIsB);
+  const altFin = calcOptionFinancials(units, true);
   const statusInfo = STATUS_INFO[form.status];
   const canSendQuote = (parseFloat(form.subtotal) || 0) > 0;
-  const retainedIsB = acceptedOption === "b";
-  const aSubtotal = parseFloat(form.subtotal) || 0;
-  const primarySub = retainedIsB ? altSubtotal : aSubtotal;
-  const { tps: primaryTps, tvq: primaryTvq, total: primaryTotal } = calcTaxes(primarySub);
-  const primaryNet = Math.max(0, primaryTotal - depositAmt);
 
   const [activeGroup, setActiveGroup] = useState<"a" | "b">(
     initialQuote?.accepted_option === "b" ? "b" : "a"
@@ -918,7 +902,7 @@ export function QuoteForm({
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="sm:col-span-2" ref={nameRef}>
-            <label className={lbl}>Nom <span className="text-destructive">*</span></label>
+            <label className={lbl}>Nom {reqMark}</label>
             <input className={lockedInp} value={form.client_name} readOnly tabIndex={-1} />
           </div>
           {/* Adresse facturation + installation */}
@@ -967,20 +951,20 @@ export function QuoteForm({
           })()}
           <div ref={phoneRef}>
             <label className={lbl}>
-              Téléphone <span className="text-destructive">*</span>
+              Téléphone {reqMark}
               <span className="font-normal text-muted-foreground"> (ou cellulaire)</span>
             </label>
             <input className={lockedInp} type="tel" value={form.client_phone} readOnly tabIndex={-1} />
           </div>
           <div>
             <label className={lbl}>
-              Cellulaire <span className="text-destructive">*</span>
+              Cellulaire {reqMark}
               <span className="font-normal text-muted-foreground"> (ou téléphone)</span>
             </label>
             <input className={lockedInp} type="tel" value={form.client_cell} readOnly tabIndex={-1} />
           </div>
           <div className="sm:col-span-2" ref={emailRef}>
-            <label className={lbl}>Courriel <span className="text-destructive">*</span></label>
+            <label className={lbl}>Courriel {reqMark}</label>
             <input className={lockedInp} type="email" value={form.client_email} readOnly tabIndex={-1} />
           </div>
         </div>
@@ -1102,100 +1086,132 @@ export function QuoteForm({
                         </span>
                       )}
                     </p>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="col-span-2 sm:col-span-4">
+                    <div className="space-y-3">
+                      {/* Ligne 1 — Description */}
+                      <div>
                         <label className={lbl}>Description / Emplacement</label>
                         <input className={inp} value={u.description} onChange={setU(i, "description")} placeholder="Étage principal, Salon..." {...noAc} />
                       </div>
-                      <div>
-                        <label className={lbl}>Marque</label>
-                        <input className={inp} value={u.brand} onChange={setU(i, "brand")} placeholder="Midea, Daikin..." {...noAc} />
+
+                      {/* Ligne 2 — Marque + Modèle */}
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div>
+                          <label className={lbl}>Marque</label>
+                          <input className={inp} value={u.brand} onChange={setU(i, "brand")} placeholder="Midea, Daikin..." {...noAc} />
+                        </div>
+                        <div className="sm:col-span-3">
+                          <label className={lbl}>Modèle</label>
+                          <input className={inp} value={u.model} onChange={setU(i, "model")} {...noAc} />
+                        </div>
                       </div>
-                      <div className="col-span-1 sm:col-span-3">
-                        <label className={lbl}>Modèle</label>
-                        <input className={inp} value={u.model} onChange={setU(i, "model")} {...noAc} />
+
+                      {/* Ligne 3 — Capacité + Plage + Cap. chauf. */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className={lbl}>Capacité (BTU)</label>
+                          <input className={inp} value={u.capacity_btu} onChange={setU(i, "capacity_btu")} placeholder="12000 BTU" {...noAc} />
+                        </div>
+                        <div>
+                          <label className={lbl}>Plage de fonctionnement</label>
+                          <select className={inp} value={u.operating_temp_c} onChange={setU(i, "operating_temp_c")}>
+                            <option value="">—</option>
+                            {OPERATING_TEMPS.map((t) => (
+                              <option key={t} value={t}>{t} °C</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={lbl}>
+                            Cap. chauf. {u.operating_temp_c ? `à ${u.operating_temp_c} °C` : "à cette temp."}
+                          </label>
+                          <input className={inp} value={u.heating_capacity_25} onChange={setU(i, "heating_capacity_25")} placeholder="9600 BTU" {...noAc} />
+                        </div>
                       </div>
-                      <div>
-                        <label className={lbl}>Capacité (BTU)</label>
-                        <input className={inp} value={u.capacity_btu} onChange={setU(i, "capacity_btu")} placeholder="12000 BTU" {...noAc} />
+
+                      {/* Ligne 4 — Garanties + pieds tuyaux */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label className={lbl}>Garantie pièces</label>
+                          <select className={inp} value={u.warranty_parts} onChange={setU(i, "warranty_parts")}>
+                            <option value="">—</option>
+                            {WARRANTY_YEARS.map((y) => (
+                              <option key={y} value={`${y} an${y > 1 ? "s" : ""}`}>{y} an{y > 1 ? "s" : ""}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={lbl}>Garantie M-O</label>
+                          <select className={inp} value={u.warranty_months} onChange={setU(i, "warranty_months")}>
+                            <option value="">—</option>
+                            {WARRANTY_YEARS.map((y) => (
+                              <option key={y} value={`${y} an${y > 1 ? "s" : ""}`}>{y} an{y > 1 ? "s" : ""}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={lbl}>Nbre pieds tuyaux</label>
+                          <input className={inp} value={u.pipe_feet} onChange={setU(i, "pipe_feet")} placeholder="50" {...noAc} />
+                        </div>
                       </div>
-                      <div>
-                        <label className={lbl}>Cap. Chauf. -25°C</label>
-                        <input className={inp} value={u.heating_capacity_25} onChange={setU(i, "heating_capacity_25")} placeholder="9600 BTU" {...noAc} />
-                      </div>
-                      <div>
-                        <label className={lbl}>Garantie pièces</label>
-                        <input className={inp} value={u.warranty_parts} onChange={setU(i, "warranty_parts")} placeholder="10 pces" {...noAc} />
-                      </div>
-                      <div>
-                        <label className={lbl}>Garantie M-O</label>
-                        <input className={inp} value={u.warranty_months} onChange={setU(i, "warranty_months")} placeholder="1 an" {...noAc} />
-                      </div>
-                      <div>
-                        <label className={lbl}>Évaporateur</label>
-                        <input className={inp} value={u.evaporator} onChange={setU(i, "evaporator")} {...noAc} />
-                      </div>
-                      <div>
-                        <label className={lbl}>Nbre pieds tuyaux</label>
-                        <input className={inp} value={u.pipe_feet} onChange={setU(i, "pipe_feet")} placeholder="50" {...noAc} />
-                      </div>
-                      <div>
-                        <label className={lbl}>Cap Long 1 — Long</label>
-                        <input
-                          className={inp}
-                          name={`huppe-u${i}-cap1-len`}
-                          {...noAc}
-                          autoComplete="new-password"
-                          data-1p-ignore=""
-                          data-lpignore="true"
-                          value={u.cap_long1_length}
-                          onChange={setU(i, "cap_long1_length")}
-                          placeholder="50 #"
-                        />
-                      </div>
-                      <div>
-                        <label className={lbl}>Cap Long 1 — Coul.</label>
-                        <input
-                          className={inp}
-                          name={`huppe-u${i}-cap1-col`}
-                          {...noAc}
-                          autoComplete="new-password"
-                          data-1p-ignore=""
-                          data-lpignore="true"
-                          value={u.cap_long1_color}
-                          onChange={setU(i, "cap_long1_color")}
-                          placeholder="Blanc"
-                        />
-                      </div>
-                      <div>
-                        <label className={lbl}>Cap Long 2 — Long</label>
-                        <input
-                          className={inp}
-                          name={`huppe-u${i}-cap2-len`}
-                          {...noAc}
-                          autoComplete="new-password"
-                          data-1p-ignore=""
-                          data-lpignore="true"
-                          value={u.cap_long2_length}
-                          onChange={setU(i, "cap_long2_length")}
-                        />
-                      </div>
-                      <div>
-                        <label className={lbl}>Cap Long 2 — Coul.</label>
-                        <input
-                          className={inp}
-                          name={`huppe-u${i}-cap2-col`}
-                          {...noAc}
-                          autoComplete="new-password"
-                          data-1p-ignore=""
-                          data-lpignore="true"
-                          value={u.cap_long2_color}
-                          onChange={setU(i, "cap_long2_color")}
-                        />
+
+                      {/* Ligne 5 — 4 cap-long ensemble */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div>
+                          <label className={lbl}>Cap Long 1 — Long</label>
+                          <input
+                            className={inp}
+                            name={`huppe-u${i}-cap1-len`}
+                            {...noAc}
+                            autoComplete="new-password"
+                            data-1p-ignore=""
+                            data-lpignore="true"
+                            value={u.cap_long1_length}
+                            onChange={setU(i, "cap_long1_length")}
+                          />
+                        </div>
+                        <div>
+                          <label className={lbl}>Cap Long 1 — Coul.</label>
+                          <input
+                            className={inp}
+                            name={`huppe-u${i}-cap1-col`}
+                            {...noAc}
+                            autoComplete="new-password"
+                            data-1p-ignore=""
+                            data-lpignore="true"
+                            value={u.cap_long1_color}
+                            onChange={setU(i, "cap_long1_color")}
+                          />
+                        </div>
+                        <div>
+                          <label className={lbl}>Cap Long 2 — Long</label>
+                          <input
+                            className={inp}
+                            name={`huppe-u${i}-cap2-len`}
+                            {...noAc}
+                            autoComplete="new-password"
+                            data-1p-ignore=""
+                            data-lpignore="true"
+                            value={u.cap_long2_length}
+                            onChange={setU(i, "cap_long2_length")}
+                          />
+                        </div>
+                        <div>
+                          <label className={lbl}>Cap Long 2 — Coul.</label>
+                          <input
+                            className={inp}
+                            name={`huppe-u${i}-cap2-col`}
+                            {...noAc}
+                            autoComplete="new-password"
+                            data-1p-ignore=""
+                            data-lpignore="true"
+                            value={u.cap_long2_color}
+                            onChange={setU(i, "cap_long2_color")}
+                          />
+                        </div>
                       </div>
 
                       {/* Support */}
-                      <div className="col-span-2 sm:col-span-4">
+                      <div>
                         <label className={lbl}>Support</label>
                         <div className="flex flex-wrap gap-3 mt-1">
                           {["regular", "inverted", "special", "inverted_adj"].map((v) => (
@@ -1208,9 +1224,9 @@ export function QuoteForm({
                       </div>
 
                       {/* Au sol */}
-                      <div className="col-span-2 sm:col-span-4">
+                      <div>
                         <label className={lbl}>Au sol</label>
-                        <div className="flex flex-wrap gap-3 mt-1">
+                        <div className="flex flex-wrap gap-3 mt-1 items-center">
                           {["alum_table", "plastic_base", "diversitech"].map((v) => (
                             <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
                               <input type="radio" name={`floor-${i}`} value={v} checked={u.floor_mount_type === v} onChange={setU(i, "floor_mount_type")} />
@@ -1221,12 +1237,21 @@ export function QuoteForm({
                             <input type="radio" name={`floor-${i}`} value="" checked={u.floor_mount_type === ""} onChange={setU(i, "floor_mount_type")} />
                             Aucun
                           </label>
+                          <div className="flex items-center gap-2 ml-2">
+                            <span className="text-sm text-muted-foreground">Autre :</span>
+                            <input
+                              className={`${inp} max-w-xs`}
+                              value={u.floor_mount_other}
+                              onChange={setU(i, "floor_mount_other")}
+                              placeholder="Préciser…"
+                              {...noAc}
+                            />
+                          </div>
                         </div>
                       </div>
 
-                      {/* Total + Subvention + Net + # Série */}
-                      <div className="col-span-2 sm:col-span-4 pt-2 border-t mt-1 space-y-3">
-                        {/* Ligne 1 : Total − Subvention = Net */}
+                      {/* Total + Subvention + # Série */}
+                      <div className="pt-2 border-t mt-1 space-y-3">
                         <div className="flex items-end gap-2 flex-wrap">
                           <div className="flex-1 min-w-[120px]">
                             <label className="mb-1 block text-base font-bold text-primary">Total unité</label>
@@ -1239,7 +1264,6 @@ export function QuoteForm({
                               <span className="ml-1 shrink-0 text-sm text-muted-foreground select-none">$</span>
                             </div>
                           </div>
-                          <span className="text-muted-foreground text-sm pb-1.5 shrink-0">−</span>
                           <div className="flex-1 min-w-[120px]">
                             <label className={lbl}>Subvention</label>
                             <div className="border-input bg-background focus-within:ring-ring flex h-8 w-full items-center rounded border px-2 focus-within:ring-2 focus-within:ring-offset-1">
@@ -1251,44 +1275,35 @@ export function QuoteForm({
                               <span className="ml-1 shrink-0 text-sm text-muted-foreground select-none">$</span>
                             </div>
                           </div>
-                          <span className="text-muted-foreground text-sm pb-1.5 shrink-0">=</span>
-                          <div className="flex-1 min-w-[120px]">
-                            <label className={lbl}>Net unité</label>
-                            <div className="h-8 flex items-center rounded border border-emerald-300 bg-emerald-50 px-2">
-                              <span className="text-sm font-semibold text-emerald-800 flex-1 text-right">
-                                {fmt(Math.max(0, (parseFloat(u.unit_subtotal) || 0) - (parseFloat(u.subsidy_amount) || 0)))}
-                              </span>
-                              <span className="ml-1 text-sm text-emerald-700 shrink-0">$</span>
-                            </div>
-                          </div>
                         </div>
-                        {!u.is_alternative && (
-                        <div
-                          className={`flex flex-col sm:flex-row sm:items-start gap-2 ${
-                            errorField === "serial" && filledUnitNeedsSerial(u)
-                              ? "ring-2 ring-destructive/60 rounded-lg p-2 -m-1"
-                              : ""
-                          }`}
-                          {...(errorField === "serial" && filledUnitNeedsSerial(u)
-                            ? { "data-serial-error": "" }
-                            : {})}
-                        >
-                          <div className="flex-1">
-                            <label className={`${lbl} flex items-center gap-1`}>
-                              # Série
-                              <span className="text-[10px] text-muted-foreground font-normal">(rempli par la secrétaire)</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className={lbl}>
+                              # de série compresseur
                             </label>
-                            <input className={inp} value={u.serial_number} onChange={setU(i, "serial_number")} placeholder="Ex: SN-123456" {...noAc} />
-                            {errorField === "serial" && filledUnitNeedsSerial(u) && error && (
-                              <p className="mt-1 text-sm text-destructive print:hidden">{error}</p>
-                            )}
+                            <textarea
+                              className={`${inp} min-h-[72px] py-2 resize-y whitespace-pre-wrap break-all`}
+                              value={u.serial_number}
+                              onChange={setU(i, "serial_number")}
+                              placeholder="Coller un ou plusieurs numéros…"
+                              rows={3}
+                              {...noAc}
+                            />
                           </div>
-                          <label className="flex items-center gap-1.5 text-xs cursor-pointer text-muted-foreground hover:text-foreground sm:mt-5 shrink-0">
-                            <input type="checkbox" checked={u.serial_bypass} onChange={setU(i, "serial_bypass")} className="rounded" />
-                            Répartir sans # série
-                          </label>
+                          <div>
+                            <label className={lbl}>
+                              # de série évaporateur
+                            </label>
+                            <textarea
+                              className={`${inp} min-h-[72px] py-2 resize-y whitespace-pre-wrap break-all`}
+                              value={u.serial_evaporator}
+                              onChange={setU(i, "serial_evaporator")}
+                              placeholder="Coller un ou plusieurs numéros…"
+                              rows={3}
+                              {...noAc}
+                            />
+                          </div>
                         </div>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -1308,7 +1323,7 @@ export function QuoteForm({
           className={`mb-4 rounded-lg ${errorField === "duration" ? "ring-2 ring-destructive/60 p-3 -m-1" : ""}`}
         >
           <label className={`${lbl} flex items-center gap-1`}>
-            Durée des travaux <span className="text-destructive">*</span>
+            Durée des travaux {reqMark}
             <span className="text-[10px] text-muted-foreground font-normal">(obligatoire)</span>
           </label>
           <div className="flex flex-wrap gap-4 mt-1">
@@ -1492,76 +1507,72 @@ export function QuoteForm({
                 </div>
               )}
               <div className="flex justify-between px-4 py-2 bg-muted/40 text-sm">
-                <span className="text-muted-foreground text-xs">Sous-total <span className="opacity-60">(nets)</span></span>
-                <span className="font-medium">{fmt(primarySub)} $</span>
+                <span className="text-muted-foreground text-xs">Sous-total</span>
+                <span className="font-medium">{fmt(primaryFin.subtotal)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t text-muted-foreground">
                 <span>TPS (5%)</span>
-                <span>{fmt(primaryTps)} $</span>
+                <span>{fmt(primaryFin.tps)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2 text-sm border-t text-muted-foreground">
                 <span>TVQ (9.975%)</span>
-                <span>{fmt(primaryTvq)} $</span>
+                <span>{fmt(primaryFin.tvq)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2.5 bg-foreground text-background font-bold border-t text-base">
                 <span>TOTAL</span>
-                <span>{fmt(primaryTotal)} $</span>
+                <span>{fmt(primaryFin.total)} $</span>
               </div>
-              <div className="flex justify-between px-4 py-2 text-sm border-t">
-                <span className="text-muted-foreground">− Dépôt</span>
-                <div className="flex items-center gap-1">
-                  <input
-                    className="w-24 text-right border-0 bg-transparent text-sm outline-none"
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={form.deposit}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      markDirty();
-                      setForm((f) => ({ ...f, deposit: val }));
-                    }}
-                    placeholder="0.00"
-                    {...noAc}
-                  />
-                  <span className="text-muted-foreground">$</span>
+              <div className="flex justify-between px-4 py-2 text-sm border-t font-semibold">
+                <span>Total dû</span>
+                <span>{fmt(primaryFin.totalDue)} $</span>
+              </div>
+              {primaryFin.subsidies > 0 && (
+                <div className="flex justify-between px-4 py-2 text-sm border-t text-muted-foreground">
+                  <span>− Subventions (info)</span>
+                  <span>{fmt(primaryFin.subsidies)} $</span>
                 </div>
-              </div>
+              )}
               <div className="flex justify-between px-4 py-2.5 bg-emerald-50 text-emerald-900 font-bold border-t text-base">
-                <span>Total net</span>
-                <span>{fmt(primaryNet)} $</span>
+                <span>Total net (indicatif)</span>
+                <span>{fmt(primaryFin.totalNet)} $</span>
               </div>
             </div>
-            <p className="mt-3 max-w-sm ml-auto text-xs text-muted-foreground leading-relaxed italic">
-              En acceptant la présente soumission, le client s&apos;engage à respecter le terme de paiement à l&apos;installation.
-            </p>
-            {!acceptedOption && altSubtotal > 0 && (() => {
-              const { tps: bTps, tvq: bTvq, total: bTotal } = calcTaxes(altSubtotal);
-              return (
+            {!acceptedOption && altFin.subtotal > 0 && (
                 <div className="mt-3 border border-amber-300 rounded-lg overflow-hidden max-w-sm ml-auto w-full">
                   <div className="flex justify-between px-4 py-2 bg-amber-50 text-amber-900 text-xs font-bold border-b border-amber-200">
                     <span>Option B</span>
                   </div>
                   <div className="flex justify-between px-4 py-2 text-sm bg-muted/20">
                     <span>Sous-total</span>
-                    <span>{fmt(altSubtotal)} $</span>
+                    <span>{fmt(altFin.subtotal)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2 text-sm text-muted-foreground border-t">
                     <span>TPS (5%)</span>
-                    <span>{fmt(bTps)} $</span>
+                    <span>{fmt(altFin.tps)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2 text-sm text-muted-foreground border-t">
                     <span>TVQ (9.975%)</span>
-                    <span>{fmt(bTvq)} $</span>
+                    <span>{fmt(altFin.tvq)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2.5 bg-amber-500 text-white font-bold border-t text-base">
                     <span>Total :</span>
-                    <span>{fmt(bTotal)} $</span>
+                    <span>{fmt(altFin.total)} $</span>
                   </div>
                 </div>
-              );
-            })()}
+            )}
           </div>
+        </div>
+        <div className="mt-4 space-y-2 text-xs text-muted-foreground leading-relaxed border-t pt-3">
+          <p className="italic">
+            En acceptant la présente soumission, le client s&apos;engage à respecter le terme de paiement à l&apos;installation.
+          </p>
+          <p>
+            <span className="font-semibold text-foreground">Modes de paiements acceptés :</span>
+            {" "}Chèque, comptant, Visa, Mastercard. Financement disponible
+          </p>
+          <p className="text-red-700 dark:text-red-400">
+            Un frais administratif de 40,00$ est applicable sur tout appel de service couvert par la garantie du fabricant. Aucun frais de déplacement ou de diagnostic. Les appels de service qui ne sont pas couverts par la garantie du fabricant seront facturables au taux horaire régulier. Les détails de garantie seront fournis avec la facturation. * Aucun frais applicable la première année.
+          </p>
         </div>
       </div>
 
@@ -1719,8 +1730,7 @@ export function QuoteForm({
                   <p className="text-sm font-medium mb-2">Option choisie par le client :</p>
                   <div className="grid grid-cols-2 gap-2">
                     {(["a", "b"] as const).map((opt) => {
-                      const optSub = opt === "a" ? aSubtotal : altSubtotal;
-                      const optTotal = calcTaxes(optSub).total;
+                      const optFin = calcOptionFinancials(units, opt === "b");
                       const selected = acceptOption === opt;
                       return (
                         <label
@@ -1743,7 +1753,7 @@ export function QuoteForm({
                             <span className="text-sm font-semibold">Option {opt.toUpperCase()}</span>
                           </span>
                           <span className="text-xs text-muted-foreground pl-6">
-                            {fmt(optTotal)} $
+                            {fmt(optFin.total)} $
                           </span>
                         </label>
                       );

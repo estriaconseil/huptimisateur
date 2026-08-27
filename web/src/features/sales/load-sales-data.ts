@@ -95,11 +95,22 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
     if (raw.quote_id) quoteToAppt.set(raw.quote_id, raw.id);
   }
   if (quoteIds.length > 0) {
-    const { data: unitRows } = await supabase
-      .from("quote_units")
-      .select("quote_id, brand, model, description, unit_subtotal, serial_number, serial_bypass")
-      .in("quote_id", quoteIds);
-    // Par quote : y a-t-il une unité remplie sans # série et sans bypass ?
+    const [{ data: unitRows }, { data: quoteRows }] = await Promise.all([
+      supabase
+        .from("quote_units")
+        .select("quote_id, brand, model, description, unit_subtotal, serial_number, serial_evaporator, is_alternative")
+        .in("quote_id", quoteIds),
+      supabase
+        .from("quotes")
+        .select("id, accepted_option")
+        .in("id", quoteIds),
+    ]);
+    const acceptedByQuote = new Map(
+      (quoteRows ?? []).map((q) => {
+        const row = q as { id: string; accepted_option: "a" | "b" | null };
+        return [row.id, row.accepted_option ?? "a"] as const;
+      })
+    );
     const quoteHasMissing = new Map<string, boolean>();
     for (const u of unitRows ?? []) {
       const row = u as {
@@ -109,11 +120,15 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         description: string | null;
         unit_subtotal: number | null;
         serial_number: string | null;
-        serial_bypass: boolean | null;
+        serial_evaporator: string | null;
+        is_alternative: boolean | null;
       };
+      const accepted = acceptedByQuote.get(row.quote_id) ?? "a";
+      if ((accepted === "b") !== (row.is_alternative ?? false)) continue;
       const filled = !!(row.brand?.trim() || row.model?.trim() || row.description?.trim() || (row.unit_subtotal ?? 0) > 0);
       if (!filled) continue;
-      if (!row.serial_number?.trim() && !row.serial_bypass) {
+      const hasSerial = !!(row.serial_number?.trim() || row.serial_evaporator?.trim());
+      if (!hasSerial) {
         quoteHasMissing.set(row.quote_id, true);
       }
     }

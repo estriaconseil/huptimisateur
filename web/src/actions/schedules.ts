@@ -3,6 +3,7 @@
 import { getDay, parse } from "date-fns";
 import { revalidatePath } from "next/cache";
 
+import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { jobBlocksFullDay } from "@/services/planning/slot-rules";
 import { logActivity } from "@/actions/activity";
@@ -44,6 +45,16 @@ export async function assignJobToSlot(input: {
 
   const long = jobBlocksFullDay(input.estimatedDurationHours, input.fullDayThresholdHours);
   const slot_type: ScheduleSlot = long ? "full_day" : input.half;
+
+  const { data: teamBlockRows } = await supabase
+    .from("team_blocks")
+    .select("id, team_id, blocked_date, slot_type, notes, created_at")
+    .eq("team_id", input.teamId)
+    .eq("blocked_date", input.scheduledDate);
+
+  if (isTeamSlotBlocked(teamBlockRows ?? [], input.teamId, input.scheduledDate, slot_type)) {
+    return { ok: false as const, message: "Ce créneau est bloqué pour cette équipe." };
+  }
 
   // Libère l'ancien créneau (déplacement / re-placement) avant d'insérer
   const { error: clearErr } = await supabase

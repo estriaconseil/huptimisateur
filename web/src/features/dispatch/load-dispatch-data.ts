@@ -5,7 +5,7 @@ import { getBusinessWeekDateStrings } from "@/lib/dispatch/business-week";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { EnrichedScheduleRow } from "@/services/planning/dispatch-state";
-import type { AppSettings, EstimatedDurationHours, Job, Team, Technician } from "@/types/domain";
+import type { AppSettings, EstimatedDurationHours, Job, Team, TeamBlock, Technician } from "@/types/domain";
 
 export type TeamWithTechs = Team & { technicians: Pick<Technician, "id" | "first_name" | "last_name">[] };
 
@@ -39,7 +39,9 @@ function mondayFromParam(weekParam: string | undefined): Date {
 function unitsMissingSerial(quotes: unknown): boolean {
   const list = Array.isArray(quotes) ? quotes : quotes ? [quotes] : [];
   for (const q of list) {
-    const raw = (q as { quote_units?: unknown }).quote_units;
+    const quote = q as { accepted_option?: "a" | "b" | null; quote_units?: unknown };
+    const accepted = quote.accepted_option ?? "a";
+    const raw = quote.quote_units;
     const units = Array.isArray(raw) ? raw : raw ? [raw] : [];
     for (const u of units) {
       const row = u as {
@@ -47,11 +49,15 @@ function unitsMissingSerial(quotes: unknown): boolean {
         model?: string | null;
         unit_subtotal?: number | null;
         serial_number?: string | null;
-        serial_bypass?: boolean | null;
+        serial_evaporator?: string | null;
+        is_alternative?: boolean | null;
       };
+      const isAlt = row.is_alternative ?? false;
+      if ((accepted === "b") !== isAlt) continue;
       const filled = !!(row.brand?.trim() || row.model?.trim() || (row.unit_subtotal ?? 0) > 0);
       if (!filled) continue;
-      if (row.serial_bypass || !row.serial_number?.trim()) return true;
+      const hasSerial = !!(row.serial_number?.trim() || row.serial_evaporator?.trim());
+      if (!hasSerial) return true;
     }
   }
   return false;
@@ -72,6 +78,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     jobsRes,
     retourRes,
     settingsRes,
+    teamBlocksRes,
   ] = await Promise.all([
     supabase
       .from("teams")
@@ -95,7 +102,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
           estimated_duration_hours,
           clients ( name, city, phone, email, lat, lng, address_formatted ),
           installation_addresses!installation_address_id ( lat, lng, city, address_formatted ),
-          quotes ( quote_units ( serial_number, serial_bypass, brand, model, unit_subtotal ) )
+          quotes ( accepted_option, quote_units ( serial_number, serial_evaporator, brand, model, unit_subtotal, is_alternative ) )
         )
       `
       )
@@ -127,6 +134,11 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       .eq("status", "retour_a_faire")
       .order("created_at", { ascending: false }),
     supabase.from("app_settings").select("*").limit(1).maybeSingle(),
+    supabase
+      .from("team_blocks")
+      .select("id, team_id, blocked_date, slot_type, notes, created_at")
+      .gte("blocked_date", rangeStart)
+      .lte("blocked_date", rangeEnd),
   ]);
 
   /* Toutes les jobs "a_planifier" attendent un créneau — pas besoin de filtrage supplémentaire. */
@@ -245,6 +257,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     jobsForPicker,
     retourAFaireJobs,
     settings: settingsRes.data as AppSettings | null,
+    teamBlocks: (teamBlocksRes.data ?? []) as TeamBlock[],
     errors: {
       teams: teamsRes.error?.message,
       schedules: schedulesRes.error?.message,

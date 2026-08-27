@@ -1,7 +1,7 @@
 import { fetchDrivingMetricsBatch } from "@/lib/maps/distance-matrix";
 import { buildAssignmentCandidates, resolveOriginLatLng } from "@/services/suggestions/build-candidates";
 import type { EnrichedScheduleRow } from "@/services/planning/dispatch-state";
-import type { EstimatedDurationHours, ScheduleSuggestion, Team } from "@/types/domain";
+import type { EstimatedDurationHours, ScheduleSuggestion, Team, TeamBlock } from "@/types/domain";
 
 const BATCH = 25;
 
@@ -14,13 +14,15 @@ export async function rankScheduleSuggestions(input: {
   jobDestination: { lat: number; lng: number };
   office: { lat: number; lng: number };
   googleApiKey: string;
+  teamBlocks?: TeamBlock[];
 }): Promise<ScheduleSuggestion[]> {
   const candidates = buildAssignmentCandidates(
     input.weekDates,
     input.teams,
     input.schedules,
     input.estimatedDurationHours,
-    input.fullDayThresholdHours
+    input.fullDayThresholdHours,
+    input.teamBlocks ?? []
   );
 
   if (candidates.length === 0) return [];

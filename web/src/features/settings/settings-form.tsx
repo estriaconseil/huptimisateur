@@ -33,11 +33,9 @@ export function SettingsForm({ settings, role }: Props) {
   const [threshold, setThreshold] = useState(
     String(settings?.full_day_threshold_hours ?? 8)
   );
-  const [serialBypassGlobal, setSerialBypassGlobal] = useState(
-    settings?.serial_bypass_global ?? false
+  const [quoteBasesText, setQuoteBasesText] = useState(
+    JSON.stringify(settings?.quote_number_bases ?? { "2026": 60000, "2027": 70000 }, null, 2)
   );
-  const canEditBypass = role === "admin" || role === "secretary";
-
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -50,6 +48,17 @@ export function SettingsForm({ settings, role }: Props) {
     }
 
     startTransition(async () => {
+      let quote_number_bases: Record<string, number>;
+      try {
+        quote_number_bases = JSON.parse(quoteBasesText) as Record<string, number>;
+        if (typeof quote_number_bases !== "object" || quote_number_bases === null) {
+          throw new Error("Format invalide");
+        }
+      } catch {
+        setError("Numéros de soumission : JSON invalide (ex. {\"2026\":60000,\"2027\":70000}).");
+        return;
+      }
+
       const res = await saveAppSettings({
         office_address: officeAddress,
         office_lat: officeLat,
@@ -59,7 +68,7 @@ export function SettingsForm({ settings, role }: Props) {
         pm_start: pmStart,
         pm_end: pmEnd,
         full_day_threshold_hours: thresholdNum,
-        serial_bypass_global: serialBypassGlobal,
+        quote_number_bases,
       });
 
       if (!res.ok) {
@@ -236,37 +245,28 @@ export function SettingsForm({ settings, role }: Props) {
         </CardContent>
       </Card>
 
-      {/* Bypass global # de série */}
+      {/* Numéros de soumission par année */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Bypass global — # de série</CardTitle>
+          <CardTitle className="text-base">Numéros de soumission</CardTitle>
           <CardDescription>
-            Permet à toute l'équipe de répartir vers l'installation sans entrer les numéros de série.
-            À utiliser temporairement en cas de pénurie de données ou de commandes en attente.
+            Numéro de départ par année. Exemple : 2026 commence à 60000, 2027 à 70000.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <label className="flex items-center gap-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={serialBypassGlobal}
-              onChange={(e) => setSerialBypassGlobal(e.target.checked)}
-              disabled={!canEditBypass}
-              className="h-4 w-4 rounded border-input accent-primary"
-            />
-            <span className="text-sm font-medium">
-              Activer le bypass global des # de série
-            </span>
-          </label>
-          {serialBypassGlobal && (
-            <p className="text-amber-700 text-xs mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              ⚠ Bypass actif — les avertissements # de série sont ignorés pour toute l'équipe.
-            </p>
-          )}
+        <CardContent className="space-y-1.5">
+          <Label htmlFor="quote-bases">Configuration (JSON)</Label>
+          <textarea
+            id="quote-bases"
+            value={quoteBasesText}
+            onChange={(e) => setQuoteBasesText(e.target.value)}
+            disabled={!isAdmin}
+            rows={4}
+            className="border-input bg-background focus-visible:ring-ring w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2"
+          />
         </CardContent>
       </Card>
 
-      {(isAdmin || canEditBypass) && (
+      {isAdmin && (
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={pending}>
             {pending ? "Enregistrement..." : "Enregistrer les paramètres"}

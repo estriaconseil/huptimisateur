@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
@@ -12,7 +13,7 @@ import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ print?: string; from?: string; week?: string }>;
+  searchParams: Promise<{ print?: string; from?: string; week?: string; accept?: string }>;
 };
 
 export default async function AppointmentDetailPage({ params, searchParams }: Props) {
@@ -133,18 +134,20 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
         <ScrollToQuoteActionsButton />
       </div>
 
-      <QuoteForm
-        appointmentId={id}
-        jobId={linkedJob?.id ?? quote?.job_id ?? null}
-        quoteId={quote?.id}
-        initialQuote={quote ?? undefined}
-        initialUnits={units}
-        salespeople={salespeople}
-        nextQuoteNumber={nextQuoteNumber}
-        defaultClient={quote ? undefined : defaultClient}
-        installAddress={apptInstall?.address_formatted ?? null}
-        alreadyConverted={alreadyConverted}
-      />
+      <Suspense fallback={<div className="text-sm text-muted-foreground py-8">Chargement…</div>}>
+        <QuoteForm
+          appointmentId={id}
+          jobId={linkedJob?.id ?? quote?.job_id ?? null}
+          quoteId={quote?.id}
+          initialQuote={quote ?? undefined}
+          initialUnits={units}
+          salespeople={salespeople}
+          nextQuoteNumber={nextQuoteNumber}
+          defaultClient={quote ? undefined : defaultClient}
+          installAddress={apptInstall?.address_formatted ?? null}
+          alreadyConverted={alreadyConverted}
+        />
+      </Suspense>
     </div>
   );
 }

@@ -34,6 +34,7 @@ import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
 import { assignJobToSlot } from "@/actions/schedules";
 import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { updateClient, updateJob } from "@/actions/clients";
+import { updateQuoteUnitSerials } from "@/actions/sales";
 import { JobTimeline } from "@/features/jobs/job-timeline";
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import type { InstallJob } from "@/app/(app)/a-planifier/page";
@@ -513,6 +514,15 @@ function EditModal({
     preferred_date: job.preferred_date ?? "",
     estimated_duration_hours: job.estimated_duration_hours,
   });
+  const [serialUnits, setSerialUnits] = useState(
+    job.quote_units.map((u) => ({
+      id: u.id,
+      brand: u.brand ?? "",
+      model: u.model ?? "",
+      serial_number: u.serial_number ?? "",
+      serial_evaporator: u.serial_evaporator ?? "",
+    }))
+  );
   const [saving, startSave] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -541,6 +551,17 @@ function EditModal({
         internal_notes: jobForm.internal_notes || undefined,
       });
       if (!jRes.ok) { setError(jRes.message); return; }
+
+      if (serialUnits.length > 0) {
+        const sRes = await updateQuoteUnitSerials(
+          serialUnits.map((u) => ({
+            id: u.id,
+            serial_number: u.serial_number || null,
+            serial_evaporator: u.serial_evaporator || null,
+          }))
+        );
+        if (!sRes.ok) { setError(sRes.message); return; }
+      }
 
       onSaved();
     });
@@ -698,6 +719,56 @@ function EditModal({
                 placeholder="Notes visibles par l'équipe seulement"
               />
             </div>
+
+            {serialUnits.length > 0 && (
+              <div className="space-y-3 pt-2 border-t">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  # de série — Option {job.accepted_option?.toUpperCase() ?? "A"} retenue
+                </p>
+                {serialUnits.map((u, idx) => (
+                  <div key={u.id} className="rounded-lg border p-3 space-y-2 bg-muted/20">
+                    <p className="text-sm font-medium">
+                      Unité {idx + 1}
+                      {(u.brand || u.model) && (
+                        <span className="ml-2 font-normal text-muted-foreground">
+                          {[u.brand, u.model].filter(Boolean).join(" — ")}
+                        </span>
+                      )}
+                    </p>
+                    <div>
+                      <label className={lbl}># compresseur</label>
+                      <textarea
+                        className={`${inp} min-h-[64px] py-2 resize-y whitespace-pre-wrap break-all`}
+                        value={u.serial_number}
+                        onChange={(e) =>
+                          setSerialUnits((units) => {
+                            const next = [...units];
+                            next[idx] = { ...next[idx], serial_number: e.target.value };
+                            return next;
+                          })
+                        }
+                        rows={2}
+                      />
+                    </div>
+                    <div>
+                      <label className={lbl}># évaporateur</label>
+                      <textarea
+                        className={`${inp} min-h-[64px] py-2 resize-y whitespace-pre-wrap break-all`}
+                        value={u.serial_evaporator}
+                        onChange={(e) =>
+                          setSerialUnits((units) => {
+                            const next = [...units];
+                            next[idx] = { ...next[idx], serial_evaporator: e.target.value };
+                            return next;
+                          })
+                        }
+                        rows={2}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {error && (
@@ -740,7 +811,6 @@ export function InstallJobsClient({
   scrollJobId,
   fetchError,
   fullDayThreshold,
-  serialBypassGlobal = false,
 }: {
   jobs: InstallJob[];
   weekIso: string;
@@ -748,8 +818,6 @@ export function InstallJobsClient({
   scrollJobId: string | null;
   fetchError: string | null;
   fullDayThreshold: number;
-  /** Bypass global activé dans les paramètres — masque les avertissements # série */
-  serialBypassGlobal?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -1033,7 +1101,7 @@ export function InstallJobsClient({
                           </p>
                         )}
 
-                        {job.missing_serial && !serialBypassGlobal && (
+                        {job.missing_serial && (
                           <p className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-800 w-fit">
                             <AlertTriangle className="size-3 shrink-0" />
                             # de série manquant

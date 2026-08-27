@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulation — Soumission A/B (deux en une)</title>
+  <style>
+    :root {
+      --navy: #1a3d6e;
+      --blue: #0d5cb6;
+      --amber: #d97706;
+      --amber-soft: #fffbeb;
+      --amber-border: #fcd34d;
+      --green: #065f46;
+      --green-bg: #ecfdf5;
+      --border: #e2e8f0;
+      --muted: #64748b;
+      --bg: #f1f5f9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: #0f172a;
+      padding: 24px;
+    }
+    h1 { font-size: 1.2rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 0.875rem; margin: 0 0 20px; max-width: 900px; }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .tab.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+
+    .panel { display: none; }
+    .panel.on { display: block; }
+
+    /* ── Concept actuel (problème) ── */
+    .old {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      max-width: 720px;
+    }
+    .old-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+    .old-tab {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      border: none;
+      cursor: default;
+    }
+    .old-tab.a { background: var(--blue); color: #fff; }
+    .old-tab.b { background: #e2e8f0; color: var(--muted); }
+    .old-fin {
+      margin-top: 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      max-width: 280px;
+      margin-left: auto;
+    }
+    .old-fin .row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      border-top: 1px solid var(--border);
+    }
+    .old-fin .row:first-child { border-top: 0; }
+    .old-fin .total { background: #0f172a; color: #fff; font-weight: 700; }
+    .old-fin .bmini {
+      margin-top: 10px;
+      border: 1px solid var(--amber-border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 0.8rem;
+      background: var(--amber-soft);
+      color: #92400e;
+    }
+    .problem {
+      margin-top: 12px;
+      font-size: 0.8rem;
+      color: #b91c1c;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    /* ── Concept proposé ── */
+    .quote-shell {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      max-width: 980px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+    }
+    .quote-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #fff, #f8fafc);
+    }
+    .brand { font-weight: 800; color: var(--navy); letter-spacing: 0.02em; }
+    .brand small { display: block; font-weight: 500; color: var(--muted); font-size: 0.75rem; margin-top: 2px; }
+    .qnum { text-align: right; }
+    .qnum .t { font-size: 1.1rem; font-weight: 800; }
+    .qnum .n { color: var(--blue); font-weight: 700; }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (max-width: 800px) {
+      .compare { grid-template-columns: 1fr; }
+    }
+    .col {
+      padding: 16px 18px 18px;
+      min-height: 320px;
+    }
+    .col.a {
+      background: #fff;
+      border-right: 1px solid var(--border);
+    }
+    .col.b {
+      background: linear-gradient(180deg, #fffbeb 0%, #fff 40%);
+    }
+    .col-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid transparent;
+    }
+    .col.a .col-head { border-bottom-color: var(--blue); }
+    .col.b .col-head { border-bottom-color: var(--amber); }
+    .col-title {
+      font-size: 1rem;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .col.a .col-title { color: var(--blue); }
+    .col.b .col-title { color: #b45309; }
+    .pill {
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .pill.a { background: #dbeafe; color: #1e40af; }
+    .pill.b { background: #fde68a; color: #92400e; }
+    .pill.ret { background: #d1fae5; color: #065f46; }
+
+    .unit {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .unit h4 {
+      margin: 0 0 6px;
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .unit .line { font-size: 0.9rem; font-weight: 700; }
+    .unit .meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+    .unit .price {
+      margin-top: 8px;
+      font-weight: 800;
+      color: var(--blue);
+      font-size: 0.95rem;
+    }
+    .col.b .unit .price { color: #b45309; }
+
+    .fin {
+      margin-top: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .fin .r {
+      display: flex;
+      justify-content: space-between;
+      padding: 7px 12px;
+      font-size: 0.82rem;
+      border-top: 1px solid var(--border);
+    }
+    .fin .r:first-child { border-top: 0; }
+    .fin .muted { color: var(--muted); }
+    .fin .big {
+      font-weight: 800;
+      font-size: 0.95rem;
+    }
+    .col.a .fin .big-row { background: var(--navy); color: #fff; }
+    .col.b .fin .big-row { background: #b45309; color: #fff; }
+    .fin .net { background: var(--green-bg); color: var(--green); font-weight: 800; }
+    .fin .due { font-weight: 700; }
+
+    .footer-legal {
+      padding: 14px 18px 18px;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.45;
+      background: #f8fafc;
+    }
+    .footer-legal .warn { color: #b91c1c; margin-top: 6px; }
+
+    .note {
+      margin-top: 18px;
+      max-width: 980px;
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 0.85rem;
+    }
+    .note ul { margin: 8px 0 0; padding-left: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Maquette — soumission « deux en une »</h1>
+  <p class="sub">
+    Compare l’approche actuelle (onglets A/B + un seul bloc financier) avec la proposition :
+    <strong>deux colonnes égales</strong>, chacune = une vraie soumission complète (équipements + totaux).
+  </p>
+
+  <div class="tabs">
+    <button class="tab on" type="button" data-panel="new">Proposition (A | B côte à côte)</button>
+    <button class="tab" type="button" data-panel="old">Actuel (pour contraste)</button>
+  </div>
+
+  <!-- PROPOSITION -->
+  <div class="panel on" id="panel-new">
+    <div class="quote-shell">
+      <div class="quote-head">
+        <div class="brand">
+          HUPPÉ RÉFRIGÉRATION
+          <small>2710 King Est, Sherbrooke · 819 566-8061</small>
+        </div>
+        <div class="qnum">
+          <div class="t">SOUMISSION</div>
+          <div class="n">N° 60012</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:4px">Client : Tremblay, Marie</div>
+        </div>
+      </div>
+
+      <div class="compare">
+        <!-- OPTION A -->
+        <div class="col a">
+          <div class="col-head">
+            <div class="col-title">Option A <span class="pill a">Principale</span></div>
+          </div>
+
+          <div class="unit">
+            <h4>Unité 1 — Salon</h4>
+            <div class="line">Midea — MAW12V1</div>
+            <div class="meta">12 000 BTU · Plage −25 °C · Garantie 10 / 10 ans</div>
+            <div class="price">6 500,00 $</div>
+          </div>
+          <div class="unit">
+            <h4>Unité 2 — Chambre</h4>
+            <div class="line">Midea — MAW09V1</div>
+            <div class="meta">9 000 BTU · Plage −25 °C</div>
+            <div class="price">3 500,00 $</div>
+          </div>
+
+          <div class="fin">
+            <div class="r muted"><span>Sous-total</span><span>10 000,00 $</span></div>
+            <div class="r muted"><span>TPS (5 %)</span><span>500,00 $</span></div>
+            <div class="r muted"><span>TVQ (9,975 %)</span><span>997,50 $</span></div>
+            <div class="r big-row big"><span>TOTAL</span><span>11 497,50 $</span></div>
+            <div class="r due"><span>Total dû</span><span>11 497,50 $</span></div>
+            <div class="r muted"><span>− Subventions (info)</span><span>−2 000,00 $</span></div>
+            <div class="r net"><span>Total net (indicatif)</span><span>9 497,50 $</span></div>
+          </div>
+        </div>
+
+        <!-- OPTION B -->
+        <div class="col b">
+          <div class="col-head">
+            <div class="col-title">Option B <span class="pill b">Alternative</span></div>
+          </div>
+
+          <div class="unit">
+            <h4>Unité 1 — Salon</h4>
+            <div class="line">Daikin — RXS12</div>
+            <div class="meta">12 000 BTU · Plage −20 °C · Garantie 12 / 12 ans</div>
+            <div class="price">7 200,00 $</div>
+          </div>
+          <div class="unit">
+            <h4>Unité 2 — Chambre</h4>
+            <div class="line">Daikin — RXS09</div>
+            <div class="meta">9 000 BTU · Plage −20 °C</div>
+            <div class="price">2 525,00 $</div>
+          </div>
+
+          <div class="fin">
+            <div class="r muted"><span>Sous-total</span><span>9 725,00 $</span></div>
+            <div class="r muted"><span>TPS (5 %)</span><span>486,25 $</span></div>
+            <div class="r muted"><span>TVQ (9,975 %)</span><span>970,07 $</span></div>
+            <div class="r big-row big"><span>TOTAL</span><span>11 181,32 $</span></div>
+            <div class="r due"><span>Total dû</span><span>11 181,32 $</span></div>
+            <div class="r muted"><span>− Subventions (info)</span><span>−1 212,00 $</span></div>
+            <div class="r net"><span>Total net (indicatif)</span><span>9 969,32 $</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-legal">
+        En acceptant la présente soumission, le client s’engage à respecter le terme de paiement à l’installation.<br />
+        <strong>Modes de paiements :</strong> Chèque, comptant, Visa, Mastercard. Financement disponible.
+        <div class="warn">
+          Un frais administratif de 40,00 $ est applicable sur tout appel de service couvert par la garantie du fabricant…
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>Idée clé :</strong> le client lit <em>deux soumissions complètes</em> côte à côte — pas un onglet qui cache l’autre.
+      <ul>
+        <li><strong>Écran édition :</strong> même layout en 2 colonnes (ou onglets seulement sur mobile).</li>
+        <li><strong>PDF :</strong> page 1 = A + totaux A ; page 2 = B + totaux B — ou une page paysage / 2 colonnes si ça tient.</li>
+        <li><strong>Après acceptation :</strong> l’option retenue a le badge vert « Retenue », l’autre « Proposition ».</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ACTUEL -->
+  <div class="panel" id="panel-old">
+    <div class="old">
+      <div class="old-tabs">
+        <div class="old-tab a">Option A</div>
+        <div class="old-tab b">Option B</div>
+      </div>
+      <div style="font-size:0.9rem;margin-bottom:8px"><strong>Unité 1</strong> — champs…</div>
+      <div style="height:80px;background:#f8fafc;border:1px dashed var(--border);border-radius:8px;margin-bottom:12px"></div>
+      <p style="font-size:0.8rem;color:var(--muted)">Financiers (un seul bloc, Option A au premier plan)</p>
+      <div class="old-fin">
+        <div class="row"><span>Sous-total</span><span>10 000,00 $</span></div>
+        <div class="row"><span>TPS / TVQ</span><span>…</span></div>
+        <div class="row total"><span>TOTAL</span><span>11 497,50 $</span></div>
+        <div class="bmini">Option B → petit résumé en dessous (facile à manquer)</div>
+      </div>
+      <div class="problem">
+        Problème : B est un 2ᵉ onglet + un mini-encadré financier. Ce n’est pas « deux soumissions », c’est une principale + une annexe.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".tab").forEach(function (b) { b.classList.remove("on"); });
+        document.querySelectorAll(".panel").forEach(function (p) { p.classList.remove("on"); });
+        btn.classList.add("on");
+        document.getElementById("panel-" + btn.dataset.panel).classList.add("on");
+      });
+    });
+  </script>
+</body>
+</html>

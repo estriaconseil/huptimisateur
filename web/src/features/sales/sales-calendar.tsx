@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addWeeks, subWeeks, format, getISODay, parse, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -8,11 +8,21 @@ import { ChevronLeft, ChevronRight, Plus, Clock, FileText, RefreshCw } from "luc
 
 import { cityFromAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SlotActionModal } from "./slot-action-modal";
 import { AppointmentActionModal } from "./appointment-action-modal";
 import { QuickProspectModal } from "./pipeline-client";
 import { FIXED_TIME_SLOTS, APPOINTMENT_DURATION_MINUTES } from "./sales-utils";
 import type { SalesPageData, AppointmentRow, BlockRow } from "./sales-utils";
+import { deleteSalespersonBlock } from "@/actions/blocks";
 
 const STATUS_COLORS: Record<string, string> = {
   scheduled: "bg-blue-50 border-blue-300 text-blue-800",
@@ -64,10 +74,14 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
   const [dialogSlot, setDialogSlot] = useState<PendingSlot>(null);
   const [activeAppt, setActiveAppt] = useState<AppointmentRow | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [blockToDelete, setBlockToDelete] = useState<BlockRow | null>(null);
+  const [blockDeleteError, setBlockDeleteError] = useState<string | null>(null);
+  const [pendingDelete, startDeleteTransition] = useTransition();
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const anyModalOpen = dialogSlot !== null || activeAppt !== null || showCreate;
+  const anyModalOpen =
+    dialogSlot !== null || activeAppt !== null || showCreate || blockToDelete !== null;
 
   useEffect(() => {
     if (anyModalOpen) {
@@ -236,9 +250,19 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                           // Créneau bloqué
                           if (block) {
                             return (
-                              <td key={date} className={cn("px-2 py-1 border-r last:border-r-0 h-14 align-middle text-center", BLOCK_COLORS[block.block_type])}>
-                                <div className="text-[10px] font-medium">{BLOCK_LABELS[block.block_type]}</div>
-                                {block.notes && <div className="text-[9px] opacity-70 truncate">{block.notes}</div>}
+                              <td key={date} className={cn("px-2 py-1 border-r last:border-r-0 h-14 align-middle text-center cursor-pointer", BLOCK_COLORS[block.block_type])}>
+                                <button
+                                  type="button"
+                                  className="w-full h-full text-center"
+                                  title="Cliquer pour retirer le blocage"
+                                  onClick={() => {
+                                    setBlockDeleteError(null);
+                                    setBlockToDelete(block);
+                                  }}
+                                >
+                                  <div className="text-[10px] font-medium">{BLOCK_LABELS[block.block_type]}</div>
+                                  {block.notes && <div className="text-[9px] opacity-70 truncate">{block.notes}</div>}
+                                </button>
                               </td>
                             );
                           }
@@ -338,6 +362,70 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
           onBooked={() => { setShowCreate(false); router.refresh(); }}
         />
       )}
+
+      <Dialog
+        open={!!blockToDelete}
+        onOpenChange={(o) => {
+          if (!o) {
+            setBlockToDelete(null);
+            setBlockDeleteError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Retirer le blocage ?</DialogTitle>
+            <DialogDescription>
+              {blockToDelete
+                ? [
+                    BLOCK_LABELS[blockToDelete.block_type] ?? "Blocage",
+                    blockToDelete.notes ? `— ${blockToDelete.notes}` : null,
+                    `(${blockToDelete.start_date}${
+                      blockToDelete.end_date !== blockToDelete.start_date
+                        ? ` → ${blockToDelete.end_date}`
+                        : ""
+                    })`,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {blockDeleteError && (
+            <p className="text-destructive text-sm">{blockDeleteError}</p>
+          )}
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={pendingDelete}
+              onClick={() => setBlockToDelete(null)}
+            >
+              Annuler
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={pendingDelete}
+              onClick={() => {
+                if (!blockToDelete) return;
+                setBlockDeleteError(null);
+                startDeleteTransition(async () => {
+                  const res = await deleteSalespersonBlock(blockToDelete.id);
+                  if (!res.ok) {
+                    setBlockDeleteError(res.message);
+                    return;
+                  }
+                  setBlockToDelete(null);
+                  router.refresh();
+                });
+              }}
+            >
+              {pendingDelete ? "…" : "Retirer le blocage"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

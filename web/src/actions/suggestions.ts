@@ -48,7 +48,7 @@ export async function getDistanceSuggestionsForJob(
   const rangeStart = weekDates[0];
   const rangeEnd = weekDates[weekDates.length - 1];
 
-  const [{ data: jobRow, error: jobErr }, { data: teams }, { data: schedRows }, { data: settingsRows }] =
+  const [{ data: jobRow, error: jobErr }, { data: teams }, { data: schedRows }, { data: settingsRows }, { data: teamBlockRows }] =
     await Promise.all([
       supabase
         .from("jobs")
@@ -69,6 +69,11 @@ export async function getDistanceSuggestionsForJob(
         .lte("scheduled_date", rangeEnd)
         .eq("status", "planned"),
       supabase.from("app_settings").select("*").limit(1).maybeSingle(),
+      supabase
+        .from("team_blocks")
+        .select("id, team_id, blocked_date, slot_type, notes, created_at")
+        .gte("blocked_date", rangeStart)
+        .lte("blocked_date", rangeEnd),
     ]);
 
   if (jobErr || !jobRow) {
@@ -168,6 +173,7 @@ export async function getDistanceSuggestionsForJob(
     jobDestination: { lat: Number(lat), lng: Number(lng) },
     office: { lat: officeLat as number, lng: officeLng as number },
     googleApiKey: apiKey,
+    teamBlocks: (teamBlockRows ?? []) as import("@/types/domain").TeamBlock[],
   });
 
   return { ok: true, suggestions };

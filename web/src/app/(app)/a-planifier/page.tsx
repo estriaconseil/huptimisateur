@@ -15,10 +15,19 @@ export type InstallJob = {
   internal_notes: string | null;
   preferred_date: string | null;
   created_at: string;
-  /** true si au moins une unité remplie n'a pas de # de série et pas de bypass individuel */
+  /** true si au moins une unité retenue n'a pas de # de série (sans bypass) */
   missing_serial: boolean;
   /** Option retenue à l'acceptation, si la soumission a été acceptée. */
   accepted_option: "a" | "b" | null;
+  quote_id: string | null;
+  quote_units: {
+    id: string;
+    brand: string | null;
+    model: string | null;
+    serial_number: string | null;
+    serial_evaporator: string | null;
+    is_alternative: boolean;
+  }[];
   clients: {
     name: string;
     phone: string | null;
@@ -53,14 +62,19 @@ type SerialUnit = {
   model: string | null;
   unit_subtotal: number | null;
   serial_number: string | null;
-  serial_bypass: boolean | null;
+  serial_evaporator: string | null;
+  is_alternative?: boolean | null;
 };
 
-function jobMissingSerial(units: SerialUnit[]): boolean {
+function jobMissingSerial(units: SerialUnit[], acceptedOption: "a" | "b" | null): boolean {
+  const accepted = acceptedOption ?? "a";
   for (const u of units) {
+    const isAlt = u.is_alternative ?? false;
+    if ((accepted === "b") !== isAlt) continue;
     const filled = !!(u.brand?.trim() || u.model?.trim() || (u.unit_subtotal ?? 0) > 0);
     if (!filled) continue;
-    if (!u.serial_bypass && !u.serial_number?.trim()) return true;
+    const hasSerial = !!(u.serial_number?.trim() || u.serial_evaporator?.trim());
+    if (!hasSerial) return true;
   }
   return false;
 }
@@ -85,14 +99,14 @@ export default async function APlanifierPage({
          clients ( name, phone, email, address_formatted, city, postal_code, lat, lng ),
          installation_addresses!installation_address_id ( address_formatted, city, postal_code, lat, lng ),
          schedules ( id, scheduled_date, slot_type, status, teams ( name ) ),
-         quotes ( accepted_option, quote_units ( brand, model, unit_subtotal, serial_number, serial_bypass ) )`
+         quotes ( id, accepted_option, quote_units ( id, brand, model, unit_subtotal, serial_number, serial_evaporator, is_alternative ) )`
       )
       .in("status", ["a_planifier", "reparti", "retour_a_faire"])
       .order("preferred_date", { ascending: true, nullsFirst: false })
       .order("created_at", { ascending: true }),
     supabase
       .from("app_settings")
-      .select("full_day_threshold_hours, serial_bypass_global")
+      .select("full_day_threshold_hours")
       .limit(1)
       .maybeSingle(),
   ]);
@@ -100,10 +114,6 @@ export default async function APlanifierPage({
   const fullDayThreshold: number =
     (settingsRow as { full_day_threshold_hours?: number | null } | null)
       ?.full_day_threshold_hours ?? DEFAULT_FULL_DAY_THRESHOLD;
-
-  const serialBypassGlobal: boolean =
-    (settingsRow as { serial_bypass_global?: boolean | null } | null)
-      ?.serial_bypass_global ?? false;
 
   const jobs: InstallJob[] = (rawJobs ?? []).map((r: unknown) => {
     const row = r as {
@@ -159,22 +169,54 @@ export default async function APlanifierPage({
         }
       : null;
 
-    // Calcul missing_serial (si bypass global actif → toujours false)
+    // Calcul missing_serial sur l'option acceptée (compresseur + évaporateur)
     let missing_serial = false;
     let accepted_option: "a" | "b" | null = null;
+    let quote_id: string | null = null;
+    let quote_units: InstallJob["quote_units"] = [];
     const quotesArr = Array.isArray(row.quotes) ? row.quotes : row.quotes ? [row.quotes] : [];
     if (quotesArr.length > 0) {
-      const latest = quotesArr[0] as { accepted_option?: "a" | "b" | null };
+      const latest = quotesArr[0] as {
+        id?: string;
+        accepted_option?: "a" | "b" | null;
+        quote_units?: unknown;
+      };
       accepted_option = latest.accepted_option ?? null;
+      quote_id = latest.id ?? null;
+      const rawUnits = latest.quote_units;
+      const unitsArr = Array.isArray(rawUnits) ? rawUnits : rawUnits ? [rawUnits] : [];
+      const accepted = accepted_option ?? "a";
+      quote_units = unitsArr
+        .filter((u) => {
+          const unit = u as { is_alternative?: boolean };
+          return (accepted === "b") === (unit.is_alternative ?? false);
+        })
+        .map((u) => {
+          const unit = u as {
+            id: string;
+            brand: string | null;
+            model: string | null;
+            serial_number: string | null;
+            serial_evaporator: string | null;
+            is_alternative: boolean;
+          };
+          return {
+            id: unit.id,
+            brand: unit.brand,
+            model: unit.model,
+            serial_number: unit.serial_number,
+            serial_evaporator: unit.serial_evaporator,
+            is_alternative: unit.is_alternative ?? false,
+          };
+        });
     }
-    if (!serialBypassGlobal) {
-      for (const q of quotesArr) {
-        const rawUnits = (q as { quote_units?: unknown }).quote_units;
-        const unitsArr = Array.isArray(rawUnits) ? rawUnits : rawUnits ? [rawUnits] : [];
-        if (jobMissingSerial(unitsArr as SerialUnit[])) {
-          missing_serial = true;
-          break;
-        }
+    for (const q of quotesArr) {
+      const qRow = q as { accepted_option?: "a" | "b" | null; quote_units?: unknown };
+      const rawUnits = qRow.quote_units;
+      const unitsArr = Array.isArray(rawUnits) ? rawUnits : rawUnits ? [rawUnits] : [];
+      if (jobMissingSerial(unitsArr as SerialUnit[], qRow.accepted_option ?? accepted_option)) {
+        missing_serial = true;
+        break;
       }
     }
 
@@ -189,6 +231,8 @@ export default async function APlanifierPage({
       created_at: row.created_at,
       missing_serial,
       accepted_option,
+      quote_id,
+      quote_units,
       clients: client,
       installation_address,
       schedule,
@@ -203,7 +247,6 @@ export default async function APlanifierPage({
       scrollJobId={openJobId ?? highlight}
       fetchError={error?.message ?? null}
       fullDayThreshold={fullDayThreshold}
-      serialBypassGlobal={serialBypassGlobal}
     />
   );
 }

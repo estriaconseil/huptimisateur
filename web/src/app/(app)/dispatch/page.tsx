@@ -33,6 +33,7 @@ export default async function DispatchPage({
         jobsForPicker={data.jobsForPicker}
         retourAFaireJobs={data.retourAFaireJobs}
         settings={data.settings}
+        teamBlocks={data.teamBlocks}
         initialSuggestJobId={typeof sp.jobId === "string" ? sp.jobId : null}
         initialSuggestFlag={sp.suggest === "1"}
       />

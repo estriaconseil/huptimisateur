@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -11,14 +12,14 @@ import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ jobId: string }>;
-  searchParams: Promise<{ print?: string; from?: string; week?: string }>;
+  searchParams: Promise<{ print?: string; from?: string; week?: string; accept?: string }>;
 };
 
 const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
 
 export default async function JobQuotePage({ params, searchParams }: Props) {
   const { jobId } = await params;
-  const { print, from, week } = await searchParams;
+  const { print, from, week, accept } = await searchParams;
   const autoPrint = print === "1";
   const supabase = await createServerSupabaseClient();
 
@@ -40,6 +41,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
     if (autoPrint) qs.set("print", "1");
     if (from) qs.set("from", from);
     if (week) qs.set("week", week);
+    if (accept === "1") qs.set("accept", "1");
     const suffix = qs.size ? `?${qs.toString()}` : "";
     redirect(`/ventes/rdv/${job.appointment_id}${suffix}`);
   }
@@ -111,29 +113,31 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
         <ScrollToQuoteActionsButton />
       </div>
 
-      <QuoteForm
-        jobId={jobId}
-        appointmentId={null}
-        quoteId={quote?.id}
-        initialQuote={quote ?? undefined}
-        initialUnits={units}
-        salespeople={salespeople}
-        nextQuoteNumber={nextQuoteNumber}
-        alreadyConverted={alreadyConverted}
-        installAddress={jobInstall?.address_formatted ?? null}
-        defaultClient={
-          quote
-            ? undefined
-            : {
-                name: client?.name ?? "",
-                phone: client?.phone ?? null,
-                email: client?.email ?? null,
-                address: client?.billing_address ?? null,
-                install_address: jobInstall?.address_formatted ?? null,
-                salesperson_id: job.salesperson_id,
-              }
-        }
-      />
+      <Suspense fallback={<div className="text-sm text-muted-foreground py-8">Chargement…</div>}>
+        <QuoteForm
+          jobId={jobId}
+          appointmentId={null}
+          quoteId={quote?.id}
+          initialQuote={quote ?? undefined}
+          initialUnits={units}
+          salespeople={salespeople}
+          nextQuoteNumber={nextQuoteNumber}
+          alreadyConverted={alreadyConverted}
+          installAddress={jobInstall?.address_formatted ?? null}
+          defaultClient={
+            quote
+              ? undefined
+              : {
+                  name: client?.name ?? "",
+                  phone: client?.phone ?? null,
+                  email: client?.email ?? null,
+                  address: client?.billing_address ?? null,
+                  install_address: jobInstall?.address_formatted ?? null,
+                  salesperson_id: job.salesperson_id,
+                }
+          }
+        />
+      </Suspense>
     </div>
   );
 }

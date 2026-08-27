@@ -13,8 +13,8 @@ export type SettingsPayload = {
   pm_start: string;
   pm_end: string;
   full_day_threshold_hours: number;
-  /** Bypass global du # de série — secrétaires et admins peuvent l'activer. */
-  serial_bypass_global: boolean;
+  /** Bases de numérotation par année, ex. {"2026":60000,"2027":70000} */
+  quote_number_bases: Record<string, number>;
 };
 
 export async function saveAppSettings(data: SettingsPayload) {
@@ -35,7 +35,7 @@ export async function saveAppSettings(data: SettingsPayload) {
     pm_start: data.pm_start,
     pm_end: data.pm_end,
     full_day_threshold_hours: data.full_day_threshold_hours,
-    serial_bypass_global: data.serial_bypass_global,
+    quote_number_bases: data.quote_number_bases,
     updated_at: new Date().toISOString(),
   };
 

@@ -4,7 +4,22 @@ import {
   type EnrichedScheduleRow,
 } from "@/services/planning/dispatch-state";
 import { slotsForNewAssignment } from "@/services/planning/slot-rules";
-import type { EstimatedDurationHours, ScheduleSlot, Team } from "@/types/domain";
+import type { EstimatedDurationHours, ScheduleSlot, Team, TeamBlock } from "@/types/domain";
+
+export function isTeamSlotBlocked(
+  blocks: TeamBlock[],
+  teamId: string,
+  date: string,
+  slot: ScheduleSlot
+): boolean {
+  for (const b of blocks) {
+    if (b.team_id !== teamId || b.blocked_date !== date) continue;
+    if (b.slot_type === "full_day") return true;
+    if (b.slot_type === slot) return true;
+    if (slot === "full_day" && (b.slot_type === "am" || b.slot_type === "pm")) return true;
+  }
+  return false;
+}
 
 export type CandidateSlot = {
   teamId: string;
@@ -22,7 +37,8 @@ export function buildAssignmentCandidates(
   teams: Team[],
   schedules: EnrichedScheduleRow[],
   estimatedHours: EstimatedDurationHours,
-  fullDayThresholdHours: number
+  fullDayThresholdHours: number,
+  teamBlocks: TeamBlock[] = []
 ): CandidateSlot[] {
   const stateMap = buildDispatchStateMap(schedules);
   const slotTypes = slotsForNewAssignment(estimatedHours, fullDayThresholdHours);
@@ -41,21 +57,23 @@ export function buildAssignmentCandidates(
 
       if (needFullDay) {
         if (!state.fullDay && state.am.kind === "free" && state.pm.kind === "free") {
-          candidates.push({
-            teamId: team.id,
-            teamName: team.name,
-            date,
-            slot: "full_day",
-          });
+          if (!isTeamSlotBlocked(teamBlocks, team.id, date, "full_day")) {
+            candidates.push({
+              teamId: team.id,
+              teamName: team.name,
+              date,
+              slot: "full_day",
+            });
+          }
         }
         continue;
       }
 
       if (!state.fullDay) {
-        if (state.am.kind === "free") {
+        if (state.am.kind === "free" && !isTeamSlotBlocked(teamBlocks, team.id, date, "am")) {
           candidates.push({ teamId: team.id, teamName: team.name, date, slot: "am" });
         }
-        if (state.pm.kind === "free") {
+        if (state.pm.kind === "free" && !isTeamSlotBlocked(teamBlocks, team.id, date, "pm")) {
           candidates.push({ teamId: team.id, teamName: team.name, date, slot: "pm" });
         }
       }

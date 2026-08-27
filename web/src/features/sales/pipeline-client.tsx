@@ -493,7 +493,7 @@ export function QuickProspectModal({
         {step === "form" && (
           <div className="px-6 pb-6 space-y-3">
             <div>
-              <label className={lbl}>Nom complet <span className="text-destructive">*</span></label>
+              <label className={lbl}>Nom complet <span className="text-destructive text-base font-bold leading-none">*</span></label>
               <input className={inp} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Marie Tremblay" autoFocus />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1018,7 +1018,7 @@ export function ProspectEditModal({
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Client</p>
               <div>
-                <label className={lbl}>Nom <span className="text-destructive normal-case">*</span></label>
+                <label className={lbl}>Nom <span className="text-destructive text-base font-bold leading-none normal-case">*</span></label>
                 <input className={inp} value={form.client_name} onChange={(e) => setForm((f) => ({ ...f, client_name: e.target.value }))} />
               </div>
               <div className="grid grid-cols-2 gap-3">

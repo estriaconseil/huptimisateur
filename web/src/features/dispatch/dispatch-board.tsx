@@ -8,7 +8,7 @@ import {
   startOfWeek,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
@@ -40,7 +40,9 @@ import {
   getDayState,
   type EnrichedScheduleRow,
 } from "@/services/planning/dispatch-state";
-import type { AppSettings, EstimatedDurationHours, ScheduleSuggestion } from "@/types/domain";
+import type { AppSettings, EstimatedDurationHours, ScheduleSuggestion, TeamBlock } from "@/types/domain";
+import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
+import { createTeamBlock, deleteTeamBlock } from "@/actions/blocks";
 import { cn } from "@/lib/utils";
 import { TravelDuration } from "@/lib/format-travel";
 import { cityFromAddress } from "@/lib/address";
@@ -65,6 +67,7 @@ type Props = {
   jobsForPicker: JobPickerRow[];
   retourAFaireJobs: RetourAFaireRow[];
   settings: AppSettings | null;
+  teamBlocks: TeamBlock[];
   initialSuggestJobId: string | null;
   initialSuggestFlag: boolean;
 };
@@ -78,6 +81,7 @@ export function DispatchBoard(props: Props) {
     jobsForPicker,
     retourAFaireJobs: _retourAFaireJobs,
     settings,
+    teamBlocks,
     initialSuggestJobId,
     initialSuggestFlag,
   } = props;
@@ -94,6 +98,11 @@ export function DispatchBoard(props: Props) {
   const [pickSearch, setPickSearch] = useState("");
   const [pickerRanked, setPickerRanked] = useState<RankedPickerJob[] | null>(null);
   const [pickerRankLoading, setPickerRankLoading] = useState(false);
+  const [blockNotes, setBlockNotes] = useState("");
+  const [blockFullDay, setBlockFullDay] = useState(false);
+  const [blockFormOpen, setBlockFormOpen] = useState(false);
+  const [blockToDelete, setBlockToDelete] = useState<TeamBlock | null>(null);
+  const [pickHelpOpen, setPickHelpOpen] = useState(false);
   const [pickerOriginLabel, setPickerOriginLabel] = useState<string | null>(null);
 
   /**
@@ -218,6 +227,56 @@ export function DispatchBoard(props: Props) {
     };
   }, [initialSuggestFlag, initialSuggestJobId, weekStartLabel]);
 
+  async function confirmBlockSlot() {
+    if (!pickTarget) return;
+    setPickError(null);
+    const otherHalfFree = (() => {
+      const state = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
+      const other = pickTarget.half === "am" ? state.pm : state.am;
+      const otherBlocked = isTeamSlotBlocked(
+        teamBlocks,
+        pickTarget.teamId,
+        pickTarget.scheduledDate,
+        pickTarget.half === "am" ? "pm" : "am"
+      );
+      return other.kind !== "busy" && !otherBlocked;
+    })();
+    const slotType =
+      blockFullDay && otherHalfFree ? "full_day" : pickTarget.half;
+
+    startTransition(async () => {
+      const res = await createTeamBlock({
+        team_id: pickTarget.teamId,
+        blocked_date: pickTarget.scheduledDate,
+        slot_type: slotType,
+        notes: blockNotes.trim() || null,
+      });
+      if (!res.ok) {
+        setPickError(res.message);
+        return;
+      }
+      setBlockFormOpen(false);
+      setPickOpen(false);
+      setPickTarget(null);
+      setBlockNotes("");
+      setBlockFullDay(false);
+      router.refresh();
+    });
+  }
+
+  async function confirmDeleteBlock() {
+    if (!blockToDelete) return;
+    startTransition(async () => {
+      const res = await deleteTeamBlock(blockToDelete.id);
+      if (!res.ok) {
+        setPickError(res.message);
+        return;
+      }
+      setBlockToDelete(null);
+      router.refresh();
+    });
+  }
+
   function openPick(teamId: string, dateStr: string, half: "am" | "pm") {
     const team = teams.find((t) => t.id === teamId);
     if (!team?.active) return;
@@ -231,6 +290,9 @@ export function DispatchBoard(props: Props) {
     setPickerRanked(null);
     setPickerRankLoading(false);
     setPickerOriginLabel(null);
+    setBlockNotes("");
+    setBlockFullDay(false);
+    setBlockFormOpen(false);
     setPickTarget({ teamId, scheduledDate: dateStr, half });
     setPickOpen(true);
 
@@ -458,6 +520,25 @@ export function DispatchBoard(props: Props) {
           </button>
           <Button
             type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            title="PDF de la semaine — texte à copier dans Excel (Ian)"
+            onClick={() => {
+              const week = weekDates[0];
+              if (!week) return;
+              window.open(
+                `/api/pdf/dispatch-semaine?week=${encodeURIComponent(week)}`,
+                "_blank",
+                "noopener,noreferrer"
+              );
+            }}
+          >
+            <FileDown className="size-3.5" />
+            Export Ian
+          </Button>
+          <Button
+            type="button"
             size="sm"
             className="gap-1.5"
             onClick={() => setNewJobOpen(true)}
@@ -543,12 +624,23 @@ export function DispatchBoard(props: Props) {
                     const state = getDayState(stateMap, team.id, dateStr);
                     const amBusy = state.am.kind === "busy" ? state.am : null;
                     const pmBusy = state.pm.kind === "busy" ? state.pm : null;
+                    const fullDayBlock =
+                      !amBusy &&
+                      !pmBusy &&
+                      teamBlocks.find(
+                        (b) =>
+                          b.team_id === team.id &&
+                          b.blocked_date === dateStr &&
+                          b.slot_type === "full_day"
+                      );
+                    const amBlocked = !amBusy && !fullDayBlock && isTeamSlotBlocked(teamBlocks, team.id, dateStr, "am");
+                    const pmBlocked = !pmBusy && !fullDayBlock && isTeamSlotBlocked(teamBlocks, team.id, dateStr, "pm");
                     /* Journée complète : un seul schedule couvre AM+PM */
                     const fullDayBusy = state.fullDay ? amBusy : null;
                     return (
                       <td key={`${team.id}-${dateStr}`} className="border border-border bg-inherit p-0 align-top">
                         {state.fullDay && fullDayBusy ? (
-                          /* ── Bloc journée complète ── */
+                          /* ── Bloc journée complète (job) ── */
                           <FullDayCell
                             labelText={fullDayBusy.label}
                             city={fullDayBusy.city}
@@ -564,6 +656,19 @@ export function DispatchBoard(props: Props) {
                               })
                             }
                           />
+                        ) : fullDayBlock ? (
+                          /* ── Blocage journée complète ── */
+                          <button
+                            type="button"
+                            className="flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left bg-orange-100 text-orange-900 hover:bg-orange-200"
+                            title="Cliquer pour retirer le blocage"
+                            onClick={() => setBlockToDelete(fullDayBlock)}
+                          >
+                            <span className="text-[10px] font-semibold uppercase opacity-80">Journée bloquée</span>
+                            <span className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight">
+                              {fullDayBlock.notes?.trim() || "Bloqué"}
+                            </span>
+                          </button>
                         ) : (
                           /* ── Deux demi-créneaux ── */
                           <div className="flex flex-col divide-y h-[104px]">
@@ -571,6 +676,11 @@ export function DispatchBoard(props: Props) {
                               label="AM"
                               teamActive={team.active}
                               occupied={!!amBusy}
+                              blocked={amBlocked}
+                              teamId={team.id}
+                              dateStr={dateStr}
+                              half="am"
+                              teamBlocks={teamBlocks}
                               fullDay={false}
                               labelText={amBusy?.label}
                               city={amBusy?.city}
@@ -578,6 +688,7 @@ export function DispatchBoard(props: Props) {
                               email={amBusy?.email}
                               missingSerial={amBusy?.missingSerial}
                               onPick={() => openPick(team.id, dateStr, "am")}
+                              onRequestDeleteBlock={setBlockToDelete}
                               onOpenDetail={
                                 amBusy
                                   ? () =>
@@ -594,6 +705,11 @@ export function DispatchBoard(props: Props) {
                               label="PM"
                               teamActive={team.active}
                               occupied={!!pmBusy}
+                              blocked={pmBlocked}
+                              teamId={team.id}
+                              dateStr={dateStr}
+                              half="pm"
+                              teamBlocks={teamBlocks}
                               fullDay={false}
                               labelText={pmBusy?.label}
                               city={pmBusy?.city}
@@ -601,6 +717,7 @@ export function DispatchBoard(props: Props) {
                               email={pmBusy?.email}
                               missingSerial={pmBusy?.missingSerial}
                               onPick={() => openPick(team.id, dateStr, "pm")}
+                              onRequestDeleteBlock={setBlockToDelete}
                               onOpenDetail={
                                 pmBusy
                                   ? () =>
@@ -627,26 +744,77 @@ export function DispatchBoard(props: Props) {
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
 
-      <Dialog open={pickOpen} onOpenChange={(o) => { setPickOpen(o); if (!o) { setPickerRanked(null); setPickerOriginLabel(null); setPickSearch(""); } }}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
+      <Dialog
+        open={pickOpen}
+        onOpenChange={(o) => {
+          setPickOpen(o);
+          if (!o) {
+            setPickerRanked(null);
+            setPickerOriginLabel(null);
+            setPickSearch("");
+            setBlockFormOpen(false);
+            setBlockNotes("");
+            setBlockFullDay(false);
+            setPickHelpOpen(false);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg flex flex-col gap-3 overflow-hidden">
+          <DialogHeader className="shrink-0 space-y-1">
             <DialogTitle>Affecter une job</DialogTitle>
-            <DialogDescription>
-              Créneau {pickTarget?.half === "am" ? "AM" : "PM"} — choisis une job à placer.
-              {(() => {
-                if (!pickTarget) return null;
+            <DialogDescription className="inline-flex items-center gap-1">
+              <span>
+                Créneau {pickTarget?.half === "am" ? "AM" : "PM"}
+                {pickTarget ? ` — ${pickTarget.scheduledDate}` : ""}
+              </span>
+              <button
+                type="button"
+                className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Aide"
+                aria-expanded={pickHelpOpen}
+                onClick={() => setPickHelpOpen((v) => !v)}
+              >
+                <CircleHelp className="size-3.5" />
+              </button>
+            </DialogDescription>
+          </DialogHeader>
+
+          {pickHelpOpen && (
+            <div className="shrink-0 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1.5">
+              <p>
+                Choisis une job à placer sur ce créneau, ou utilise{" "}
+                <strong className="text-foreground">Bloquer ce créneau</strong> pour réserver
+                la plage (ex. client multi-jours) avec un libellé.
+              </p>
+              {pickTarget && (() => {
                 const st = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
                 const adj = pickTarget.half === "pm" ? st.am : st.pm;
                 if (adj.kind === "busy") {
-                  return <span className="ml-1 text-amber-600 font-medium">L'autre demi-journée est occupée — seules les jobs de 4 h sont affichées.</span>;
+                  return (
+                    <p className="text-amber-700 dark:text-amber-400">
+                      L&apos;autre demi-journée est occupée : seules les jobs de 4 h sont proposées.
+                    </p>
+                  );
                 }
-                return null;
+                return (
+                  <p>
+                    Si l&apos;autre demi-journée est libre, tu peux cocher{" "}
+                    <strong className="text-foreground">journée complète</strong> au blocage.
+                  </p>
+                );
               })()}
-            </DialogDescription>
-          </DialogHeader>
-          {pickError && <p className="text-destructive text-sm">{pickError}</p>}
+              {pickerOriginLabel && (
+                <p>
+                  Liste triée par proximité depuis {pickerOriginLabel} (quand aucune recherche
+                  n&apos;est active).
+                </p>
+              )}
+            </div>
+          )}
 
-          <div className="relative">
+          {pickError && <p className="text-destructive text-sm shrink-0">{pickError}</p>}
+
+          <div className="relative shrink-0">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               type="search"
@@ -658,107 +826,169 @@ export function DispatchBoard(props: Props) {
             />
           </div>
 
-          {/* Indicateur de classement par proximité — masqué pendant une recherche */}
-          {!pickSearch.trim() && pickerOriginLabel && (
-            <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              {pickerRankLoading
-                ? <span className="flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" /> Classement par proximité depuis {pickerOriginLabel}…</span>
-                : <span>📍 Triées par temps de trajet depuis {pickerOriginLabel}</span>
-              }
-            </div>
-          )}
+          {/* Zone liste à hauteur fixe — évite que la modale / le champ saute au filtre */}
+          <div className="h-80 shrink-0 overflow-y-auto rounded-lg border bg-background">
+            {searchedJobsForPicker.length === 0 ? (
+              <p className="text-muted-foreground p-4 text-sm">
+                {pickSearch.trim()
+                  ? `Aucun client ne correspond à « ${pickSearch.trim()} ».`
+                  : jobsForPicker.length > 0
+                    ? "Aucune job de 4 h disponible pour ce créneau."
+                    : "Aucune job à planifier."}
+              </p>
+            ) : (
+              <ul className="space-y-1 p-2">
+                {(() => {
+                  const q = pickSearch.trim();
+                  const list = searchedJobsForPicker;
+                  const rankMap =
+                    !q && pickerRanked && pickerRanked.length > 0
+                      ? new Map(pickerRanked.map((r) => [r.id, r]))
+                      : null;
 
-          <ul className="max-h-[50vh] space-y-1 overflow-y-auto pr-1">
-            {(() => {
-              const q = pickSearch.trim();
-              const list = searchedJobsForPicker;
-              const rankMap = !q && pickerRanked && pickerRanked.length > 0
-                ? new Map(pickerRanked.map((r) => [r.id, r]))
-                : null;
+                  let orderedJobs = list;
+                  let rankedPairs: { job: (typeof list)[number]; rank: RankedPickerJob }[] = [];
 
-              let orderedJobs = list;
-              if (rankMap) {
-                const ranked = pickerRanked!
-                  .map((r) => {
-                    const job = list.find((j) => j.id === r.id);
-                    return job ? { job, rank: r } : null;
-                  })
-                  .filter((x): x is { job: typeof list[number]; rank: RankedPickerJob } => x !== null);
-                const unranked = list
-                  .filter((j) => !rankMap.has(j.id))
-                  .map((job) => ({ job, rank: null as RankedPickerJob | null }));
-                orderedJobs = [...ranked.map((x) => x.job), ...unranked.map((x) => x.job)];
-                return orderedJobs.map((job) => {
-                  const rank = ranked.find((r) => r.job.id === job.id)?.rank ?? null;
-                  return (
-                    <li key={job.id}>
-                      <button
-                        type="button"
-                        disabled={pending}
-                        className="hover:bg-accent w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
-                        onClick={() => void confirmAssign(job)}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                            {(job.installation_address?.city ?? job.clients?.city) && (
-                              <span className="text-muted-foreground block text-xs">📍 {job.installation_address?.city ?? job.clients?.city}</span>
-                            )}
-                            {job.installation_address?.address_formatted && (
-                              <span className="text-muted-foreground block text-xs truncate">{job.installation_address.address_formatted}</span>
-                            )}
-                            <span className="text-muted-foreground block text-xs">{job.estimated_duration_hours} h</span>
-                          </div>
-                          {rank && (
-                            <div className="shrink-0 text-right text-xs tabular-nums">
-                              <TravelDuration
-                                seconds={rank.durationSeconds}
-                                className="block font-medium"
-                                numberClassName="font-medium"
-                              />
+                  if (rankMap) {
+                    rankedPairs = pickerRanked!
+                      .map((r) => {
+                        const job = list.find((j) => j.id === r.id);
+                        return job ? { job, rank: r } : null;
+                      })
+                      .filter(
+                        (x): x is { job: (typeof list)[number]; rank: RankedPickerJob } =>
+                          x !== null
+                      );
+                    const unranked = list.filter((j) => !rankMap.has(j.id));
+                    orderedJobs = [...rankedPairs.map((x) => x.job), ...unranked];
+                  }
+
+                  return orderedJobs.map((job) => {
+                    const rank = rankedPairs.find((r) => r.job.id === job.id)?.rank ?? null;
+                    return (
+                      <li key={job.id}>
+                        <button
+                          type="button"
+                          disabled={pending}
+                          className="hover:bg-accent w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
+                          onClick={() => void confirmAssign(job)}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="font-medium">
+                                {job.clients?.name ?? "Sans nom"}
+                              </span>
+                              {(job.installation_address?.city ?? job.clients?.city) && (
+                                <span className="text-muted-foreground block text-xs">
+                                  📍 {job.installation_address?.city ?? job.clients?.city}
+                                </span>
+                              )}
+                              {job.installation_address?.address_formatted && (
+                                <span className="text-muted-foreground block text-xs truncate">
+                                  {job.installation_address.address_formatted}
+                                </span>
+                              )}
+                              <span className="text-muted-foreground block text-xs">
+                                {job.estimated_duration_hours} h
+                              </span>
                             </div>
-                          )}
-                        </div>
-                      </button>
-                    </li>
+                            {rank && (
+                              <div className="shrink-0 text-right text-xs tabular-nums">
+                                <TravelDuration
+                                  seconds={rank.durationSeconds}
+                                  className="block font-medium"
+                                  numberClassName="font-medium"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      </li>
+                    );
+                  });
+                })()}
+              </ul>
+            )}
+          </div>
+
+          <DialogFooter className="shrink-0 gap-2 sm:justify-between flex-col sm:flex-row">
+            {blockFormOpen ? (
+              <div className="flex w-full flex-col gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Libellé (ex. nom du client)
+                  </label>
+                  <input
+                    type="text"
+                    value={blockNotes}
+                    onChange={(e) => setBlockNotes(e.target.value)}
+                    placeholder="Ex. Tremblay — 2 jours"
+                    className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    autoFocus
+                  />
+                </div>
+                {(() => {
+                  if (!pickTarget) return null;
+                  const st = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
+                  const other = pickTarget.half === "am" ? st.pm : st.am;
+                  const otherBlocked = isTeamSlotBlocked(
+                    teamBlocks,
+                    pickTarget.teamId,
+                    pickTarget.scheduledDate,
+                    pickTarget.half === "am" ? "pm" : "am"
                   );
-                });
-              }
+                  const canFullDay = other.kind !== "busy" && !otherBlocked;
+                  return canFullDay ? (
+                    <label className="flex items-center gap-2 text-sm cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={blockFullDay}
+                        onChange={(e) => setBlockFullDay(e.target.checked)}
+                        className="rounded border-input"
+                      />
+                      Bloquer la journée complète (AM + PM)
+                    </label>
+                  ) : null;
+                })()}
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <Button type="button" variant="ghost" onClick={() => setBlockFormOpen(false)} disabled={pending}>
+                    Retour
+                  </Button>
+                  <Button type="button" onClick={() => void confirmBlockSlot()} disabled={pending}>
+                    {pending ? "…" : "Confirmer le blocage"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Button type="button" variant="outline" onClick={() => setBlockFormOpen(true)} disabled={pending}>
+                  Bloquer ce créneau
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setPickOpen(false)}>
+                  Annuler
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-              return orderedJobs.map((job) => (
-                <li key={job.id}>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    className="hover:bg-accent w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
-                    onClick={() => void confirmAssign(job)}
-                  >
-                    <span className="font-medium">{job.clients?.name ?? "Sans nom"}</span>
-                    {(job.installation_address?.city ?? job.clients?.city) && (
-                      <span className="text-muted-foreground block text-xs">📍 {job.installation_address?.city ?? job.clients?.city}</span>
-                    )}
-                    {job.installation_address?.address_formatted && (
-                      <span className="text-muted-foreground block text-xs truncate">{job.installation_address.address_formatted}</span>
-                    )}
-                    <span className="text-muted-foreground block text-xs">{job.estimated_duration_hours} h</span>
-                  </button>
-                </li>
-              ));
-            })()}
-          </ul>
-
-          {searchedJobsForPicker.length === 0 && (
-            <p className="text-muted-foreground text-sm">
-              {pickSearch.trim()
-                ? `Aucun client ne correspond à « ${pickSearch.trim()} ».`
-                : jobsForPicker.length > 0
-                  ? "Aucune job de 4 h disponible — l'autre demi-journée est déjà occupée."
-                  : "Aucune job à planifier. Utilisez le dashboard installation."}
-            </p>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPickOpen(false)}>
+      <Dialog open={!!blockToDelete} onOpenChange={(o) => { if (!o) setBlockToDelete(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Retirer le blocage ?</DialogTitle>
+            <DialogDescription>
+              {blockToDelete?.notes?.trim()
+                ? `« ${blockToDelete.notes.trim()} » — ${blockToDelete.slot_type === "full_day" ? "journée complète" : blockToDelete.slot_type.toUpperCase()} du ${blockToDelete.blocked_date}.`
+                : `Créneau ${blockToDelete?.slot_type === "full_day" ? "journée complète" : blockToDelete?.slot_type?.toUpperCase()} du ${blockToDelete?.blocked_date}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="ghost" onClick={() => setBlockToDelete(null)} disabled={pending}>
               Annuler
+            </Button>
+            <Button type="button" variant="destructive" onClick={() => void confirmDeleteBlock()} disabled={pending}>
+              {pending ? "…" : "Retirer le blocage"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1135,6 +1365,11 @@ function HalfCell(props: {
   label: string;
   teamActive: boolean;
   occupied: boolean;
+  blocked?: boolean;
+  teamId?: string;
+  dateStr?: string;
+  half?: "am" | "pm";
+  teamBlocks?: TeamBlock[];
   fullDay: boolean;
   labelText?: string;
   city?: string | null;
@@ -1142,12 +1377,18 @@ function HalfCell(props: {
   email?: string | null;
   missingSerial?: boolean;
   onPick: () => void;
+  onRequestDeleteBlock?: (block: TeamBlock) => void;
   onOpenDetail?: () => void;
 }) {
   const {
     label,
     teamActive,
     occupied,
+    blocked,
+    teamId,
+    dateStr,
+    half,
+    teamBlocks,
     fullDay,
     labelText,
     city,
@@ -1155,8 +1396,30 @@ function HalfCell(props: {
     email,
     missingSerial,
     onPick,
+    onRequestDeleteBlock,
     onOpenDetail,
   } = props;
+
+  if (blocked && teamId && dateStr && half && teamBlocks) {
+    const block = teamBlocks.find(
+      (b) => b.team_id === teamId && b.blocked_date === dateStr && (b.slot_type === half || b.slot_type === "full_day")
+    );
+    return (
+      <button
+        type="button"
+        className="flex h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left bg-orange-100 text-orange-900 hover:bg-orange-200"
+        title="Cliquer pour retirer le blocage"
+        onClick={() => {
+          if (block) onRequestDeleteBlock?.(block);
+        }}
+      >
+        <span className="text-[10px] font-semibold uppercase">{label}</span>
+        <span className="line-clamp-1 text-[11px] font-medium">
+          {block?.notes?.trim() || "Bloqué"}
+        </span>
+      </button>
+    );
+  }
 
   if (occupied || fullDay) {
     const hasContact = phone || email;

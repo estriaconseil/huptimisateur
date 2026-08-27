@@ -9,7 +9,7 @@ import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
 import { todayYmd } from "@/lib/address";
 import { stripAutofilledPostal } from "@/lib/looks-like-postal";
-import { FIXED_TIME_SLOTS } from "@/features/sales/sales-utils";
+import { FIXED_TIME_SLOTS, isSalespersonSlotBlocked } from "@/features/sales/sales-utils";
 import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
 
 /** Statuts ventes avant « Va nous rappeler » — seuls ceux-ci peuvent être promus. */
@@ -71,12 +71,13 @@ export type UnitInput = {
   tech_count: number | null;
   unit_subtotal: number;
   serial_number: string | null;
+  serial_evaporator: string | null;
+  operating_temp_c: number | null;
+  floor_mount_other: string | null;
   /** Unité faisant partie du groupe alternatif (page 2 du PDF). */
   is_alternative: boolean;
   /** Subvention spécifique à cette unité. */
   subsidy_amount: number;
-  /** Permet la répartition sans # de série pour cette unité. */
-  serial_bypass: boolean;
 };
 
 export type QuoteInput = {
@@ -255,7 +256,7 @@ export async function createQuote(
   link: { appointmentId?: string | null; jobId?: string | null },
   data: QuoteInput,
   units: UnitInput[]
-): Promise<{ ok: true; id: string } | Err> {
+): Promise<{ ok: true; id: string; quote_number: number } | Err> {
   const supabase = await createServerSupabaseClient();
   const appointmentId = link.appointmentId ?? null;
   let jobId = link.jobId ?? null;
@@ -289,10 +290,13 @@ export async function createQuote(
     return { ok: false, message: "Un rendez-vous ou un job est requis pour créer une soumission." };
   }
 
+  // Alloue le n° atomiquement à l'enregistrement (base année + incrément), pas à l'ouverture du formulaire.
+  const quoteNumber = await allocateNextQuoteNumber(supabase);
+
   const { data: quote, error: qErr } = await supabase
     .from("quotes")
     .insert({
-      quote_number: data.quote_number,
+      quote_number: quoteNumber,
       appointment_id: appointmentId,
       job_id: jobId,
       client_id: clientId,
@@ -355,13 +359,15 @@ export async function createQuote(
         cap_long2_color: stripAutofilledPostal(u.cap_long2_color) || null,
         support_type: u.support_type || null,
         floor_mount_type: u.floor_mount_type || null,
+        floor_mount_other: u.floor_mount_other || null,
+        operating_temp_c: u.operating_temp_c ?? null,
         difficulty: u.difficulty || null,
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
         serial_number: u.serial_number || null,
+        serial_evaporator: u.serial_evaporator || null,
         is_alternative: u.is_alternative ?? false,
         subsidy_amount: u.subsidy_amount ?? 0,
-        serial_bypass: u.serial_bypass ?? false,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -384,7 +390,7 @@ export async function createQuote(
   revalidatePath("/ventes/pipeline");
   if (appointmentId) revalidatePath(`/ventes/rdv/${appointmentId}`);
   if (jobId) revalidatePath(`/ventes/soumission/${jobId}`);
-  return { ok: true, id: quote.id };
+  return { ok: true, id: quote.id, quote_number: quoteNumber };
 }
 
 export async function updateQuote(
@@ -460,13 +466,15 @@ export async function updateQuote(
         cap_long2_color: stripAutofilledPostal(u.cap_long2_color) || null,
         support_type: u.support_type || null,
         floor_mount_type: u.floor_mount_type || null,
+        floor_mount_other: u.floor_mount_other || null,
+        operating_temp_c: u.operating_temp_c ?? null,
         difficulty: u.difficulty || null,
         tech_count: u.tech_count,
         unit_subtotal: u.unit_subtotal,
         serial_number: u.serial_number || null,
+        serial_evaporator: u.serial_evaporator || null,
         is_alternative: u.is_alternative ?? false,
         subsidy_amount: u.subsidy_amount ?? 0,
-        serial_bypass: u.serial_bypass ?? false,
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -697,23 +705,50 @@ export async function convertQuoteToInstallationJob(
   return { ok: true, jobId: job.id };
 }
 
-/** Récupère le prochain numéro de soumission (max existant + 1, min 30001) */
+/** Alloue (consomme) le prochain n° — uniquement à la création / duplication. */
+async function allocateNextQuoteNumber(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
+): Promise<number> {
+  const { data, error } = await supabase.rpc("get_next_quote_number");
+  if (!error && data != null) return data as number;
+
+  // Fallback si RPC absente : MAX dans la plage année + 1 (non atomique)
+  return peekNextQuoteNumber(supabase);
+}
+
+/** Aperçu sans consommer — pour afficher le N° avant la première sauvegarde. */
+async function peekNextQuoteNumber(
+  supabase: Awaited<ReturnType<typeof createServerSupabaseClient>>
+): Promise<number> {
+  const year = String(new Date().getFullYear());
+  const { data: settings } = await supabase
+    .from("app_settings")
+    .select("quote_number_bases")
+    .limit(1)
+    .maybeSingle();
+  const bases = (settings?.quote_number_bases ?? { "2026": 60000, "2027": 70000 }) as Record<
+    string,
+    number
+  >;
+  const base = bases[year] ?? 60000;
+  const ceiling = bases[String(Number(year) + 1)] ?? base + 10000;
+
+  const { data: fallback } = await supabase
+    .from("quotes")
+    .select("quote_number")
+    .gte("quote_number", base)
+    .lt("quote_number", ceiling)
+    .order("quote_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return fallback ? (fallback.quote_number as number) + 1 : base;
+}
+
+/** Aperçu du prochain n° (sans réserver) — affichage formulaire. */
 export async function getNextQuoteNumber(): Promise<number> {
   const supabase = await createServerSupabaseClient();
-  // nextval() via RPC : réserve atomiquement un numéro unique (même si deux vendeurs
-  // ouvrent la page simultanément). Le numéro est affiché en lecture seule → papier = web.
-  const { data, error } = await supabase.rpc("get_next_quote_number");
-  if (error || !data) {
-    // Fallback défensif : MAX + 1 si la fonction RPC n'existe pas encore
-    const { data: fallback } = await supabase
-      .from("quotes")
-      .select("quote_number")
-      .order("quote_number", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return fallback ? (fallback.quote_number as number) + 1 : 30001;
-  }
-  return data as number;
+  return peekNextQuoteNumber(supabase);
 }
 
 /** Trouve le prochain créneau disponible pour un vendeur (respecte les horaires par jour) */
@@ -808,6 +843,18 @@ export async function bookProspectToSlot(input: {
 
   if (input.scheduledDate < todayYmd()) {
     return { ok: false, message: "Impossible de réserver un créneau déjà passé." };
+  }
+
+  const { data: blockRows } = await supabase
+    .from("salesperson_blocks")
+    .select("salesperson_id, start_date, end_date, start_time, end_time")
+    .eq("salesperson_id", input.salespersonId)
+    .lte("start_date", input.scheduledDate)
+    .gte("end_date", input.scheduledDate);
+
+  const slotTime = input.startTime.slice(0, 5);
+  if (isSalespersonSlotBlocked(blockRows ?? [], input.salespersonId, input.scheduledDate, slotTime)) {
+    return { ok: false, message: "Ce créneau est bloqué pour ce vendeur." };
   }
 
   const client = unwrapRelation<{
@@ -1032,12 +1079,7 @@ export async function findBestSlotsForProspect(
     spQuery = spQuery.eq("id", salespersonId);
   }
 
-  const { data: salespeople } = await spQuery;
-
-  if (!salespeople?.length) return { ok: true, slots: [] };
-
   // 2. Tous les RDV dans la fenêtre (avec coordonnées), hors annulés et hors RDV exclu
-  // GPS : client_lat dénormalisé, sinon fallback installation_addresses (jamais clients/billing)
   let apptQuery = supabase
     .from("sales_appointments")
     .select(`id, salesperson_id, scheduled_date, start_time, client_lat, client_lng,
@@ -1049,7 +1091,17 @@ export async function findBestSlotsForProspect(
     .order("scheduled_date")
     .order("start_time");
 
-  const { data: rawAppts } = await apptQuery;
+  const [{ data: salespeople }, { data: rawAppts }, { data: blockRows }] = await Promise.all([
+    spQuery,
+    apptQuery,
+    supabase
+      .from("salesperson_blocks")
+      .select("salesperson_id, start_date, end_date, start_time, end_time")
+      .lte("start_date", in30Days)
+      .gte("end_date", todayStr),
+  ]);
+
+  if (!salespeople?.length) return { ok: true, slots: [] };
   const allAppts = (rawAppts ?? [])
     .filter((a) => !excludeAppointmentId || a.id !== excludeAppointmentId)
     .map((a: unknown) => {
@@ -1163,6 +1215,7 @@ export async function findBestSlotsForProspect(
         const slotTime = parse(slot, "HH:mm", base);
         if (slotTime < startTime || slotTime >= endTime) continue;
         if (occupiedTimes.has(slot)) continue;
+        if (isSalespersonSlotBlocked(blockRows ?? [], sp.id, dateStr, slot)) continue;
 
         const prevAppt = dayAppts.filter((a) => a.time < slot).at(-1);
         const nextAppt = dayAppts.find((a) => a.time > slot);
@@ -1271,7 +1324,7 @@ export async function getSlotsForWeekWithScores(
     spQuery = spQuery.eq("id", salespersonId);
   }
 
-  const [{ data: salespeople }, { data: rawWeekAppts }] = await Promise.all([
+  const [{ data: salespeople }, { data: rawWeekAppts }, { data: weekBlocks }] = await Promise.all([
     spQuery,
     supabase
       .from("sales_appointments")
@@ -1283,6 +1336,11 @@ export async function getSlotsForWeekWithScores(
       .lte("scheduled_date", weekEnd)
       .order("scheduled_date")
       .order("start_time"),
+    supabase
+      .from("salesperson_blocks")
+      .select("salesperson_id, start_date, end_date, start_time, end_time")
+      .lte("start_date", weekEnd)
+      .gte("end_date", weekDates[0]),
   ]);
 
   const weekAppts = (rawWeekAppts ?? [])
@@ -1383,6 +1441,16 @@ export async function getSlotsForWeekWithScores(
               slot,
               occupied: true,
               occupiedBy: occ.name,
+              travelSeconds: null,
+              prevLabel: "",
+            };
+          }
+
+          if (isSalespersonSlotBlocked(weekBlocks ?? [], sp.id, dateStr, slot)) {
+            return {
+              slot,
+              occupied: true,
+              occupiedBy: "Bloqué",
               travelSeconds: null,
               prevLabel: "",
             };
@@ -1676,9 +1744,11 @@ export async function duplicateQuote(
   }
 
   // 2. Créer la nouvelle soumission avec prix à zéro
+  const nextNum = await allocateNextQuoteNumber(supabase);
   const { data: newQuote, error: insertErr } = await supabase
     .from("quotes")
     .insert({
+      quote_number:            nextNum,
       client_name:             src.client_name,
       client_address:          src.client_address,
       client_work_address:     src.client_work_address,
@@ -1752,10 +1822,13 @@ export async function duplicateQuote(
         cap_long2_color:     stripAutofilledPostal(typeof u.cap_long2_color === "string" ? u.cap_long2_color : null) || null,
         support_type:        u.support_type,
         floor_mount_type:    u.floor_mount_type,
+        floor_mount_other:   u.floor_mount_other,
+        operating_temp_c:    u.operating_temp_c,
         difficulty:          u.difficulty,
         tech_count:          u.tech_count,
         is_alternative:      u.is_alternative ?? false,
-        serial_bypass:       u.serial_bypass ?? false,
+        serial_number:       u.serial_number,
+        serial_evaporator:   u.serial_evaporator,
         // PRIX REMIS À ZÉRO
         unit_subtotal:       0,
         subsidy_amount:      0,
@@ -1770,6 +1843,30 @@ export async function duplicateQuote(
   revalidatePath("/clients");
 
   return { ok: true as const, newQuoteId: newQuote.id, newQuoteNumber: newQuote.quote_number as number };
+}
+
+/** Met à jour les # de série depuis le pipeline installation. */
+export async function updateQuoteUnitSerials(
+  updates: { id: string; serial_number: string | null; serial_evaporator: string | null }[]
+): Promise<Ok | Err> {
+  const supabase = await createServerSupabaseClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return { ok: false, message: "Non authentifié" };
+
+  for (const u of updates) {
+    const { error } = await supabase
+      .from("quote_units")
+      .update({
+        serial_number: u.serial_number?.trim() || null,
+        serial_evaporator: u.serial_evaporator?.trim() || null,
+      })
+      .eq("id", u.id);
+    if (error) return { ok: false, message: error.message };
+  }
+
+  revalidatePath("/a-planifier");
+  revalidatePath("/dispatch");
+  return { ok: true };
 }
 
 /**

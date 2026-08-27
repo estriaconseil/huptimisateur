@@ -64,6 +64,24 @@ export type BlockRow = {
   notes: string | null;
 };
 
+/** Vérifie si un créneau vendeur est bloqué. */
+export function isSalespersonSlotBlocked(
+  blocks: Pick<BlockRow, "salesperson_id" | "start_date" | "end_date" | "start_time" | "end_time">[],
+  spId: string,
+  date: string,
+  slot: string
+): boolean {
+  for (const b of blocks) {
+    if (b.salesperson_id !== spId) continue;
+    if (date < b.start_date || date > b.end_date) continue;
+    if (!b.start_time || !b.end_time) return true;
+    const start = b.start_time.slice(0, 5);
+    const end = b.end_time.slice(0, 5);
+    if (slot >= start && slot < end) return true;
+  }
+  return false;
+}
+
 import type { Salesperson, SalespersonDayConfig } from "@/types/domain";
 
 export type SalespersonForCalendar = Salesperson & {
