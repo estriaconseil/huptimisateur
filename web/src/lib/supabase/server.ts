@@ -10,6 +10,10 @@ export async function createServerSupabaseClient() {
   }
 
   return createServerClient(url, key, {
+    global: {
+      // Évite le cache fetch de Next qui peut renvoyer count sans lignes.
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
     cookies: {
       getAll() {
         return cookieStore.getAll();
