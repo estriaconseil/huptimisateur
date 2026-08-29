@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
+import { haversineSeconds } from "@/lib/maps/haversine";
 import { todayYmd } from "@/lib/address";
 import { stripAutofilledPostal } from "@/lib/looks-like-postal";
 import { FIXED_TIME_SLOTS, isSalespersonSlotBlocked } from "@/features/sales/sales-utils";
@@ -1151,20 +1152,55 @@ export async function findBestSlotsForProspect(
     addPos(a.client_lat as number | null, a.client_lng as number | null, a.client_name ?? "");
   }
 
-  // 4. Appel Distance Matrix : prospect → toutes les positions (durée en secondes)
+  // 4. Distance Matrix : Google seulement si la position est un vrai voisin.
+  //    Règle : adresses RDV → Google (vrai trajet optimisable)
+  //            domicile d'un vendeur → Google seulement si ce vendeur a ≥1 RDV dans la fenêtre
+  //            domicile d'un vendeur sans RDV → Haversine (journée vide, précision suffisante)
+  const vendorWithAppts = new Set(allAppts.map((a) => a.salesperson_id));
+
+  const googleIdxSet = new Set<number>();
+  // Toutes les adresses de RDV
+  for (const a of allAppts) {
+    if (!a.client_lat || !a.client_lng) continue;
+    const idx = posMap.get(posKey(a.client_lat as number, a.client_lng as number));
+    if (idx !== undefined) googleIdxSet.add(idx);
+  }
+  // Domiciles seulement si le vendeur a des RDV
+  for (const sp of salespeople) {
+    if (!vendorWithAppts.has(sp.id)) continue;
+    if (!sp.home_lat || !sp.home_lng) continue;
+    const idx = posMap.get(posKey(sp.home_lat as number, sp.home_lng as number));
+    if (idx !== undefined) googleIdxSet.add(idx);
+  }
+
+  const googleIdxArr = Array.from(googleIdxSet);
+  const googlePosArr = googleIdxArr.map((i) => ({ lat: positions[i].lat, lng: positions[i].lng }));
+
   type SecCache = Map<number, number | null>;
   const secCache: SecCache = new Map();
 
-  if (positions.length > 0) {
+  if (googlePosArr.length > 0) {
     const metrics = await fetchDrivingMetricsFromOrigin(
       apiKey,
       { lat: prospectLat, lng: prospectLng },
-      positions.map((p) => ({ lat: p.lat, lng: p.lng }))
+      googlePosArr
     );
-    metrics.forEach((m, i) => {
-      secCache.set(i, m.seconds);
+    googleIdxArr.forEach((origIdx, newIdx) => {
+      secCache.set(origIdx, metrics[newIdx]?.seconds ?? null);
     });
   }
+
+  // Haversine pour les positions non envoyées à Google (domiciles sans RDV)
+  for (let i = 0; i < positions.length; i++) {
+    if (!secCache.has(i)) {
+      secCache.set(i, haversineSeconds({ lat: prospectLat, lng: prospectLng }, positions[i]));
+    }
+  }
+
+  console.log(
+    `[findBestSlots] ${googlePosArr.length} Google + ${positions.length - googlePosArr.length} Haversine` +
+    ` (${positions.length} positions, ${salespeople.length} vendeurs, ${allAppts.length} RDV)`
+  );
 
   const getSec = (posIdx: number): number | null => {
     if (posIdx < 0) return null;
@@ -1383,15 +1419,51 @@ export async function getSlotsForWeekWithScores(
   for (const sp of salespeople) addPos(sp.home_lat as number | null, sp.home_lng as number | null);
   for (const a of weekAppts) addPos(a.client_lat as number | null, a.client_lng as number | null);
 
+  // Google seulement pour les positions voisines réelles :
+  //   - adresses de RDV (candidats au chaînage)
+  //   - domicile d'un vendeur qui a ≥1 RDV cette semaine (peut être "prev" avant premier client)
+  //   - domicile sans RDV → Haversine (journée libre, précision suffisante)
+  const vendorWithWeekAppts = new Set(weekAppts.map((a) => a.salesperson_id));
+
+  const googleIdxSet = new Set<number>();
+  for (const a of weekAppts) {
+    if (!a.client_lat || !a.client_lng) continue;
+    const idx = posMap.get(posKey(a.client_lat as number, a.client_lng as number));
+    if (idx !== undefined) googleIdxSet.add(idx);
+  }
+  for (const sp of salespeople) {
+    if (!vendorWithWeekAppts.has(sp.id)) continue;
+    if (!sp.home_lat || !sp.home_lng) continue;
+    const idx = posMap.get(posKey(sp.home_lat as number, sp.home_lng as number));
+    if (idx !== undefined) googleIdxSet.add(idx);
+  }
+
+  const googleIdxArr = Array.from(googleIdxSet);
+  const googlePosArr = googleIdxArr.map((i) => positions[i]);
+
   const secCache = new Map<number, number | null>();
-  if (positions.length > 0) {
+  if (googlePosArr.length > 0) {
     const metrics = await fetchDrivingMetricsFromOrigin(
       apiKey,
       { lat: prospectLat, lng: prospectLng },
-      positions
+      googlePosArr
     );
-    metrics.forEach((m, i) => secCache.set(i, m.seconds));
+    googleIdxArr.forEach((origIdx, newIdx) => {
+      secCache.set(origIdx, metrics[newIdx]?.seconds ?? null);
+    });
   }
+
+  // Haversine pour les positions non envoyées à Google
+  for (let i = 0; i < positions.length; i++) {
+    if (!secCache.has(i)) {
+      secCache.set(i, haversineSeconds({ lat: prospectLat, lng: prospectLng }, positions[i]));
+    }
+  }
+
+  console.log(
+    `[getSlotsForWeek] ${googlePosArr.length} Google + ${positions.length - googlePosArr.length} Haversine` +
+    ` (${salespeople.length} vendeurs, ${weekAppts.length} RDV semaine)`
+  );
 
   const getSec = (posIdx: number): number | null => {
     if (posIdx < 0) return null;

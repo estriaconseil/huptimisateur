@@ -78,6 +78,10 @@ async function flushQueue(apiKey: string): Promise<void> {
       try {
         const metrics = await callGoogleDrivingMatrix(apiKey, origin, dests);
 
+        console.log(
+          `[DistanceCache] Google: ${dests.length} élément(s) | origine ${round4(origin.lat)},${round4(origin.lng)}`
+        );
+
         // Sauvegarder dans Supabase en arrière-plan (pas d'await bloquant)
         void saveToSupabase(supabase, origin, dests, metrics);
 
@@ -236,7 +240,12 @@ async function resolveDistance(
   // 3. Cache Supabase 14 j
   const supabase = createAdminSupabaseClient();
   const cached = await lookupSupabase(supabase, origin, dest);
-  if (cached) return cached;
+  if (cached) {
+    console.log(
+      `[DistanceCache] Supabase hit: ${round4(origin.lat)},${round4(origin.lng)} → ${round4(dest.lat)},${round4(dest.lng)}`
+    );
+    return cached;
+  }
 
   // 4. Batch Google 40ms
   return new Promise<DistanceResult>((resolve, reject) => {
