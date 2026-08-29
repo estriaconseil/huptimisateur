@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
-import { KeyRound, Pencil, Plus, Trash2, UserPlus } from "lucide-react";
+import { KeyRound, Pencil, Plus, Search, Trash2, UserPlus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,25 @@ const ROLE_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
   secretary:   "secondary",
   salesperson: "outline",
 };
+
+const ROLE_ORDER: Record<string, number> = {
+  admin: 0,
+  secretary: 1,
+  salesperson: 2,
+};
+
+function compareUsers(a: AdminUserRow, b: AdminUserRow): number {
+  const roleDiff = (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99);
+  if (roleDiff !== 0) return roleDiff;
+  return (a.full_name ?? a.email ?? "").localeCompare(
+    b.full_name ?? b.email ?? "",
+    "fr",
+  );
+}
+
+function sortUsers(users: AdminUserRow[]): AdminUserRow[] {
+  return [...users].sort(compareUsers);
+}
 
 const inp = "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const lbl = "block text-sm font-medium mb-1";
@@ -334,18 +353,61 @@ function UserRow({ user }: { user: AdminUserRow }) {
 
 export function UsersManager({ users }: { users: AdminUserRow[] }) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  const filteredUsers = useMemo(() => {
+    const sorted = sortUsers(users);
+    const q = search.trim().toLowerCase();
+    if (!q) return sorted;
+
+    return sorted.filter((u) => {
+      const haystack = [
+        u.full_name,
+        u.email,
+        ROLE_LABELS[u.role],
+        u.role,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [users, search]);
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {users.length} utilisateur{users.length !== 1 ? "s" : ""}
-        </p>
-        <Button onClick={() => setCreateOpen(true)} className="h-[38px] gap-1.5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="search"
+            placeholder="Rechercher par nom, courriel ou rôle…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Effacer la recherche"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+        </div>
+        <Button onClick={() => setCreateOpen(true)} className="h-[38px] shrink-0 gap-1.5">
           <Plus className="size-4" />
           Créer un utilisateur
         </Button>
       </div>
+
+      <p className="text-sm text-muted-foreground">
+        {filteredUsers.length === users.length
+          ? `${users.length} utilisateur${users.length !== 1 ? "s" : ""}`
+          : `${filteredUsers.length} sur ${users.length} utilisateur${users.length !== 1 ? "s" : ""}`}
+      </p>
 
       {users.length === 0 && (
         <div className="rounded-xl border border-dashed p-12 text-center text-muted-foreground">
@@ -353,7 +415,14 @@ export function UsersManager({ users }: { users: AdminUserRow[] }) {
         </div>
       )}
 
-      {users.map((u) => (
+      {users.length > 0 && filteredUsers.length === 0 && (
+        <div className="rounded-xl border border-dashed p-12 text-center text-muted-foreground">
+          <p className="font-medium">Aucun résultat</p>
+          <p className="mt-1 text-sm">Essayez un autre nom, courriel ou rôle.</p>
+        </div>
+      )}
+
+      {filteredUsers.map((u) => (
         <UserRow key={u.id} user={u} />
       ))}
 

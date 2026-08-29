@@ -15,10 +15,22 @@ export default async function UtilisateursPage() {
   const supabase = await createServerSupabaseClient();
   const { data } = await supabase
     .from("profiles")
-    .select("id, email, full_name, role, created_at")
-    .order("created_at", { ascending: true });
+    .select("id, email, full_name, role, created_at");
 
-  const users = (data ?? []) as AdminUserRow[];
+  const ROLE_ORDER: Record<string, number> = {
+    admin: 0,
+    secretary: 1,
+    salesperson: 2,
+  };
+
+  const users = ((data ?? []) as AdminUserRow[]).sort((a, b) => {
+    const roleDiff = (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99);
+    if (roleDiff !== 0) return roleDiff;
+    return (a.full_name ?? a.email ?? "").localeCompare(
+      b.full_name ?? b.email ?? "",
+      "fr",
+    );
+  });
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
