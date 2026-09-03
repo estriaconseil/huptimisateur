@@ -288,7 +288,7 @@ function NewClientTab({
     }
 
     setStep("loading");
-    const res = await findBestSlotsForProspect(form.install_lat, form.install_lng);
+    const res = await findBestSlotsForProspect(form.install_lat, form.install_lng, 10, undefined, undefined, form.install_city || null);
     if (!res.ok) { setError(res.message); setStep("form"); return; }
     setSlots(res.slots);
     setStep("slots");
@@ -319,7 +319,7 @@ function NewClientTab({
 
     const lat = res.installLat ?? form.install_lat!;
     const lng = res.installLng ?? form.install_lng!;
-    const slotsRes = await findBestSlotsForProspect(lat, lng);
+    const slotsRes = await findBestSlotsForProspect(lat, lng, 10, undefined, undefined, form.install_city || null);
     if (!slotsRes.ok) { setError(slotsRes.message); setStep("intercept"); return; }
     setSlots(slotsRes.slots);
     setStep("slots");
@@ -581,6 +581,9 @@ function NewClientTab({
               <div className="flex-1 min-w-0">
                 <div className="font-medium capitalize">{s.dateFormatted} · {s.start_time}</div>
                 <div className="text-xs text-muted-foreground truncate">{s.context}</div>
+                {s.prospect_city && (
+                  <div className="text-xs font-medium text-primary truncate">{s.prospect_city}</div>
+                )}
               </div>
               <div className="shrink-0 text-right">
                 <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>

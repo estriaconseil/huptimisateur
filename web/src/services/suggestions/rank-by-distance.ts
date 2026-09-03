@@ -1,22 +1,25 @@
 /**
  * Classement des créneaux par distance depuis le bureau (ou un voisin de journée).
  *
- * Règle : Google Distance Matrix seulement si le créneau a un voisin (job adjacent
- * dans la même journée). Sinon → Haversine gratuit, précision suffisante.
- *
- * Logique :
- *   resolveOriginLatLng() retourne soit l'adresse d'un job voisin (AM→PM ou PM→AM),
- *   soit le bureau si la journée est libre. On détecte le cas « bureau » par
- *   comparaison de coordonnées (sameCoords) et on utilise Haversine pour ces slots.
+ * Règle :
+ *   1. Jour libre (origine = bureau) → Haversine gratuit
+ *   2. Jour avec voisin → Haversine pré-filtre, top N → Google, reste → Haversine
  */
 
 import { fetchDrivingMetricsBatch } from "@/lib/maps/distance-matrix";
-import { haversineMeters, haversineSeconds, sameCoords } from "@/lib/maps/haversine";
+import {
+  haversineMeters,
+  haversineSeconds,
+  pickClosestByHaversine,
+  sameCoords,
+} from "@/lib/maps/haversine";
 import { buildAssignmentCandidates, resolveOriginLatLng } from "@/services/suggestions/build-candidates";
 import type { EnrichedScheduleRow } from "@/services/planning/dispatch-state";
 import type { EstimatedDurationHours, ScheduleSuggestion, Team, TeamBlock } from "@/types/domain";
 
 const BATCH = 25;
+/** Max d'éléments Distance Matrix par optimisation dispatch (préfiltre Haversine). */
+const GOOGLE_TOP_N = 10;
 
 export async function rankScheduleSuggestions(input: {
   weekDates: string[];
@@ -45,18 +48,30 @@ export async function rankScheduleSuggestions(input: {
     origin: resolveOriginLatLng(c, input.schedules, input.office),
   }));
 
-  // Séparer : voisin réel (Google) vs bureau seul (Haversine gratuit)
-  const googleCandidates = withOrigins.filter((x) => !sameCoords(x.origin, input.office));
-  const haversineCandidates = withOrigins.filter((x) => sameCoords(x.origin, input.office));
+  // Séparer : voisin réel vs bureau seul
+  const neighborCandidates = withOrigins.filter((x) => !sameCoords(x.origin, input.office));
+  const officeCandidates = withOrigins.filter((x) => sameCoords(x.origin, input.office));
+
+  // Parmi les voisins : top N Haversine → Google, reste → Haversine
+  const neighborOrigins = neighborCandidates.map((x) => x.origin);
+  const closestLocal = pickClosestByHaversine(
+    input.jobDestination,
+    neighborOrigins,
+    GOOGLE_TOP_N
+  );
+  const closestSet = new Set(closestLocal);
+  const googleCandidates = closestLocal.map((i) => neighborCandidates[i]);
+  const neighborHaversine = neighborCandidates.filter((_, i) => !closestSet.has(i));
 
   console.log(
-    `[RankByDistance] ${googleCandidates.length} Google + ${haversineCandidates.length} Haversine` +
-    ` (total candidats: ${withOrigins.length})`
+    `[RankByDistance] ${googleCandidates.length} Google (top Haversine/${neighborCandidates.length} voisins) + ` +
+      `${neighborHaversine.length + officeCandidates.length} Haversine` +
+      ` (total candidats: ${withOrigins.length})`
   );
 
   const results: ScheduleSuggestion[] = [];
 
-  // ── Google : slots avec voisin dans la journée ────────────────────────────
+  // ── Google : top N voisins les plus proches (vol d'oiseau) ────────────────
   for (let i = 0; i < googleCandidates.length; i += BATCH) {
     const chunk = googleCandidates.slice(i, i + BATCH);
     const origins = chunk.map((x) => x.origin);
@@ -79,12 +94,23 @@ export async function rankScheduleSuggestions(input: {
     });
   }
 
+  // ── Haversine : voisins hors top N ─────────────────────────────────────────
+  for (const item of neighborHaversine) {
+    results.push({
+      teamId: item.candidate.teamId,
+      teamName: item.candidate.teamName,
+      date: item.candidate.date,
+      slot: item.candidate.slot,
+      distanceMeters: Math.round(haversineMeters(item.origin, input.jobDestination)),
+      durationSeconds: haversineSeconds(item.origin, input.jobDestination),
+    });
+  }
+
   // ── Haversine : slots sur journée sans voisin (départ bureau) ─────────────
-  // Toutes ces origines === bureau → même distance vers la destination.
   const haversineSec = haversineSeconds(input.office, input.jobDestination);
   const haversineM = Math.round(haversineMeters(input.office, input.jobDestination));
 
-  for (const item of haversineCandidates) {
+  for (const item of officeCandidates) {
     results.push({
       teamId: item.candidate.teamId,
       teamName: item.candidate.teamName,

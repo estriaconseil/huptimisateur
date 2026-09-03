@@ -1,6 +1,11 @@
 "use server";
 
 import { fetchDrivingMetricsBatch } from "@/lib/maps/distance-matrix";
+import {
+  haversineMeters,
+  haversineSeconds,
+  pickClosestByHaversine,
+} from "@/lib/maps/haversine";
 
 export type RankedPickerJob = {
   id: string;
@@ -8,9 +13,12 @@ export type RankedPickerJob = {
   durationSeconds: number | null;
 };
 
+/** Max d'éléments Distance Matrix pour le picker (préfiltre Haversine). */
+const GOOGLE_TOP_N = 25;
+
 /**
  * Classe une liste de jobs par distance depuis un point d'origine.
- * Utilise la Distance Matrix Google (1 origine → N destinations).
+ * Préfiltre Haversine → top N → Google ; le reste reste en Haversine.
  * La distance A→B ≈ B→A en conduite, donc on passe les jobs comme origines
  * et l'origine existante comme destination unique (même résultat, API identique).
  */
@@ -27,23 +35,46 @@ export async function rankJobsFromOrigin(
 
   if (withCoords.length === 0) return { ok: true, ranked: [] };
 
-  let metrics: Awaited<ReturnType<typeof fetchDrivingMetricsBatch>>;
-  try {
-    metrics = await fetchDrivingMetricsBatch(
-      apiKey,
-      withCoords.map((j) => ({ lat: j.lat, lng: j.lng })),
-      origin
-    );
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Erreur Distance Matrix";
-    return { ok: false, message: msg };
+  const coords = withCoords.map((j) => ({ lat: j.lat, lng: j.lng }));
+  const closestLocal = pickClosestByHaversine(origin, coords, GOOGLE_TOP_N);
+  const closestSet = new Set(closestLocal);
+  const googleJobs = closestLocal.map((i) => withCoords[i]);
+  const haversineJobs = withCoords.filter((_, i) => !closestSet.has(i));
+
+  console.log(
+    `[rankJobsFromOrigin] ${googleJobs.length} Google (top Haversine/${withCoords.length} jobs) + ` +
+      `${haversineJobs.length} Haversine`
+  );
+
+  const ranked: RankedPickerJob[] = [];
+
+  if (googleJobs.length > 0) {
+    try {
+      const metrics = await fetchDrivingMetricsBatch(
+        apiKey,
+        googleJobs.map((j) => ({ lat: j.lat, lng: j.lng })),
+        origin
+      );
+      googleJobs.forEach((j, i) => {
+        ranked.push({
+          id: j.id,
+          distanceMeters: metrics[i]?.meters ?? null,
+          durationSeconds: metrics[i]?.seconds ?? null,
+        });
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Erreur Distance Matrix";
+      return { ok: false, message: msg };
+    }
   }
 
-  const ranked: RankedPickerJob[] = withCoords.map((j, i) => ({
-    id: j.id,
-    distanceMeters: metrics[i]?.meters ?? null,
-    durationSeconds: metrics[i]?.seconds ?? null,
-  }));
+  for (const j of haversineJobs) {
+    ranked.push({
+      id: j.id,
+      distanceMeters: Math.round(haversineMeters({ lat: j.lat, lng: j.lng }, origin)),
+      durationSeconds: haversineSeconds({ lat: j.lat, lng: j.lng }, origin),
+    });
+  }
 
   ranked.sort((a, b) => {
     if (a.durationSeconds == null && b.durationSeconds == null) {

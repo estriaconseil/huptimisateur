@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useTransition } from "react";
+import React, { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { addWeeks, subWeeks, format, getISODay, parse, parseISO } from "date-fns";
+import { addWeeks, format, getISODay, parse, parseISO, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Plus, Clock, FileText, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, FileText, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 
+import { searchSalesAppointments, type SalesAppointmentSearchHit } from "@/actions/sales";
 import { cityFromAddress } from "@/lib/address";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -69,7 +70,13 @@ type PendingSlot = { salesperson_id: string; salesperson_name: string; date: str
 
 const AUTO_REFRESH_MS = 2 * 60 * 1000;
 
-export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: Date }) {
+type Props = {
+  data: SalesPageData;
+  weekStartLabel: string;
+  highlightAppointmentId?: string | null;
+};
+
+export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: Props) {
   const router = useRouter();
   const [dialogSlot, setDialogSlot] = useState<PendingSlot>(null);
   const [activeAppt, setActiveAppt] = useState<AppointmentRow | null>(null);
@@ -77,11 +84,39 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
   const [blockToDelete, setBlockToDelete] = useState<BlockRow | null>(null);
   const [blockDeleteError, setBlockDeleteError] = useState<string | null>(null);
   const [pendingDelete, startDeleteTransition] = useTransition();
-  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [refreshTimeLabel, setRefreshTimeLabel] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<SalesAppointmentSearchHit[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(highlightAppointmentId ?? null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const anyModalOpen =
     dialogSlot !== null || activeAppt !== null || showCreate || blockToDelete !== null;
+
+  useEffect(() => {
+    setHighlightId(highlightAppointmentId ?? null);
+  }, [highlightAppointmentId]);
+
+  useEffect(() => {
+    setRefreshTimeLabel(format(new Date(), "HH:mm"));
+  }, []);
+
+  const navigateToMonday = useCallback(
+    (mondayDate: Date) => {
+      const iso = format(startOfWeek(mondayDate, { weekStartsOn: 1 }), "yyyy-MM-dd");
+      router.push(`/ventes?week=${encodeURIComponent(iso)}`);
+    },
+    [router],
+  );
+
+  const shiftWeek = useCallback(
+    (delta: number) => {
+      navigateToMonday(addWeeks(parseISO(weekStartLabel), delta));
+    },
+    [weekStartLabel, navigateToMonday],
+  );
 
   useEffect(() => {
     if (anyModalOpen) {
@@ -91,12 +126,48 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
     intervalRef.current = setInterval(() => {
       setRefreshing(true);
       router.refresh();
-      setLastRefresh(new Date());
+      setRefreshTimeLabel(format(new Date(), "HH:mm"));
       setTimeout(() => setRefreshing(false), 800);
     }, AUTO_REFRESH_MS);
 
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
   }, [anyModalOpen, router]);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (q.length < 2) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    setSearchLoading(true);
+    searchDebounceRef.current = setTimeout(() => {
+      void searchSalesAppointments(q).then((res) => {
+        setSearchLoading(false);
+        if (res.ok) setSearchResults(res.results);
+        else setSearchResults([]);
+      });
+    }, 300);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [search]);
+
+  const handleSearchSelect = (hit: SalesAppointmentSearchHit) => {
+    setSearch("");
+    setSearchResults([]);
+    setHighlightId(hit.id);
+    const weekMonday = format(
+      startOfWeek(parseISO(hit.scheduled_date), { weekStartsOn: 1 }),
+      "yyyy-MM-dd",
+    );
+    router.push(
+      `/ventes?week=${encodeURIComponent(weekMonday)}&highlight=${encodeURIComponent(hit.id)}`,
+    );
+  };
 
   const { salespeople, appointments, blocks, weekDates } = data;
 
@@ -106,17 +177,66 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
     apptBySlot.set(slotKey(a.scheduled_date, a.start_time, a.salesperson_id), a);
   }
 
-  const prevWeek = () =>
-    router.push(`/ventes?week=${format(subWeeks(monday, 1), "yyyy-MM-dd")}`);
-  const nextWeek = () =>
-    router.push(`/ventes?week=${format(addWeeks(monday, 1), "yyyy-MM-dd")}`);
+  const prevWeek = () => shiftWeek(-1);
+  const nextWeek = () => shiftWeek(1);
 
   const DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
   return (
     <>
-      {/* Navigation semaine */}
-      <div className="mb-4 flex items-center gap-3 flex-wrap">
+      <div className="mb-4 flex flex-col gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="search"
+            placeholder="Rechercher client, ville, téléphone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-9 w-full rounded-lg border border-input bg-background pl-9 pr-9 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          {searchLoading && (
+            <Loader2 className="absolute right-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
+          {!searchLoading && search && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearch("");
+                setSearchResults([]);
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Effacer la recherche"
+            >
+              <X className="size-4" />
+            </button>
+          )}
+          {searchResults.length > 0 && (
+            <div className="absolute z-50 mt-1 max-h-64 w-full overflow-auto rounded-lg border bg-background shadow-lg">
+              {searchResults.map((hit) => (
+                <button
+                  key={hit.id}
+                  type="button"
+                  onClick={() => handleSearchSelect(hit)}
+                  className="flex w-full flex-col gap-0.5 border-b px-3 py-2 text-left text-sm last:border-b-0 hover:bg-muted/60"
+                >
+                  <span className="font-medium">{hit.client_name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {format(parseISO(hit.scheduled_date), "EEE d MMM yyyy", { locale: fr })} ·{" "}
+                    {hit.start_time} · {hit.salesperson_name}
+                    {hit.client_city ? ` · ${hit.client_city}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {search.trim().length >= 2 && !searchLoading && searchResults.length === 0 && (
+            <div className="absolute z-50 mt-1 w-full rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground shadow-lg">
+              Aucun rendez-vous trouvé (4 dernières semaines + futur).
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
         <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Semaine précédente">
           <ChevronLeft className="size-5" />
         </button>
@@ -128,14 +248,19 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
         </button>
         <div className="ml-auto flex items-center gap-2">
           <button
-            onClick={() => { setRefreshing(true); router.refresh(); setLastRefresh(new Date()); setTimeout(() => setRefreshing(false), 800); }}
+            onClick={() => {
+              setRefreshing(true);
+              router.refresh();
+              setRefreshTimeLabel(format(new Date(), "HH:mm"));
+              setTimeout(() => setRefreshing(false), 800);
+            }}
             className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
             title="Rafraîchir maintenant"
           >
             <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
-            <span className="hidden sm:inline">
-              {format(lastRefresh, "HH:mm")}
-            </span>
+            {refreshTimeLabel && (
+              <span className="hidden sm:inline">{refreshTimeLabel}</span>
+            )}
           </button>
           <button
             onClick={() => setShowCreate(true)}
@@ -144,6 +269,7 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
             <Plus className="size-4" />
             Nouveau prospect
           </button>
+        </div>
         </div>
       </div>
 
@@ -280,6 +406,7 @@ export function SalesCalendar({ data, monday }: { data: SalesPageData; monday: D
                                   onClick={() => setActiveAppt(appt)}
                                   className={cn(
                                     "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
+                                    highlightId === appt.id && "ring-2 ring-primary ring-offset-1",
                                     appt.quote_id
                                       ? "bg-emerald-50 border-emerald-300 text-emerald-900"
                                       : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")

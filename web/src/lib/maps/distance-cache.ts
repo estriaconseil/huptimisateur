@@ -7,6 +7,7 @@
  */
 
 import { createAdminSupabaseClient } from "@/lib/supabase/admin";
+import { haversineMeters, haversineSeconds } from "@/lib/maps/haversine";
 import { withTtlCache } from "@/lib/maps/ttl-cache";
 
 // ─── Config ──────────────────────────────────────────────────────────────────
@@ -16,6 +17,22 @@ const TTL_SUPABASE_DAYS = 14;         // 14 jours — persiste en DB
 const BATCH_DELAY_MS = 40;            // délai de regroupement avant appel Google
 const GOOGLE_BATCH_SIZE = 25;         // limite API Distance Matrix
 const PRECISION = 4;                  // décimales lat/lng (~11 m)
+const COST_PER_ELEMENT_USD = 5 / 1000; // Distance Matrix Essentials (~5 $ / 1000 éléments)
+
+const DRY_RUN =
+  process.env.DISTANCE_MATRIX_DRY_RUN === "true" ||
+  process.env.DISTANCE_MATRIX_DRY_RUN === "1";
+const DRY_RUN_IGNORE_CACHE =
+  process.env.DISTANCE_MATRIX_DRY_RUN_IGNORE_CACHE === "true" ||
+  process.env.DISTANCE_MATRIX_DRY_RUN_IGNORE_CACHE === "1";
+
+/** Compteurs cumulés pour la session serveur (réinitialisés au redémarrage). */
+const dryRunStats = {
+  elements: 0,
+  httpRequests: 0,
+  supabaseHits: 0,
+  memoryHits: 0,
+};
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -35,6 +52,48 @@ function round4(n: number): number {
 
 function cacheKey(origin: LatLng, dest: LatLng): string {
   return `dm:${round4(origin.lat)},${round4(origin.lng)}=>${round4(dest.lat)},${round4(dest.lng)}`;
+}
+
+function fmtLatLng(p: LatLng): string {
+  return `${round4(p.lat)},${round4(p.lng)}`;
+}
+
+function buildGoogleMatrixUrl(origin: LatLng, dests: LatLng[], apiKey: string): string {
+  const fmt = (p: LatLng) => `${p.lat},${p.lng}`;
+  return (
+    `https://maps.googleapis.com/maps/api/distancematrix/json` +
+    `?units=metric&mode=driving` +
+    `&origins=${encodeURIComponent(fmt(origin))}` +
+    `&destinations=${encodeURIComponent(dests.map(fmt).join("|"))}` +
+    `&key=${encodeURIComponent(apiKey)}`
+  );
+}
+
+function logDryRunBatch(origin: LatLng, dests: LatLng[], apiKey: string): void {
+  dryRunStats.elements += dests.length;
+  dryRunStats.httpRequests += 1;
+
+  const url = buildGoogleMatrixUrl(origin, dests, apiKey).replace(apiKey, "***REDACTED***");
+  const costUsd = dryRunStats.elements * COST_PER_ELEMENT_USD;
+
+  console.log(
+    `[DistanceCache][DRY-RUN] Batch simulé: ${dests.length} élément(s) | 1 requête HTTP`
+  );
+  console.log(`  origine: ${fmtLatLng(origin)}`);
+  console.log(`  destinations (${dests.length}): ${dests.map(fmtLatLng).join(" | ")}`);
+  console.log(`  URL (clé masquée): ${url}`);
+  console.log(
+    `[DistanceCache][DRY-RUN] Total session: ${dryRunStats.elements} élément(s) | ` +
+      `${dryRunStats.httpRequests} requête(s) HTTP | ~$${costUsd.toFixed(4)} USD | ` +
+      `${dryRunStats.supabaseHits} cache Supabase | ${dryRunStats.memoryHits} cache mémoire`
+  );
+}
+
+function simulateGoogleMetrics(origin: LatLng, dests: LatLng[]): Array<{ meters: number | null; seconds: number | null }> {
+  return dests.map((dest) => ({
+    meters: Math.round(haversineMeters(origin, dest)),
+    seconds: haversineSeconds(origin, dest),
+  }));
 }
 
 // ─── Batch queue ─────────────────────────────────────────────────────────────
@@ -76,21 +135,24 @@ async function flushQueue(apiKey: string): Promise<void> {
       const dests = chunk.map((e) => e.dest);
 
       try {
-        const metrics = await callGoogleDrivingMatrix(apiKey, origin, dests);
+        const metrics = DRY_RUN
+          ? (logDryRunBatch(origin, dests, apiKey), simulateGoogleMetrics(origin, dests))
+          : await callGoogleDrivingMatrix(apiKey, origin, dests);
 
-        console.log(
-          `[DistanceCache] Google: ${dests.length} élément(s) | origine ${round4(origin.lat)},${round4(origin.lng)}`
-        );
-
-        // Sauvegarder dans Supabase en arrière-plan (pas d'await bloquant)
-        void saveToSupabase(supabase, origin, dests, metrics);
+        if (!DRY_RUN) {
+          console.log(
+            `[DistanceCache] Google: ${dests.length} élément(s) | origine ${round4(origin.lat)},${round4(origin.lng)}`
+          );
+          // Sauvegarder dans Supabase en arrière-plan (pas d'await bloquant)
+          void saveToSupabase(supabase, origin, dests, metrics);
+        }
 
         chunk.forEach((entry, j) => {
           const m = metrics[j];
           entry.resolve({
             meters: m?.meters ?? null,
             seconds: m?.seconds ?? null,
-            source: "google",
+            source: DRY_RUN ? "disabled" : "google",
           });
         });
       } catch (err) {
@@ -110,15 +172,7 @@ async function callGoogleDrivingMatrix(
   origin: LatLng,
   dests: LatLng[]
 ): Promise<Array<{ meters: number | null; seconds: number | null }>> {
-  const fmt = (p: LatLng) => `${p.lat},${p.lng}`;
-  const url =
-    `https://maps.googleapis.com/maps/api/distancematrix/json` +
-    `?units=metric&mode=driving` +
-    `&origins=${encodeURIComponent(fmt(origin))}` +
-    `&destinations=${encodeURIComponent(dests.map(fmt).join("|"))}` +
-    `&key=${encodeURIComponent(apiKey)}`;
-
-  const res = await fetch(url);
+  const res = await fetch(buildGoogleMatrixUrl(origin, dests, apiKey));
   const data = (await res.json()) as {
     status: string;
     error_message?: string;
@@ -215,8 +269,9 @@ export async function getDistance(
 ): Promise<DistanceResult> {
   const key = cacheKey(origin, dest);
 
-  // 1. Cache mémoire 5 s
-  return withTtlCache<DistanceResult>(key, TTL_MEMORY_MS, async () => {
+  // 1. Cache mémoire 5 s (sauf dry-run « premier appel »)
+  const memoryTtl = DRY_RUN && DRY_RUN_IGNORE_CACHE ? 0 : TTL_MEMORY_MS;
+  return withTtlCache<DistanceResult>(key, memoryTtl, async () => {
     // 2. Pending map — partage la Promise si un appel identique est déjà en cours
     const inFlight = pending.get(key);
     if (inFlight) return inFlight;
@@ -237,14 +292,17 @@ async function resolveDistance(
   dest: LatLng,
   key: string
 ): Promise<DistanceResult> {
-  // 3. Cache Supabase 14 j
-  const supabase = createAdminSupabaseClient();
-  const cached = await lookupSupabase(supabase, origin, dest);
-  if (cached) {
-    console.log(
-      `[DistanceCache] Supabase hit: ${round4(origin.lat)},${round4(origin.lng)} → ${round4(dest.lat)},${round4(dest.lng)}`
-    );
-    return cached;
+  // 3. Cache Supabase 14 j (sauf dry-run « premier appel »)
+  if (!(DRY_RUN && DRY_RUN_IGNORE_CACHE)) {
+    const supabase = createAdminSupabaseClient();
+    const cached = await lookupSupabase(supabase, origin, dest);
+    if (cached) {
+      if (DRY_RUN) dryRunStats.supabaseHits += 1;
+      console.log(
+        `[DistanceCache] Supabase hit: ${round4(origin.lat)},${round4(origin.lng)} → ${round4(dest.lat)},${round4(dest.lng)}`
+      );
+      return cached;
+    }
   }
 
   // 4. Batch Google 40ms
@@ -284,4 +342,18 @@ export async function getDistanceFromOrigin(
 ): Promise<DistanceResult[]> {
   if (dests.length === 0) return [];
   return Promise.all(dests.map((d) => getDistance(apiKey, origin, d)));
+}
+
+/**
+ * Lookup cache Supabase uniquement (pas d'appel Google en cas de miss).
+ * Retourne null pour chaque paire absente du cache.
+ * Utilisé par getSlotsForWeekWithScores : Haversine en fallback côté appelant.
+ */
+export async function getDistanceFromOriginCacheOnly(
+  origin: LatLng,
+  dests: LatLng[]
+): Promise<Array<DistanceResult | null>> {
+  if (dests.length === 0) return [];
+  const supabase = createAdminSupabaseClient();
+  return Promise.all(dests.map((d) => lookupSupabase(supabase, origin, d)));
 }

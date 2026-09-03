@@ -318,6 +318,10 @@ export interface QuoteUnit {
   is_alternative: boolean;
   /** Montant de subvention applicable à cette unité spécifique. */
   subsidy_amount: number;
+  /** Rabais / promotion avant taxes (demande Stéphane, août 2026). */
+  discount_amount: number;
+  /** Options montage cochées (multi-sélection). */
+  mount_options: string[];
   /** Permet de répartir sans avoir saisi le # de série pour cette unité. */
   serial_bypass: boolean;
 }

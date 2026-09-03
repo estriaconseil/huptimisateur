@@ -394,7 +394,7 @@ export function QuickProspectModal({
       setCreatedJobId(jobId);
       setStep("loading-slots");
       const filterSp = form.salesperson_locked ? (form.salesperson_id || null) : null;
-      const res = await findBestSlotsForProspect(form.install_lat!, form.install_lng!, 10, filterSp);
+      const res = await findBestSlotsForProspect(form.install_lat!, form.install_lng!, 10, filterSp, undefined, form.install_city || null);
       if (!res.ok) { setError(res.message); setStep("form"); return; }
       setSlots(res.slots);
       setStep("slots");
@@ -434,7 +434,7 @@ export function QuickProspectModal({
       setCreatedJobId(res.jobId);
       setStep("loading-slots");
       const filterSp = form.salesperson_locked ? (form.salesperson_id || null) : null;
-      const slotsRes = await findBestSlotsForProspect(lat, lng, 10, filterSp);
+      const slotsRes = await findBestSlotsForProspect(lat, lng, 10, filterSp, undefined, form.install_city || null);
       if (!slotsRes.ok) { setError(slotsRes.message); setStep("intercept"); return; }
       setSlots(slotsRes.slots);
       setStep("slots");
@@ -945,7 +945,8 @@ export function ProspectEditModal({
         form.install_lng!,
         10,
         optimizationSalespersonFilter(form.salesperson_locked, form.salesperson_id || null),
-        job.appointment_id
+        job.appointment_id,
+        form.install_city || null,
       );
       if (!res.ok) { setError(res.message); setStep("edit"); return; }
       setSlots(res.slots);
@@ -1233,6 +1234,9 @@ function OptimizedList({
             <div className="flex-1 min-w-0">
               <div className="font-medium capitalize">{s.dateFormatted} · {s.start_time}</div>
               <div className="text-xs text-muted-foreground truncate">{s.context}</div>
+              {s.prospect_city && (
+                <div className="text-xs font-medium text-primary truncate">{s.prospect_city}</div>
+              )}
             </div>
             <div className="shrink-0 text-right">
               <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
@@ -1586,7 +1590,8 @@ function ProspectOptimizer({
         lng,
         10,
         job.salesperson_locked ? job.salesperson_id : null,
-        job.appointment_id
+        job.appointment_id,
+        job.installation_address?.city ?? null,
       );
       if (!res.ok) { setError(res.message); return; }
       setSlots(res.slots);

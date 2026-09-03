@@ -1,14 +1,15 @@
 "use server";
 
-import { addDays, format, getISODay, parse } from "date-fns";
+import { addDays, format, getISODay, parse, parseISO, subWeeks } from "date-fns";
 import { fr } from "date-fns/locale";
 import { revalidatePath } from "next/cache";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { fetchDrivingMetricsFromOrigin } from "@/lib/maps/distance-matrix";
-import { haversineSeconds } from "@/lib/maps/haversine";
-import { todayYmd } from "@/lib/address";
+import { getDistanceFromOriginCacheOnly } from "@/lib/maps/distance-cache";
+import { haversineMeters, haversineSeconds, pickClosestByHaversine } from "@/lib/maps/haversine";
+import { cityFromAddress, todayYmd } from "@/lib/address";
 import { stripAutofilledPostal } from "@/lib/looks-like-postal";
 import { FIXED_TIME_SLOTS, isSalespersonSlotBlocked } from "@/features/sales/sales-utils";
 import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
@@ -79,6 +80,10 @@ export type UnitInput = {
   is_alternative: boolean;
   /** Subvention spécifique à cette unité. */
   subsidy_amount: number;
+  /** Rabais / promotion avant taxes (demande Stéphane, août 2026). */
+  discount_amount: number;
+  /** Options montage cochées (multi-sélection). */
+  mount_options: string[];
 };
 
 export type QuoteInput = {
@@ -120,6 +125,106 @@ export type QuoteInput = {
 
 type Ok<T = undefined> = T extends undefined ? { ok: true } : { ok: true } & T;
 type Err = { ok: false; message: string };
+
+export type SalesAppointmentSearchHit = {
+  id: string;
+  client_name: string;
+  client_city: string | null;
+  client_phone: string | null;
+  scheduled_date: string;
+  start_time: string;
+  salesperson_id: string;
+  salesperson_name: string;
+};
+
+/** Recherche RDV ventes : futur + 4 dernières semaines (demande Stéphane, août 2026). */
+export async function searchSalesAppointments(
+  query: string,
+): Promise<{ ok: true; results: SalesAppointmentSearchHit[] } | Err> {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return { ok: true, results: [] };
+
+  const supabase = await createServerSupabaseClient();
+  const today = todayYmd();
+  const fromDate = format(subWeeks(parseISO(today), 4), "yyyy-MM-dd");
+
+  const { data, error } = await supabase
+    .from("sales_appointments")
+    .select(
+      `id, salesperson_id, scheduled_date, start_time, status,
+       salespeople ( name ),
+       clients ( name, phone, address_formatted, city ),
+       installation_addresses!installation_address_id ( city, address_formatted )`,
+    )
+    .gte("scheduled_date", fromDate)
+    .neq("status", "cancelled")
+    .order("scheduled_date")
+    .order("start_time");
+
+  if (error) return { ok: false, message: error.message };
+
+  type RawRow = {
+    id: string;
+    salesperson_id: string;
+    scheduled_date: string;
+    start_time: string;
+    salespeople: { name: string } | { name: string }[] | null;
+    clients: { name: string; phone: string | null; address_formatted: string | null; city: string | null } | { name: string; phone: string | null; address_formatted: string | null; city: string | null }[] | null;
+    installation_addresses: { city: string | null; address_formatted: string | null } | { city: string | null; address_formatted: string | null }[] | null;
+  };
+
+  const hits: SalesAppointmentSearchHit[] = [];
+  for (const row of (data ?? []) as RawRow[]) {
+    const sp = unwrapRelation(row.salespeople) as { name: string } | null;
+    const c = unwrapRelation(row.clients) as {
+      name: string;
+      phone: string | null;
+      address_formatted: string | null;
+      city: string | null;
+    } | null;
+    const inst = unwrapRelation(row.installation_addresses) as {
+      city: string | null;
+      address_formatted: string | null;
+    } | null;
+    const clientCity =
+      inst?.city?.trim() ||
+      cityFromAddress(inst?.address_formatted) ||
+      c?.city?.trim() ||
+      cityFromAddress(c?.address_formatted) ||
+      null;
+    const haystack = [c?.name, c?.phone, clientCity, c?.address_formatted, inst?.address_formatted]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    if (!haystack.includes(q)) continue;
+
+    hits.push({
+      id: row.id,
+      client_name: c?.name ?? "—",
+      client_city: clientCity,
+      client_phone: c?.phone ?? null,
+      scheduled_date: row.scheduled_date,
+      start_time: (row.start_time as string).slice(0, 5),
+      salesperson_id: row.salesperson_id,
+      salesperson_name: sp?.name ?? "—",
+    });
+  }
+
+  const future = hits.filter((h) => h.scheduled_date >= today).sort((a, b) =>
+    a.scheduled_date === b.scheduled_date
+      ? a.start_time.localeCompare(b.start_time)
+      : a.scheduled_date.localeCompare(b.scheduled_date),
+  );
+  const past = hits
+    .filter((h) => h.scheduled_date < today)
+    .sort((a, b) =>
+      a.scheduled_date === b.scheduled_date
+        ? b.start_time.localeCompare(a.start_time)
+        : b.scheduled_date.localeCompare(a.scheduled_date),
+    );
+
+  return { ok: true, results: [...future, ...past] };
+}
 
 // ── Rendez-vous ──────────────────────────────────────────────────────────────
 
@@ -369,6 +474,8 @@ export async function createQuote(
         serial_evaporator: u.serial_evaporator || null,
         is_alternative: u.is_alternative ?? false,
         subsidy_amount: u.subsidy_amount ?? 0,
+        discount_amount: u.discount_amount ?? 0,
+        mount_options: u.mount_options ?? [],
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -476,6 +583,8 @@ export async function updateQuote(
         serial_evaporator: u.serial_evaporator || null,
         is_alternative: u.is_alternative ?? false,
         subsidy_amount: u.subsidy_amount ?? 0,
+        discount_amount: u.discount_amount ?? 0,
+        mount_options: u.mount_options ?? [],
       }))
     );
     if (uErr) return { ok: false, message: uErr.message };
@@ -1020,6 +1129,8 @@ export type ProspectSlotResult = {
   travel_seconds: number | null;
   /** Contexte prev/next pour info */
   context: string;
+  /** Ville du prospect */
+  prospect_city: string | null;
 };
 
 /**
@@ -1058,7 +1169,8 @@ export async function findBestSlotsForProspect(
   prospectLng: number,
   maxResults = 10,
   salespersonId?: string | null,
-  excludeAppointmentId?: string | null
+  excludeAppointmentId?: string | null,
+  prospectCity?: string | null,
 ): Promise<{ ok: true; slots: ProspectSlotResult[] } | { ok: false; message: string }> {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!apiKey) return { ok: false, message: "Clé Google Maps manquante" };
@@ -1084,8 +1196,8 @@ export async function findBestSlotsForProspect(
   let apptQuery = supabase
     .from("sales_appointments")
     .select(`id, salesperson_id, scheduled_date, start_time, client_lat, client_lng,
-             clients ( name, address_formatted ),
-             installation_addresses!installation_address_id ( lat, lng )`)
+             clients ( name, address_formatted, city ),
+             installation_addresses!installation_address_id ( lat, lng, city, address_formatted )`)
     .neq("status", "cancelled")
     .gte("scheduled_date", todayStr)
     .lte("scheduled_date", in30Days)
@@ -1109,19 +1221,26 @@ export async function findBestSlotsForProspect(
       const r = a as {
         id: string; salesperson_id: string; scheduled_date: string; start_time: string;
         client_lat: number | null; client_lng: number | null;
-        clients: { name: string | null; address_formatted: string | null } | null;
-        installation_addresses: { lat: number | null; lng: number | null } | null;
+        clients: { name: string | null; address_formatted: string | null; city: string | null } | null;
+        installation_addresses: { lat: number | null; lng: number | null; city: string | null; address_formatted: string | null } | null;
       };
       const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
       const ia = Array.isArray(r.installation_addresses) ? r.installation_addresses[0] : r.installation_addresses;
       const lat = r.client_lat ?? ia?.lat ?? null;
       const lng = r.client_lng ?? ia?.lng ?? null;
+      const clientCity =
+        ia?.city?.trim() ||
+        cityFromAddress(ia?.address_formatted) ||
+        c?.city?.trim() ||
+        cityFromAddress(c?.address_formatted) ||
+        null;
       return {
         ...r,
         client_lat: lat,
         client_lng: lng,
         client_name: c?.name ?? null,
         client_address: c?.address_formatted ?? null,
+        client_city: clientCity,
       };
     });
 
@@ -1152,28 +1271,23 @@ export async function findBestSlotsForProspect(
     addPos(a.client_lat as number | null, a.client_lng as number | null, a.client_name ?? "");
   }
 
-  // 4. Distance Matrix : Google seulement si la position est un vrai voisin.
-  //    Règle : adresses RDV → Google (vrai trajet optimisable)
-  //            domicile d'un vendeur → Google seulement si ce vendeur a ≥1 RDV dans la fenêtre
-  //            domicile d'un vendeur sans RDV → Haversine (journée vide, précision suffisante)
-  const vendorWithAppts = new Set(allAppts.map((a) => a.salesperson_id));
+  // 4. Distance Matrix : seulement les N adresses RDV les plus proches (vol d'oiseau).
+  //    Domiciles vendeurs → toujours Haversine (tier 2 / départ maison).
+  //    Avec 200 RDV, on n'envoie pas 200 éléments à Google — seulement TOP_N.
+  const GOOGLE_TOP_N = 10;
+  const prospectOrigin = { lat: prospectLat, lng: prospectLng };
 
-  const googleIdxSet = new Set<number>();
-  // Toutes les adresses de RDV
+  const rdvIdxSet = new Set<number>();
   for (const a of allAppts) {
     if (!a.client_lat || !a.client_lng) continue;
     const idx = posMap.get(posKey(a.client_lat as number, a.client_lng as number));
-    if (idx !== undefined) googleIdxSet.add(idx);
-  }
-  // Domiciles seulement si le vendeur a des RDV
-  for (const sp of salespeople) {
-    if (!vendorWithAppts.has(sp.id)) continue;
-    if (!sp.home_lat || !sp.home_lng) continue;
-    const idx = posMap.get(posKey(sp.home_lat as number, sp.home_lng as number));
-    if (idx !== undefined) googleIdxSet.add(idx);
+    if (idx !== undefined) rdvIdxSet.add(idx);
   }
 
-  const googleIdxArr = Array.from(googleIdxSet);
+  const rdvIdxArr = Array.from(rdvIdxSet);
+  const rdvPosArr = rdvIdxArr.map((i) => ({ lat: positions[i].lat, lng: positions[i].lng }));
+  const closestLocal = pickClosestByHaversine(prospectOrigin, rdvPosArr, GOOGLE_TOP_N);
+  const googleIdxArr = closestLocal.map((localI) => rdvIdxArr[localI]);
   const googlePosArr = googleIdxArr.map((i) => ({ lat: positions[i].lat, lng: positions[i].lng }));
 
   type SecCache = Map<number, number | null>;
@@ -1182,7 +1296,7 @@ export async function findBestSlotsForProspect(
   if (googlePosArr.length > 0) {
     const metrics = await fetchDrivingMetricsFromOrigin(
       apiKey,
-      { lat: prospectLat, lng: prospectLng },
+      prospectOrigin,
       googlePosArr
     );
     googleIdxArr.forEach((origIdx, newIdx) => {
@@ -1190,15 +1304,16 @@ export async function findBestSlotsForProspect(
     });
   }
 
-  // Haversine pour les positions non envoyées à Google (domiciles sans RDV)
+  // Haversine pour le reste (RDV hors top N + tous les domiciles)
   for (let i = 0; i < positions.length; i++) {
     if (!secCache.has(i)) {
-      secCache.set(i, haversineSeconds({ lat: prospectLat, lng: prospectLng }, positions[i]));
+      secCache.set(i, haversineSeconds(prospectOrigin, positions[i]));
     }
   }
 
   console.log(
-    `[findBestSlots] ${googlePosArr.length} Google + ${positions.length - googlePosArr.length} Haversine` +
+    `[findBestSlots] ${googlePosArr.length} Google (top Haversine/${rdvIdxArr.length} RDV) + ` +
+    `${positions.length - googlePosArr.length} Haversine` +
     ` (${positions.length} positions, ${salespeople.length} vendeurs, ${allAppts.length} RDV)`
   );
 
@@ -1242,6 +1357,7 @@ export async function findBestSlotsForProspect(
           time: (a.start_time as string).slice(0, 5),
           posIdx: addPos(a.client_lat as number | null, a.client_lng as number | null, a.client_name ?? ""),
           label: a.client_name ?? a.client_address ?? "RDV",
+          city: (a as { client_city?: string | null }).client_city ?? null,
         }))
         .sort((a, b) => a.time.localeCompare(b.time));
 
@@ -1264,11 +1380,14 @@ export async function findBestSlotsForProspect(
         const tNext = nextIdx >= 0 ? getSec(nextIdx) : null;
 
         const score = scoreTravelSeconds(tPrev, tNext);
+        const citySuffix = (city: string | null | undefined) =>
+          city?.trim() ? ` · ${city.trim()}` : "";
         const prevLabel = prevAppt?.label ?? `Domicile ${sp.name}`;
         const nextLabel = nextAppt?.label;
+        const prospectTag = prospectCity?.trim() || null;
         const context = nextLabel
-          ? `${prevLabel} → [prospect] → ${nextLabel}`
-          : `Après : ${prevLabel}`;
+          ? `${prevLabel}${citySuffix(prevAppt?.city)} → [prospect${citySuffix(prospectTag)}] → ${nextLabel}${citySuffix(nextAppt?.city)}`
+          : `Après : ${prevLabel}${citySuffix(prevAppt?.city)}${prospectTag ? ` · ${prospectTag}` : ""}`;
 
         // Tier 1 : au moins un voisin est un VRAI RDV client (pas le domicile) à ≤ 20 min.
         // Cela garantit qu'enchaîner deux clients proches passe avant un départ domicile
@@ -1285,6 +1404,7 @@ export async function findBestSlotsForProspect(
           dateFormatted: format(date, "EEEE d MMM", { locale: fr }),
           travel_seconds: score === Infinity ? null : score,
           context,
+          prospect_city: prospectTag,
           score,
           anchoredToClient,
         });
@@ -1419,51 +1539,30 @@ export async function getSlotsForWeekWithScores(
   for (const sp of salespeople) addPos(sp.home_lat as number | null, sp.home_lng as number | null);
   for (const a of weekAppts) addPos(a.client_lat as number | null, a.client_lng as number | null);
 
-  // Google seulement pour les positions voisines réelles :
-  //   - adresses de RDV (candidats au chaînage)
-  //   - domicile d'un vendeur qui a ≥1 RDV cette semaine (peut être "prev" avant premier client)
-  //   - domicile sans RDV → Haversine (journée libre, précision suffisante)
-  const vendorWithWeekAppts = new Set(weekAppts.map((a) => a.salesperson_id));
+  // Calendrier semaine : cache Supabase seulement, Haversine en fallback (0 appel Google).
+  // Les adresses déjà cachées par findBestSlotsForProspect sont réutilisées.
+  const prospectOrigin = { lat: prospectLat, lng: prospectLng };
 
-  const googleIdxSet = new Set<number>();
-  for (const a of weekAppts) {
-    if (!a.client_lat || !a.client_lng) continue;
-    const idx = posMap.get(posKey(a.client_lat as number, a.client_lng as number));
-    if (idx !== undefined) googleIdxSet.add(idx);
-  }
-  for (const sp of salespeople) {
-    if (!vendorWithWeekAppts.has(sp.id)) continue;
-    if (!sp.home_lat || !sp.home_lng) continue;
-    const idx = posMap.get(posKey(sp.home_lat as number, sp.home_lng as number));
-    if (idx !== undefined) googleIdxSet.add(idx);
-  }
-
-  const googleIdxArr = Array.from(googleIdxSet);
-  const googlePosArr = googleIdxArr.map((i) => positions[i]);
+  const cacheResults = await getDistanceFromOriginCacheOnly(prospectOrigin, positions);
 
   const secCache = new Map<number, number | null>();
-  if (googlePosArr.length > 0) {
-    const metrics = await fetchDrivingMetricsFromOrigin(
-      apiKey,
-      { lat: prospectLat, lng: prospectLng },
-      googlePosArr
-    );
-    googleIdxArr.forEach((origIdx, newIdx) => {
-      secCache.set(origIdx, metrics[newIdx]?.seconds ?? null);
-    });
-  }
-
-  // Haversine pour les positions non envoyées à Google
+  let cacheHits = 0;
   for (let i = 0; i < positions.length; i++) {
-    if (!secCache.has(i)) {
-      secCache.set(i, haversineSeconds({ lat: prospectLat, lng: prospectLng }, positions[i]));
+    const cached = cacheResults[i];
+    if (cached) {
+      secCache.set(i, cached.seconds);
+      cacheHits++;
+    } else {
+      secCache.set(i, haversineSeconds(prospectOrigin, positions[i]));
     }
   }
 
   console.log(
-    `[getSlotsForWeek] ${googlePosArr.length} Google + ${positions.length - googlePosArr.length} Haversine` +
+    `[getSlotsForWeek] 0 Google | ${cacheHits} Supabase hit + ${positions.length - cacheHits} Haversine` +
     ` (${salespeople.length} vendeurs, ${weekAppts.length} RDV semaine)`
   );
+
+  // allPosArr = positions
 
   const getSec = (posIdx: number): number | null => {
     if (posIdx < 0) return null;
@@ -1717,41 +1816,32 @@ export async function getProspectsForSlot(
 }
 
 /**
- * Score prev/next pour chaque destination (même règle que findBestSlotsForProspect).
- * Prev = RDV avant ou domicile ; next = RDV après s'il existe.
+ * Score prev/next pour chaque destination (liste de prospects pour un créneau).
+ * Utilise uniquement Haversine (vol d'oiseau × 1.3) — pas d'appel Google.
+ * Top 10 par proximité depuis prevOrigin (ou nextOrigin si pas de prev), reste ignoré.
+ * Précision suffisante : l'objectif est de trier, pas de facturer un trajet.
  */
 export async function scoreProspectsForSlot(
   destinations: { lat: number; lng: number }[],
   prevOrigin: SlotNeighborGps | null,
   nextOrigin: SlotNeighborGps | null
 ): Promise<{ meters: number | null; seconds: number | null }[]> {
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-  if (!apiKey || !destinations.length) {
-    return destinations.map(() => ({ meters: null, seconds: null }));
+  if (!destinations.length) {
+    return [];
   }
 
-  const empty = destinations.map(() => ({ meters: null as number | null, seconds: null as number | null }));
-  let prevMetrics = empty;
-  let nextMetrics = empty;
+  const origin = prevOrigin ?? nextOrigin;
 
-  try {
-    if (prevOrigin) {
-      prevMetrics = await fetchDrivingMetricsFromOrigin(apiKey, prevOrigin, destinations);
-    }
-    if (nextOrigin) {
-      nextMetrics = await fetchDrivingMetricsFromOrigin(apiKey, nextOrigin, destinations);
-    }
-  } catch {
-    return empty;
-  }
+  return destinations.map((dest) => {
+    if (!origin) return { meters: null, seconds: null };
 
-  return destinations.map((_, i) => {
-    const tPrev = prevMetrics[i]?.seconds ?? null;
-    const tNext = nextMetrics[i]?.seconds ?? null;
+    const tPrev = prevOrigin ? haversineSeconds(prevOrigin, dest) : null;
+    const tNext = nextOrigin ? haversineSeconds(nextOrigin, dest) : null;
     const score = scoreTravelSeconds(tPrev, tNext);
+
     return {
       seconds: score === Infinity ? null : score,
-      meters: prevMetrics[i]?.meters ?? nextMetrics[i]?.meters ?? null,
+      meters: Math.round(haversineMeters(prevOrigin ?? nextOrigin!, dest)),
     };
   });
 }

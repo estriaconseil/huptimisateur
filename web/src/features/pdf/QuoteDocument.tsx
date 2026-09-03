@@ -10,6 +10,11 @@ import {
 } from "@react-pdf/renderer";
 import type { Quote, QuoteUnit } from "@/types/domain";
 import { stripAutofilledPostal } from "@/lib/looks-like-postal";
+import {
+  capageFieldsFromUnit,
+  formatMountOptions,
+  resolveMountOptions,
+} from "@/lib/quote-mount-options";
 
 // ── Enregistrement polices ────────────────────────────────────────────────────
 // Helvetica est toujours disponible sans enregistrement dans react-pdf
@@ -236,12 +241,12 @@ function LegalFooter() {
 // ── Bloc unité (réutilisable principal / alternatif) ─────────────────────────
 function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
   const tempLabel = u.operating_temp_c != null ? `${u.operating_temp_c} °C` : "—";
-  const cap1L = stripAutofilledPostal(u.cap_long1_length) || "—";
-  const cap1C = stripAutofilledPostal(u.cap_long1_color) || "—";
-  const cap2L = stripAutofilledPostal(u.cap_long2_length) || "—";
-  const cap2C = stripAutofilledPostal(u.cap_long2_color) || "—";
+  const capages = capageFieldsFromUnit(u);
+  const mountLabels = formatMountOptions(resolveMountOptions(u));
   const unitNum = idx + 1;
   const hasSerial = !!(u.serial_number?.trim() || u.serial_evaporator?.trim());
+  const discount = u.discount_amount ?? 0;
+  const taxable = Math.max(0, (u.unit_subtotal ?? 0) - discount);
 
   return (
     <View wrap={false}>
@@ -272,46 +277,40 @@ function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
         <Spec label="Pieds tuyaux" value={u.pipe_feet} last />
       </DenseRow>
 
-      {/* Ligne : 4 Cap Long */}
+      {/* Capages 1–4 */}
       <DenseRow>
-        <Spec label="Cap Long 1 — Long" value={cap1L === "—" ? null : cap1L} />
-        <Spec label="Cap Long 1 — Coul." value={cap1C === "—" ? null : cap1C} />
-        <Spec label="Cap Long 2 — Long" value={cap2L === "—" ? null : cap2L} />
-        <Spec label="Cap Long 2 — Coul." value={cap2C === "—" ? null : cap2C} last />
+        <Spec label="Capage 1" value={capages.capage_1 || null} />
+        <Spec label="Capage 2" value={capages.capage_2 || null} />
+        <Spec label="Capage 3" value={capages.capage_3 || null} />
+        <Spec label="Capage 4" value={capages.capage_4 || null} last />
       </DenseRow>
 
-      {/* Support + Au sol — compact */}
-      {(u.support_type || u.floor_mount_type || u.floor_mount_other) && (
-        <View style={{ flexDirection: "row", marginBottom: 3, gap: 8 }}>
-          {u.support_type && (
-            <CompactTags
-              label="Support"
-              value={u.support_type}
-              options={Object.entries(SUPPORT_LABELS).map(([v, l]) => ({ v, l }))}
-            />
-          )}
-          {(u.floor_mount_type || u.floor_mount_other) && (
-            <View style={{ flex: 1 }}>
-              <CompactTags
-                label="Au sol"
-                value={u.floor_mount_type ?? ""}
-                options={Object.entries(FLOOR_LABELS).map(([v, l]) => ({ v, l }))}
-              />
-              {u.floor_mount_other ? (
-                <Text style={[s.colValue, { marginTop: 1, fontSize: 8 }]}>Autre : {u.floor_mount_other}</Text>
-              ) : null}
-            </View>
-          )}
+      {/* Support / Au sol — multi-sélection */}
+      {(mountLabels || u.floor_mount_other) && (
+        <View style={{ marginBottom: 3 }}>
+          {mountLabels ? (
+            <Text style={[s.colValue, { fontSize: 8.5 }]}>
+              Support / Au sol : {mountLabels}
+            </Text>
+          ) : null}
+          {u.floor_mount_other ? (
+            <Text style={[s.colValue, { marginTop: 1, fontSize: 8 }]}>Autre : {u.floor_mount_other}</Text>
+          ) : null}
         </View>
       )}
 
       {/* Prix */}
       <DenseRow>
         <Spec
-          label="Total unité"
+          label="Montant"
           value={(u.unit_subtotal ?? 0) > 0 ? `${fmt(u.unit_subtotal ?? 0)} $` : null}
           bold
           color={C.accent}
+        />
+        <Spec
+          label="Rabais / promotion"
+          value={discount > 0 ? `−${fmt(discount)} $` : null}
+          color={C.green}
         />
         <Spec
           label="Subvention"
@@ -320,6 +319,11 @@ function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
           last
         />
       </DenseRow>
+      {taxable !== (u.unit_subtotal ?? 0) && taxable > 0 && (
+        <Text style={[s.colValue, { fontSize: 8, marginBottom: 3 }]}>
+          Base taxable : {fmt(taxable)} $
+        </Text>
+      )}
 
       {/* # série — ligne dédiée pour ne pas déformer la grille */}
       {hasSerial && (
@@ -356,8 +360,11 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const chosen: "a" | "b" = accepted === "b" ? "b" : "a";
 
   const isPriced = (u: QuoteUnit) => (u.unit_subtotal ?? 0) > 0;
-  const grossOf = (list: QuoteUnit[]) =>
-    list.reduce((acc, u) => acc + (u.unit_subtotal ?? 0), 0);
+  const taxableOf = (list: QuoteUnit[]) =>
+    list.reduce(
+      (acc, u) => acc + Math.max(0, (u.unit_subtotal ?? 0) - (u.discount_amount ?? 0)),
+      0,
+    );
   const subsidiesOf = (list: QuoteUnit[]) =>
     list.reduce((acc, u) => acc + (u.subsidy_amount ?? 0), 0);
   const byOrder = (a: QuoteUnit, b: QuoteUnit) => (a.unit_order ?? 0) - (b.unit_order ?? 0);
@@ -371,8 +378,8 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const page1Letter = chosen === "b" ? "B" : "A";
   const page2Letter = chosen === "b" ? "A" : "B";
 
-  const aSub = grossOf(aUnits);
-  const bSub = grossOf(bUnits);
+  const aSub = taxableOf(aUnits);
+  const bSub = taxableOf(bUnits);
   const sub = chosen === "b" ? bSub : (aSub > 0 ? aSub : (quote.subtotal ?? 0));
   const { tps, tvq, total } = calcTaxes(sub);
   const subsidies = chosen === "b" ? subsidiesOf(bUnits) : subsidiesOf(aUnits);

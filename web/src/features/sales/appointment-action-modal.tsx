@@ -84,7 +84,8 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
           appointment.client_lng!,
           10,
           filterSp,
-          appointment.id
+          appointment.id,
+          appointment.client_city ?? null,
         );
         if (res.ok) setSlots(res.slots);
       });

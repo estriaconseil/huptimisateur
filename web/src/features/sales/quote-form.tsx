@@ -13,6 +13,14 @@ import { SketchPad } from "./sketch-pad";
 import type { Quote, QuoteUnit, QuoteStatus, Salesperson } from "@/types/domain";
 import type { PipelineJob } from "@/features/sales/pipeline-client";
 import { looksLikePostalCode, stripAutofilledPostal } from "@/lib/looks-like-postal";
+import { cn } from "@/lib/utils";
+import {
+  MOUNT_OPTION_DEFS,
+  capageFieldsFromUnit,
+  capageFieldsToDb,
+  resolveMountOptions,
+  toggleMountOption,
+} from "@/lib/quote-mount-options";
 
 const ProspectEditModal = dynamic(
   () =>
@@ -39,12 +47,11 @@ type UnitState = {
   warranty_months: string;
   evaporator: string;
   pipe_feet: string;
-  cap_long1_length: string;
-  cap_long1_color: string;
-  cap_long2_length: string;
-  cap_long2_color: string;
-  support_type: string;
-  floor_mount_type: string;
+  capage_1: string;
+  capage_2: string;
+  capage_3: string;
+  capage_4: string;
+  mount_options: string[];
   difficulty: string;
   tech_count: string;
   unit_subtotal: string;
@@ -56,6 +63,8 @@ type UnitState = {
   is_alternative: boolean;
   /** Subvention spécifique à cette unité. */
   subsidy_amount: string;
+  /** Rabais / promotion avant taxes (demande Stéphane, août 2026). */
+  discount_amount: string;
 };
 
 type FormState = {
@@ -102,13 +111,15 @@ const WARRANTY_YEARS = Array.from({ length: 12 }, (_, n) => n + 1);
 const defaultUnit = (alt = false): UnitState => ({
   description: "", brand: "", model: "", capacity_btu: "", heating_capacity_25: "",
   warranty_parts: "", warranty_months: "", evaporator: "", pipe_feet: "",
-  cap_long1_length: "", cap_long1_color: "", cap_long2_length: "", cap_long2_color: "",
-  support_type: "", floor_mount_type: "", floor_mount_other: "", operating_temp_c: "",
-  difficulty: "", tech_count: "", unit_subtotal: "0",
-  serial_number: "", serial_evaporator: "", is_alternative: alt, subsidy_amount: "0",
+  capage_1: "", capage_2: "", capage_3: "", capage_4: "",
+  mount_options: [], floor_mount_other: "", operating_temp_c: "",
+  difficulty: "", tech_count: "", unit_subtotal: "",
+  serial_number: "", serial_evaporator: "", is_alternative: alt, subsidy_amount: "", discount_amount: "",
 });
 
-const toUnitState = (u: QuoteUnit): UnitState => ({
+const toUnitState = (u: QuoteUnit): UnitState => {
+  const capages = capageFieldsFromUnit(u);
+  return {
   description: u.description ?? "",
   brand: u.brand ?? "",
   model: u.model ?? "",
@@ -118,27 +129,34 @@ const toUnitState = (u: QuoteUnit): UnitState => ({
   warranty_months: u.warranty_months ?? "",
   evaporator: u.evaporator ?? "",
   pipe_feet: u.pipe_feet ?? "",
-  cap_long1_length: stripAutofilledPostal(u.cap_long1_length),
-  cap_long1_color: stripAutofilledPostal(u.cap_long1_color),
-  cap_long2_length: stripAutofilledPostal(u.cap_long2_length),
-  cap_long2_color: stripAutofilledPostal(u.cap_long2_color),
-  support_type: u.support_type ?? "",
-  floor_mount_type: u.floor_mount_type ?? "",
+  capage_1: capages.capage_1,
+  capage_2: capages.capage_2,
+  capage_3: capages.capage_3,
+  capage_4: capages.capage_4,
+  mount_options: resolveMountOptions(u),
   difficulty: u.difficulty ?? "",
   tech_count: u.tech_count?.toString() ?? "",
-  unit_subtotal: u.unit_subtotal?.toString() ?? "0",
+  unit_subtotal: (u.unit_subtotal ?? 0) > 0 ? u.unit_subtotal.toString() : "",
   serial_number: u.serial_number ?? "",
   serial_evaporator: u.serial_evaporator ?? "",
   operating_temp_c: u.operating_temp_c != null ? String(u.operating_temp_c) : "",
   floor_mount_other: u.floor_mount_other ?? "",
   is_alternative: u.is_alternative ?? false,
-  subsidy_amount: u.subsidy_amount?.toString() ?? "0",
-});
+  subsidy_amount: (u.subsidy_amount ?? 0) > 0 ? u.subsidy_amount.toString() : "",
+  discount_amount: (u.discount_amount ?? 0) > 0 ? u.discount_amount.toString() : "",
+};
+};
+
+function unitTaxableAmount(u: UnitState): number {
+  const gross = parseFloat(u.unit_subtotal) || 0;
+  const discount = parseFloat(u.discount_amount) || 0;
+  return Math.max(0, gross - discount);
+}
 
 function grossSubtotal(units: UnitState[], optionB: boolean): number {
   return units
     .filter((u) => u.is_alternative === optionB)
-    .reduce((acc, u) => acc + (parseFloat(u.unit_subtotal) || 0), 0);
+    .reduce((acc, u) => acc + unitTaxableAmount(u), 0);
 }
 
 function totalSubsidies(units: UnitState[], optionB: boolean): number {
@@ -409,7 +427,7 @@ export function QuoteForm({
       let val: string | boolean = e.target.type === "checkbox" ? (e.target as HTMLInputElement).checked : e.target.value;
       if (
         typeof val === "string" &&
-        (k === "cap_long1_length" || k === "cap_long1_color" || k === "cap_long2_length" || k === "cap_long2_color") &&
+        (k === "capage_1" || k === "capage_2" || k === "capage_3" || k === "capage_4") &&
         looksLikePostalCode(val)
       ) {
         val = "";
@@ -420,7 +438,7 @@ export function QuoteForm({
         next[idx] = { ...next[idx], [k]: val };
 
         // Sous-total = somme des bruts unités Option A
-        if (k === "unit_subtotal" || k === "subsidy_amount") {
+        if (k === "unit_subtotal" || k === "subsidy_amount" || k === "discount_amount") {
           const principalGross = grossSubtotal(next, false);
           const hasSubsidy = next.some((u) => (parseFloat(u.subsidy_amount) || 0) > 0);
           setForm((f) => ({
@@ -484,7 +502,14 @@ export function QuoteForm({
         sketch_data: sketch,
         status: form.status,
       },
-      unitInputs: nonEmptyUnits.map((u) => ({
+      unitInputs: nonEmptyUnits.map((u) => {
+        const capDb = capageFieldsToDb({
+          capage_1: stripAutofilledPostal(u.capage_1),
+          capage_2: stripAutofilledPostal(u.capage_2),
+          capage_3: stripAutofilledPostal(u.capage_3),
+          capage_4: stripAutofilledPostal(u.capage_4),
+        });
+        return {
         unit_order: u.unit_order,
         description: u.description,
         brand: u.brand,
@@ -495,22 +520,25 @@ export function QuoteForm({
         warranty_months: u.warranty_months,
         evaporator: u.evaporator,
         pipe_feet: u.pipe_feet,
-        cap_long1_length: stripAutofilledPostal(u.cap_long1_length),
-        cap_long1_color: stripAutofilledPostal(u.cap_long1_color),
-        cap_long2_length: stripAutofilledPostal(u.cap_long2_length),
-        cap_long2_color: stripAutofilledPostal(u.cap_long2_color),
-        support_type: u.support_type,
-        floor_mount_type: u.floor_mount_type,
+        cap_long1_length: capDb.cap_long1_length ?? "",
+        cap_long1_color: capDb.cap_long1_color ?? "",
+        cap_long2_length: capDb.cap_long2_length ?? "",
+        cap_long2_color: capDb.cap_long2_color ?? "",
+        support_type: "",
+        floor_mount_type: "",
         floor_mount_other: u.floor_mount_other || null,
         operating_temp_c: u.operating_temp_c ? parseInt(u.operating_temp_c, 10) : null,
         is_alternative: u.is_alternative,
         subsidy_amount: parseFloat(u.subsidy_amount) || 0,
+        discount_amount: parseFloat(u.discount_amount) || 0,
+        mount_options: u.mount_options,
         difficulty: form.difficulty,
         tech_count: form.tech_count ? parseInt(form.tech_count) : null,
         unit_subtotal: parseFloat(u.unit_subtotal) || 0,
         serial_number: u.serial_number || null,
         serial_evaporator: u.serial_evaporator || null,
-      })),
+      };
+      }),
     };
   }, [form, units, signature, sketch, nextQuoteNumber]);
 
@@ -1154,90 +1182,62 @@ export function QuoteForm({
                         </div>
                       </div>
 
-                      {/* Ligne 5 — 4 cap-long ensemble */}
+                      {/* Capages 1–4 (demande Stéphane, août 2026) */}
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div>
-                          <label className={lbl}>Cap Long 1 — Long</label>
-                          <input
-                            className={inp}
-                            name={`huppe-u${i}-cap1-len`}
-                            {...noAc}
-                            autoComplete="new-password"
-                            data-1p-ignore=""
-                            data-lpignore="true"
-                            value={u.cap_long1_length}
-                            onChange={setU(i, "cap_long1_length")}
-                          />
-                        </div>
-                        <div>
-                          <label className={lbl}>Cap Long 1 — Coul.</label>
-                          <input
-                            className={inp}
-                            name={`huppe-u${i}-cap1-col`}
-                            {...noAc}
-                            autoComplete="new-password"
-                            data-1p-ignore=""
-                            data-lpignore="true"
-                            value={u.cap_long1_color}
-                            onChange={setU(i, "cap_long1_color")}
-                          />
-                        </div>
-                        <div>
-                          <label className={lbl}>Cap Long 2 — Long</label>
-                          <input
-                            className={inp}
-                            name={`huppe-u${i}-cap2-len`}
-                            {...noAc}
-                            autoComplete="new-password"
-                            data-1p-ignore=""
-                            data-lpignore="true"
-                            value={u.cap_long2_length}
-                            onChange={setU(i, "cap_long2_length")}
-                          />
-                        </div>
-                        <div>
-                          <label className={lbl}>Cap Long 2 — Coul.</label>
-                          <input
-                            className={inp}
-                            name={`huppe-u${i}-cap2-col`}
-                            {...noAc}
-                            autoComplete="new-password"
-                            data-1p-ignore=""
-                            data-lpignore="true"
-                            value={u.cap_long2_color}
-                            onChange={setU(i, "cap_long2_color")}
-                          />
-                        </div>
+                        {([1, 2, 3, 4] as const).map((n) => {
+                          const key = `capage_${n}` as keyof UnitState;
+                          return (
+                            <div key={n}>
+                              <label className={lbl}>Capage {n}</label>
+                              <input
+                                className={inp}
+                                name={`huppe-u${i}-capage-${n}`}
+                                {...noAc}
+                                autoComplete="new-password"
+                                data-1p-ignore=""
+                                data-lpignore="true"
+                                value={u[key] as string}
+                                onChange={setU(i, key)}
+                                placeholder="Longueur, couleur…"
+                              />
+                            </div>
+                          );
+                        })}
                       </div>
 
-                      {/* Support */}
+                      {/* Options montage — toggles indépendants (demande Stéphane, août 2026) */}
                       <div>
-                        <label className={lbl}>Support</label>
-                        <div className="flex flex-wrap gap-3 mt-1">
-                          {["regular", "inverted", "special", "inverted_adj"].map((v) => (
-                            <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                              <input type="radio" name={`support-${i}`} value={v} checked={u.support_type === v} onChange={setU(i, "support_type")} />
-                              {v === "regular" ? "Régulier" : v === "inverted" ? "Inversé" : v === "special" ? "Spécial" : "Inversé ajust."}
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Au sol */}
-                      <div>
-                        <label className={lbl}>Au sol</label>
-                        <div className="flex flex-wrap gap-3 mt-1 items-center">
-                          {["alum_table", "plastic_base", "diversitech"].map((v) => (
-                            <label key={v} className="flex items-center gap-1.5 text-sm cursor-pointer">
-                              <input type="radio" name={`floor-${i}`} value={v} checked={u.floor_mount_type === v} onChange={setU(i, "floor_mount_type")} />
-                              {v === "alum_table" ? "Table alum." : v === "plastic_base" ? "Base plast." : "Diversitech"}
-                            </label>
-                          ))}
-                          <label className="flex items-center gap-1.5 text-sm cursor-pointer">
-                            <input type="radio" name={`floor-${i}`} value="" checked={u.floor_mount_type === ""} onChange={setU(i, "floor_mount_type")} />
-                            Aucun
-                          </label>
-                          <div className="flex items-center gap-2 ml-2">
+                        <label className={lbl}>Support / Au sol</label>
+                        <div className="mt-1 flex flex-wrap gap-2">
+                          {MOUNT_OPTION_DEFS.map((opt) => {
+                            const active = u.mount_options.includes(opt.id);
+                            return (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                  setIsDirty(true);
+                                  setUnits((us) => {
+                                    const next = [...us];
+                                    next[i] = {
+                                      ...next[i],
+                                      mount_options: toggleMountOption(next[i].mount_options, opt.id),
+                                    };
+                                    return next;
+                                  });
+                                }}
+                                className={cn(
+                                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                                  active
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-input bg-background text-muted-foreground hover:bg-muted/60",
+                                )}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                          <div className="flex items-center gap-2 ml-1">
                             <span className="text-sm text-muted-foreground">Autre :</span>
                             <input
                               className={`${inp} max-w-xs`}
@@ -1250,16 +1250,27 @@ export function QuoteForm({
                         </div>
                       </div>
 
-                      {/* Total + Subvention + # Série */}
+                      {/* Montant + Rabais + Subvention + # Série */}
                       <div className="pt-2 border-t mt-1 space-y-3">
                         <div className="flex items-end gap-2 flex-wrap">
                           <div className="flex-1 min-w-[120px]">
-                            <label className="mb-1 block text-base font-bold text-primary">Total unité</label>
+                            <label className="mb-1 block text-base font-bold text-primary">Montant</label>
                             <div className="border-input bg-background focus-within:ring-ring flex h-8 w-full items-center rounded border px-2 focus-within:ring-2 focus-within:ring-offset-1">
                               <input
                                 className="h-full w-full bg-transparent text-sm font-semibold outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                                 type="number" min={0} step={0.01} value={u.unit_subtotal}
                                 onChange={setU(i, "unit_subtotal")} placeholder="0.00" {...noAc}
+                              />
+                              <span className="ml-1 shrink-0 text-sm text-muted-foreground select-none">$</span>
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-[120px]">
+                            <label className={lbl}>Rabais / promotion</label>
+                            <div className="border-input bg-background focus-within:ring-ring flex h-8 w-full items-center rounded border px-2 focus-within:ring-2 focus-within:ring-offset-1">
+                              <input
+                                className="h-full w-full bg-transparent text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                type="number" min={0} step={0.01} value={u.discount_amount}
+                                onChange={setU(i, "discount_amount")} placeholder="0.00" {...noAc}
                               />
                               <span className="ml-1 shrink-0 text-sm text-muted-foreground select-none">$</span>
                             </div>

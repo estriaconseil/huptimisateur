@@ -33,3 +33,19 @@ export function haversineSeconds(a: LatLng, b: LatLng, avgSpeedKmh = 60): number
 export function sameCoords(a: LatLng, b: LatLng): boolean {
   return Math.abs(a.lat - b.lat) < 0.0001 && Math.abs(a.lng - b.lng) < 0.0001;
 }
+
+/**
+ * Indices des `limit` points les plus proches de `origin` (vol d'oiseau).
+ * Sert à pré-filtrer avant Distance Matrix (ex. top 10 sur 200 RDV).
+ */
+export function pickClosestByHaversine(
+  origin: LatLng,
+  candidates: LatLng[],
+  limit: number
+): number[] {
+  if (candidates.length === 0 || limit <= 0) return [];
+  const ranked = candidates
+    .map((c, i) => ({ i, m: haversineMeters(origin, c) }))
+    .sort((a, b) => a.m - b.m);
+  return ranked.slice(0, Math.min(limit, ranked.length)).map((x) => x.i);
+}
