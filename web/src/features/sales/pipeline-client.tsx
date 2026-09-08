@@ -12,11 +12,13 @@ import {
   FilePlus,
   FileText,
   Loader2,
+  Home,
   MapPin,
   Pencil,
   Plus,
   Search,
   Sparkles,
+  User,
   X,
 } from "lucide-react";
 import { addDays, addWeeks, format, parseISO, subWeeks } from "date-fns";
@@ -45,6 +47,8 @@ import {
   type AddressMatch,
 } from "@/actions/prospects";
 import { updateClient, updateJob, addInstallationAddress, updateInstallationAddress } from "@/actions/clients";
+import { fetchMoreEnAttente } from "@/actions/pipeline";
+import { PIPELINE_PAGE_SIZE } from "@/lib/pipeline-config";
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
 import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
@@ -158,12 +162,14 @@ export function DualAddressBlock({
   disabled,
   inp,
   lbl,
+  required,
 }: {
   state: DualAddressState;
   onChange: (patch: Partial<DualAddressState>) => void;
   disabled?: boolean;
   inp: string;
   lbl: string;
+  required?: boolean;
 }) {
   /** Installation : seule source GPS. Si « même adresse », synchronise le texte facturation. */
   const onInstallResolved = useCallback((p: ResolvedPlace) => {
@@ -214,6 +220,7 @@ export function DualAddressBlock({
       <div>
         <label className={lbl}>
           Adresse d&apos;installation
+          {required && <span className="text-destructive text-base font-bold leading-none ml-0.5">*</span>}
           {state.install_lat
             ? <span className="ml-1 text-[10px] text-emerald-600 font-normal">✓ GPS</span>
             : <span className="ml-1 text-[10px] text-amber-500 font-normal">sélectionnez dans Google pour le GPS</span>
@@ -343,6 +350,12 @@ export function QuickProspectModal({
   /** Crée le prospect, retourne le jobId ou null en cas d'erreur */
   const doCreate = async (): Promise<string | null> => {
     if (!form.name.trim()) { setError("Le nom est requis."); return null; }
+    if (!form.phone.trim()) { setError("Le numéro de téléphone est requis."); return null; }
+    if (!form.email.trim() || !form.email.includes("@")) { setError("Le courriel est requis."); return null; }
+    if (!form.install_address.trim() || form.install_lat == null) {
+      setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google.");
+      return null;
+    }
     setError(null);
     const res = await createProspect({
       name: form.name,
@@ -498,15 +511,15 @@ export function QuickProspectModal({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={lbl}>Téléphone</label>
+                <label className={lbl}>Téléphone <span className="text-destructive text-base font-bold leading-none">*</span></label>
                 <input type="tel" className={inp} value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="819-555-1234" />
               </div>
               <div>
-                <label className={lbl}>Courriel</label>
+                <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
                 <input type="email" className={inp} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="marie@example.com" />
               </div>
             </div>
-            <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} />
+            <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} required />
             {salespeople.length > 0 && (
               <div className="space-y-2">
                 <div>
@@ -1228,24 +1241,35 @@ function OptimizedList({
             key={key}
             onClick={() => book(s)}
             disabled={booking}
-            className="w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm hover:bg-accent transition-colors disabled:opacity-60"
+            className={`w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors disabled:opacity-60 ${
+              s.anchoredToClient
+                ? "border-emerald-500 bg-emerald-50/70 hover:bg-emerald-50"
+                : "hover:bg-accent"
+            }`}
           >
             <span className="shrink-0 size-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center">{i + 1}</span>
             <div className="flex-1 min-w-0">
               <div className="font-medium capitalize">{s.dateFormatted} · {s.start_time}</div>
-              <div className="text-xs text-muted-foreground truncate">{s.context}</div>
-              {s.prospect_city && (
-                <div className="text-xs font-medium text-primary truncate">{s.prospect_city}</div>
-              )}
-            </div>
-            <div className="shrink-0 text-right">
-              <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-              {s.travel_seconds !== null && (
-                <div className="text-[10px] text-muted-foreground">
-                  <TravelDuration seconds={s.travel_seconds} />
+              {s.startsFromHome ? (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                  <Home className="size-3.5 shrink-0" />
+                  <span className="truncate">{s.salesperson_name}</span>
                 </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                    <User className="size-3.5 shrink-0" />
+                    <span className="truncate">{s.context}</span>
+                  </div>
+                  <div className="text-xs font-medium text-primary truncate">{s.salesperson_name}</div>
+                </>
               )}
             </div>
+            {s.travel_seconds !== null && (
+              <div className="shrink-0 text-right">
+                <TravelDuration seconds={s.travel_seconds} className="text-sm font-semibold" numberClassName="text-sm font-semibold" />
+              </div>
+            )}
             {isLoading
               ? <Loader2 className="size-4 animate-spin text-muted-foreground shrink-0" />
               : <ChevronRight className="size-4 text-muted-foreground shrink-0" />
@@ -1368,23 +1392,27 @@ export function WeekCalendar({
   return (
     <div className="space-y-3">
       {/* Navigation semaine */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-3">
         <button
+          type="button"
           onClick={() => loadWeek(subWeeks(monday, 1))}
           disabled={loading || booking || !canGoPrev}
-          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+          aria-label="Semaine précédente"
+          className="flex size-10 items-center justify-center rounded-lg border border-foreground/20 bg-background text-foreground shadow-sm hover:bg-muted disabled:opacity-30"
         >
-          <ChevronLeft className="size-4" />
+          <ChevronLeft className="size-6" />
         </button>
-        <span className="text-sm font-medium flex-1 text-center">
+        <span className="min-w-[220px] text-center text-base font-semibold">
           Semaine du {format(monday, "d MMM yyyy", { locale: fr })}
         </span>
         <button
+          type="button"
           onClick={() => loadWeek(addWeeks(monday, 1))}
           disabled={loading || booking}
-          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+          aria-label="Semaine suivante"
+          className="flex size-10 items-center justify-center rounded-lg border border-foreground/20 bg-background text-foreground shadow-sm hover:bg-muted disabled:opacity-30"
         >
-          <ChevronRight className="size-4" />
+          <ChevronRight className="size-6" />
         </button>
       </div>
 
@@ -1409,7 +1437,7 @@ export function WeekCalendar({
                 <tr className="bg-muted/20">
                   <th className="w-14 px-2 py-1.5 text-left text-muted-foreground font-medium border-r">Heure</th>
                   {sp.days.map((day, i) => (
-                    <th key={day.date} className="px-1 py-1.5 text-center font-medium border-r last:border-r-0 min-w-[90px]">
+                    <th key={day.date} className="px-2 py-2 text-center font-medium border-r last:border-r-0 min-w-[120px]">
                       <div className="text-muted-foreground/70">{DAY_LABELS[i]}</div>
                       <div>{format(parseISO(day.date), "d MMM", { locale: fr })}</div>
                     </th>
@@ -1439,8 +1467,8 @@ export function WeekCalendar({
 
                       if (cell.occupied) {
                         return (
-                          <td key={day.date} className="px-1 py-1 border-r last:border-r-0 bg-muted/30">
-                            <div className="text-[10px] text-muted-foreground leading-tight truncate max-w-[88px]" title={cell.occupiedBy ?? ""}>
+                          <td key={day.date} className="px-2 py-2 border-r last:border-r-0 bg-muted/30 align-middle">
+                            <div className="text-xs text-muted-foreground leading-snug line-clamp-2" title={cell.occupiedBy ?? ""}>
                               {cell.occupiedBy}
                             </div>
                           </td>
@@ -1459,24 +1487,21 @@ export function WeekCalendar({
                       const isBooking = booking && bookingKey === bKey;
 
                       return (
-                        <td key={day.date} className="px-1 py-1 border-r last:border-r-0 h-10 align-top">
+                        <td key={day.date} className="px-1 py-1 border-r last:border-r-0 h-12 align-middle">
                           <button
                             onClick={() => book(sp, day.date, slot)}
                             disabled={booking}
-                            className="w-full h-full rounded flex flex-col items-center justify-center gap-0.5 hover:bg-primary/10 hover:text-primary transition-colors disabled:opacity-50 group"
-                            title={`${cell.prevLabel} · ${formatTravelDurationLabel(cell.travelSeconds)}`}
+                            className="w-full h-full min-h-10 rounded flex items-center justify-center hover:bg-primary/10 transition-colors disabled:opacity-50"
+                            title={cell.prevLabel ? `${cell.prevLabel} · ${formatTravelDurationLabel(cell.travelSeconds)}` : formatTravelDurationLabel(cell.travelSeconds)}
                           >
                             {isBooking ? (
-                              <Loader2 className="size-3 animate-spin" />
+                              <Loader2 className="size-4 animate-spin" />
                             ) : (
-                              <>
-                                <span className="text-[10px] font-medium">
-                                  <TravelDuration seconds={cell.travelSeconds} numberClassName="font-medium" />
-                                </span>
-                                <span className="text-[9px] text-muted-foreground group-hover:text-primary/70 leading-tight text-center truncate w-full px-1">
-                                  {cell.prevLabel}
-                                </span>
-                              </>
+                              <TravelDuration
+                                seconds={cell.travelSeconds}
+                                className="text-base font-semibold"
+                                numberClassName="text-base font-semibold"
+                              />
                             )}
                           </button>
                         </td>
@@ -1542,14 +1567,23 @@ function SlotChooser({
         <OptimizedList jobId={jobId} slots={slots} onBooked={onBooked} />
       )}
       {mode === "calendar" && (
-        <WeekCalendar
-          jobId={jobId}
-          prospectLat={prospectLat}
-          prospectLng={prospectLng}
-          salespersonId={salespersonId}
-          excludeAppointmentId={excludeAppointmentId}
-          onBooked={onBooked}
-        />
+        <Dialog open onOpenChange={(o) => { if (!o) setMode("list"); }}>
+          <DialogContent className="flex h-[94vh] w-[min(1200px,calc(100%-1rem))] max-w-none flex-col gap-3 overflow-hidden p-4 sm:max-w-none">
+            <DialogHeader className="shrink-0 pr-8">
+              <DialogTitle>Par calendrier</DialogTitle>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <WeekCalendar
+                jobId={jobId}
+                prospectLat={prospectLat}
+                prospectLng={prospectLng}
+                salespersonId={salespersonId}
+                excludeAppointmentId={excludeAppointmentId}
+                onBooked={onBooked}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );
@@ -1658,14 +1692,23 @@ function ProspectOptimizer({
             )}
 
             {mode === "calendar" && (
-              <WeekCalendar
-                jobId={job.id}
-                prospectLat={lat}
-                prospectLng={lng}
-                salespersonId={job.salesperson_locked ? job.salesperson_id : null}
-                excludeAppointmentId={job.appointment_id}
-                onBooked={onBooked}
-              />
+              <Dialog open onOpenChange={(o) => { if (!o) setMode("list"); }}>
+                <DialogContent className="flex h-[94vh] w-[min(1200px,calc(100%-1rem))] max-w-none flex-col gap-3 overflow-hidden p-4 sm:max-w-none">
+                  <DialogHeader className="shrink-0 pr-8">
+                    <DialogTitle>{heading}</DialogTitle>
+                  </DialogHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <WeekCalendar
+                      jobId={job.id}
+                      prospectLat={lat}
+                      prospectLng={lng}
+                      salespersonId={job.salesperson_locked ? job.salesperson_id : null}
+                      excludeAppointmentId={job.appointment_id}
+                      onBooked={onBooked}
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
             )}
           </>
         )}
@@ -1703,11 +1746,7 @@ function ProspectCard({
     : null;
 
   // Badge visuel : RDV passé, statut encore « Visite planifiée »
-  const todayStr = format(new Date(), "yyyy-MM-dd");
-  const isRdvPasse =
-    job.status === "soumission_repartie" &&
-    !!job.appointment_date &&
-    job.appointment_date < todayStr;
+  const isRdvPasse = isVisitOverdue(job);
 
   const handleStatusChange = (newStatus: string) => {
     if (newStatus === "annule") { setShowCancelModal(true); return; }
@@ -1781,7 +1820,7 @@ function ProspectCard({
 
   return (
     <Card className={cn(
-      "hover:shadow-sm transition-shadow border-l-4",
+      "hover:shadow-sm transition-shadow border-l-4 bg-white",
       pipelineAccent(job.status).bar,
       highlighted && "ring-2 ring-emerald-500 shadow-md"
     )}>
@@ -1901,7 +1940,7 @@ function ProspectCard({
               <p className="text-xs text-amber-600 font-medium mt-0.5">Relancer : {followUp}</p>
             )}
           </div>
-          <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0", statusColor(job.status))}>
+          <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0", pipelineAccent(job.status).badge)}>
             {statusLabel(job.status)}
           </span>
         </div>
@@ -2026,14 +2065,16 @@ function pipelineAccent(status: string) {
   switch (status) {
     case "soumission_en_attente":
       return {
-        bar: "border-l-amber-500",
-        square: "border-amber-200 bg-amber-50 hover:bg-amber-100/80",
-        squareActive: "border-amber-500 bg-amber-100 ring-2 ring-amber-500",
-        number: "text-amber-900",
+        bar: "border-l-emerald-500",
+        badge: "bg-emerald-100 text-emerald-800",
+        square: "border-emerald-200 bg-emerald-50 hover:bg-emerald-100/80",
+        squareActive: "border-emerald-500 bg-emerald-100 ring-2 ring-emerald-500",
+        number: "text-emerald-900",
       };
     case "soumission_repartie":
       return {
         bar: "border-l-blue-500",
+        badge: "bg-blue-100 text-blue-800",
         square: "border-blue-200 bg-blue-50 hover:bg-blue-100/80",
         squareActive: "border-blue-500 bg-blue-100 ring-2 ring-blue-500",
         number: "text-blue-900",
@@ -2041,6 +2082,7 @@ function pipelineAccent(status: string) {
     case "en_attente":
       return {
         bar: "border-l-violet-500",
+        badge: "bg-violet-100 text-violet-800",
         square: "border-violet-200 bg-violet-50 hover:bg-violet-100/80",
         squareActive: "border-violet-500 bg-violet-100 ring-2 ring-violet-500",
         number: "text-violet-900",
@@ -2048,11 +2090,30 @@ function pipelineAccent(status: string) {
     default:
       return {
         bar: "border-l-border",
+        badge: statusColor(status),
         square: "hover:bg-muted",
         squareActive: "ring-2 ring-ring bg-accent",
         number: "",
       };
   }
+}
+
+function isVisitOverdue(job: PipelineJob, today = todayYmd()): boolean {
+  return (
+    job.status === "soumission_repartie" &&
+    !!job.appointment_date &&
+    job.appointment_date < today
+  );
+}
+
+/** Passées les plus anciennes d'abord, puis les visites à venir par date. */
+function compareScheduledVisits(a: PipelineJob, b: PipelineJob, today: string): number {
+  const aPast = isVisitOverdue(a, today);
+  const bPast = isVisitOverdue(b, today);
+  if (aPast !== bPast) return aPast ? -1 : 1;
+  const ad = a.appointment_date ?? "9999-99-99";
+  const bd = b.appointment_date ?? "9999-99-99";
+  return ad.localeCompare(bd);
 }
 
 export function PipelineClient({
@@ -2061,6 +2122,7 @@ export function PipelineClient({
   currentSalespersonId = null,
   openJobId = null,
   highlightJobId = null,
+  enAttenteTotal = 0,
 }: {
   jobs: PipelineJob[];
   salespeople: Salesperson[];
@@ -2070,15 +2132,20 @@ export function PipelineClient({
   openJobId?: string | null;
   /** Anneau + scroll sur la carte, sans ouvrir la fiche (`?highlight=`) */
   highlightJobId?: string | null;
+  /** Total BD des dossiers « Va nous rappeler » (pour la plaquette et « Voir plus »). */
+  enAttenteTotal?: number;
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<JobStatus | "all">("all");
+  const [filterOverdue, setFilterOverdue] = useState(false);
   const [filterFlag, setFilterFlag] = useState<FollowUpFlag | "all">("all");
   const [filterSalesperson, setFilterSalesperson] = useState<string>(
     currentSalespersonId ?? "all"
   );
+  const [enAttenteExtra, setEnAttenteExtra] = useState<PipelineJob[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [deepLinkJob, setDeepLinkJob] = useState<PipelineJob | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(highlightJobId);
   const highlightRef = useRef<HTMLLIElement | null>(null);
@@ -2090,7 +2157,7 @@ export function PipelineClient({
 
   useEffect(() => {
     if (!highlightId || !highlightRef.current) return;
-    highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    highlightRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [highlightId, jobs]);
 
   // Ouvrir la fiche prospect depuis ?job=
@@ -2119,27 +2186,42 @@ export function PipelineClient({
     setDeepLinkJob(null);
     if (bookedJobId) {
       setFilterStatus("all");
+      setFilterOverdue(false);
       setFilterFlag("all");
       setSearch("");
       setHighlightId(bookedJobId);
-      router.replace(`/ventes/pipeline?highlight=${bookedJobId}`);
+      // Ne pas router.replace : ça navigue et affiche le skeleton (loading.tsx).
+      // L'URL est mise à jour sans rechargement ; un seul refresh suffit.
+      const url = `/ventes/pipeline?highlight=${bookedJobId}`;
+      if (window.location.pathname + window.location.search !== url) {
+        window.history.replaceState(window.history.state, "", url);
+      }
     }
     router.refresh();
     setTimeout(() => setToast(null), 5000);
   };
 
+  // Tous les jobs visibles (initiaux + pages supplémentaires chargées)
+  const allJobs = useMemo(
+    () => [...jobs, ...enAttenteExtra],
+    [jobs, enAttenteExtra]
+  );
+
   // Filtre de base selon le rôle (vendeur voit seulement ses dossiers)
   const roleFiltered = useMemo(
     () =>
       currentSalespersonId
-        ? jobs.filter((j) => j.salesperson_id === currentSalespersonId)
-        : jobs,
-    [jobs, currentSalespersonId]
+        ? allJobs.filter((j) => j.salesperson_id === currentSalespersonId)
+        : allJobs,
+    [allJobs, currentSalespersonId]
   );
 
   // Filtres actifs (statut + drapeau + vendeur + recherche)
+  const today = todayYmd();
+
   const filteredJobs = useMemo(() => {
     return roleFiltered.filter((j) => {
+      if (filterOverdue && !isVisitOverdue(j, today)) return false;
       if (filterStatus !== "all" && j.status !== filterStatus) return false;
       if (filterFlag !== "all" && j.follow_up_flag !== filterFlag) return false;
       if (!currentSalespersonId && filterSalesperson !== "all" && j.salesperson_id !== filterSalesperson) return false;
@@ -2161,7 +2243,7 @@ export function PipelineClient({
       }
       return true;
     });
-  }, [roleFiltered, filterStatus, filterFlag, filterSalesperson, search, currentSalespersonId]);
+  }, [roleFiltered, filterStatus, filterOverdue, filterFlag, filterSalesperson, search, currentSalespersonId, today]);
 
   // Counts pour le dashboard (sur les jobs filtrés par rôle + vendeur, sans filtre statut)
   const baseForCounts = useMemo(
@@ -2178,10 +2260,58 @@ export function PipelineClient({
     () =>
       PIPELINE_STATUSES.map((s) => ({
         status: s,
-        count: baseForCounts.filter((j) => j.status === s).length,
+        // Pour « Va nous rappeler », utiliser le total BD si aucun filtre vendeur actif
+        count:
+          s === "en_attente" && !currentSalespersonId && filterSalesperson === "all"
+            ? enAttenteTotal
+            : baseForCounts.filter((j) => j.status === s).length,
+        overdue:
+          s === "soumission_repartie"
+            ? baseForCounts.filter((j) => isVisitOverdue(j, today)).length
+            : 0,
       })),
-    [baseForCounts]
+    [baseForCounts, today, enAttenteTotal, currentSalespersonId, filterSalesperson]
   );
+
+  // Combien de « Va nous rappeler » sont actuellement chargés côté client
+  const enAttenteLoadedCount = useMemo(
+    () => allJobs.filter((j) => j.status === "en_attente").length,
+    [allJobs]
+  );
+
+  // Afficher « Voir plus » quand tous les en_attente ne sont pas encore chargés
+  const hasMoreEnAttente =
+    !search &&
+    enAttenteLoadedCount < enAttenteTotal &&
+    (filterStatus === "all" || filterStatus === "en_attente") &&
+    !filterOverdue;
+
+  const handleLoadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const more = await fetchMoreEnAttente({ offset: enAttenteLoadedCount });
+      setEnAttenteExtra((prev) => [...prev, ...more]);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const showScheduledCleanupOrder =
+    filterOverdue || filterStatus === "soumission_repartie";
+
+  const listedJobs = useMemo(() => {
+    const ordered = PIPELINE_STATUSES.flatMap((status) => {
+      const group = filteredJobs.filter((j) => j.status === status);
+      if (status === "soumission_repartie" && showScheduledCleanupOrder) {
+        return [...group].sort((a, b) => compareScheduledVisits(a, b, today));
+      }
+      return group;
+    });
+    if (!highlightId) return ordered;
+    const pinned = ordered.find((j) => j.id === highlightId);
+    if (!pinned) return ordered;
+    return [pinned, ...ordered.filter((j) => j.id !== highlightId)];
+  }, [filteredJobs, showScheduledCleanupOrder, today, highlightId]);
 
   return (
     <div className="space-y-5">
@@ -2205,21 +2335,65 @@ export function PipelineClient({
 
       {/* Dashboard — 3 carrés de statut */}
       <div className="grid grid-cols-3 gap-2.5">
-        {statusCounts.map(({ status, count }) => {
+        {statusCounts.map(({ status, count, overdue }) => {
           const accent = pipelineAccent(status);
-          const active = filterStatus === status;
+          const active = filterStatus === status && !filterOverdue;
+          const overdueActive = status === "soumission_repartie" && filterOverdue;
           return (
             <button
               key={status}
               type="button"
-              onClick={() => setFilterStatus((s) => (s === status ? "all" : status))}
+              onClick={() => {
+                if (filterStatus === status && !filterOverdue) {
+                  setFilterStatus("all");
+                  return;
+                }
+                setFilterOverdue(false);
+                setFilterStatus(status);
+              }}
               className={cn(
                 "rounded-xl border p-3.5 text-left transition-colors",
-                active ? accent.squareActive : accent.square
+                overdueActive || active ? accent.squareActive : accent.square
               )}
             >
               <div className={cn("text-2xl font-bold tabular-nums", accent.number)}>{count}</div>
               <div className="text-sm text-muted-foreground mt-0.5">{statusLabel(status)}</div>
+              {overdue > 0 && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (filterOverdue) {
+                      setFilterOverdue(false);
+                      setFilterStatus("all");
+                      return;
+                    }
+                    setFilterStatus("soumission_repartie");
+                    setFilterOverdue(true);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter" && e.key !== " ") return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (filterOverdue) {
+                      setFilterOverdue(false);
+                      setFilterStatus("all");
+                      return;
+                    }
+                    setFilterStatus("soumission_repartie");
+                    setFilterOverdue(true);
+                  }}
+                  className={cn(
+                    "mt-1.5 inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                    overdueActive
+                      ? "border-orange-500 bg-orange-100 text-orange-900"
+                      : "border-orange-300 bg-orange-50 text-orange-800 hover:bg-orange-100"
+                  )}
+                >
+                  {overdue} en retard
+                </span>
+              )}
             </button>
           );
         })}
@@ -2278,29 +2452,50 @@ export function PipelineClient({
       {filteredJobs.length === 0 && (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground text-sm">
-            {search || filterStatus !== "all" || filterSalesperson !== "all"
+            {search || filterStatus !== "all" || filterOverdue || filterSalesperson !== "all"
               ? "Aucun résultat pour ces filtres."
               : "Aucun dossier en cours. Créez un prospect avec le bouton ci-dessus."}
           </CardContent>
         </Card>
       )}
 
+      {/* Note quand la recherche ne couvre pas tous les Va nous rappeler */}
+      {search && enAttenteLoadedCount < enAttenteTotal && (
+        <p className="text-xs text-muted-foreground text-center">
+          Recherche sur les {enAttenteLoadedCount} premiers « Va nous rappeler » chargés sur {enAttenteTotal} au total. Chargez-en plus pour élargir la recherche.
+        </p>
+      )}
+
       <ul className="space-y-2">
-        {PIPELINE_STATUSES.flatMap((status) =>
-          filteredJobs
-            .filter((j) => j.status === status)
-            .map((job) => (
-              <li key={job.id} ref={job.id === highlightId ? highlightRef : null}>
-                <ProspectCard
-                  job={job}
-                  salespeople={salespeople}
-                  onBooked={handleBooked}
-                  highlighted={job.id === highlightId}
-                />
-              </li>
-            ))
-        )}
+        {listedJobs.map((job) => (
+          <li key={job.id} ref={job.id === highlightId ? highlightRef : null}>
+            <ProspectCard
+              job={job}
+              salespeople={salespeople}
+              onBooked={handleBooked}
+              highlighted={job.id === highlightId}
+            />
+          </li>
+        ))}
       </ul>
+
+      {/* Voir plus — Va nous rappeler */}
+      {hasMoreEnAttente && (
+        <div className="flex justify-center pt-1">
+          <Button
+            variant="outline"
+            onClick={handleLoadMore}
+            disabled={loadingMore}
+            className="gap-2 h-9"
+          >
+            {loadingMore
+              ? <Loader2 className="size-3.5 animate-spin" />
+              : null}
+            Voir {Math.min(PIPELINE_PAGE_SIZE, enAttenteTotal - enAttenteLoadedCount)} dossiers de plus
+            <span className="text-muted-foreground text-xs">({enAttenteLoadedCount}/{enAttenteTotal})</span>
+          </Button>
+        </div>
+      )}
 
       {showCreate && (
         <QuickProspectModal

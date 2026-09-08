@@ -9,7 +9,9 @@ import {
   CalendarDays,
   ChevronRight,
   FileText,
+  Home,
   Loader2,
+  User,
   MapPin,
   Phone,
   Sparkles,
@@ -19,6 +21,12 @@ import {
 
 import { moveAppointment, cancelAppointment, findBestSlotsForProspect, type ProspectSlotResult } from "@/actions/sales";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -164,7 +172,6 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   const inp =
     "border-input bg-background h-9 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring";
   const lbl = "block text-sm font-medium mb-1";
-  const wide = mode === "move" && moveTab === "calendar";
 
   return (
     <div
@@ -173,8 +180,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
     >
       <div
         className={cn(
-          "bg-background rounded-xl shadow-xl w-full mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto",
-          wide ? "max-w-3xl" : "max-w-md"
+          "bg-background rounded-xl shadow-xl w-full max-w-md mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto"
         )}
       >
         <div className="flex items-start justify-between gap-3">
@@ -370,7 +376,11 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                           key={key}
                           onClick={() => handleMoveToSlot(s)}
                           disabled={moving}
-                          className="w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm hover:bg-accent transition-colors disabled:opacity-60"
+                          className={`w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors disabled:opacity-60 ${
+                            s.anchoredToClient
+                              ? "border-emerald-500 bg-emerald-50/70 hover:bg-emerald-50"
+                              : "hover:bg-accent"
+                          }`}
                         >
                           <span className="shrink-0 size-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center">
                             {i + 1}
@@ -379,16 +389,26 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                             <div className="font-medium capitalize">
                               {s.dateFormatted} · {s.start_time}
                             </div>
-                            <div className="text-xs text-muted-foreground truncate">{s.context}</div>
-                          </div>
-                          <div className="shrink-0 text-right">
-                            <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-                            {s.travel_seconds !== null && (
-                              <div className="text-[10px]">
-                                <TravelDuration seconds={s.travel_seconds} />
+                            {s.startsFromHome ? (
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                                <Home className="size-3.5 shrink-0" />
+                                <span className="truncate">{s.salesperson_name}</span>
                               </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                                  <User className="size-3.5 shrink-0" />
+                                  <span className="truncate">{s.context}</span>
+                                </div>
+                                <div className="text-xs font-medium text-primary truncate">{s.salesperson_name}</div>
+                              </>
                             )}
                           </div>
+                          {s.travel_seconds !== null && (
+                            <div className="shrink-0 text-right">
+                              <TravelDuration seconds={s.travel_seconds} className="text-sm font-semibold" numberClassName="text-sm font-semibold" />
+                            </div>
+                          )}
                           {isLoading ? (
                             <Loader2 className="size-4 animate-spin shrink-0" />
                           ) : (
@@ -403,23 +423,32 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
             )}
 
             {moveTab === "calendar" && hasGps && (
-              <WeekCalendar
-                prospectLat={appointment.client_lat!}
-                prospectLng={appointment.client_lng!}
-                salespersonId={null}
-                excludeAppointmentId={appointment.id}
-                onSelectSlot={async (pick) => {
-                  const res = await moveAppointment(
-                    appointment.id,
-                    pick.salespersonId,
-                    pick.date,
-                    pick.startTime
-                  );
-                  if (!res.ok) throw new Error(res.message);
-                  onClose();
-                  router.refresh();
-                }}
-              />
+              <Dialog open onOpenChange={(o) => { if (!o) setMoveTab("optimizer"); }}>
+                <DialogContent className="flex h-[94vh] w-[min(1200px,calc(100%-1rem))] max-w-none flex-col gap-3 overflow-hidden p-4 sm:max-w-none">
+                  <DialogHeader className="shrink-0 pr-8">
+                    <DialogTitle>Par calendrier</DialogTitle>
+                  </DialogHeader>
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    <WeekCalendar
+                      prospectLat={appointment.client_lat!}
+                      prospectLng={appointment.client_lng!}
+                      salespersonId={null}
+                      excludeAppointmentId={appointment.id}
+                      onSelectSlot={async (pick) => {
+                        const res = await moveAppointment(
+                          appointment.id,
+                          pick.salespersonId,
+                          pick.date,
+                          pick.startTime
+                        );
+                        if (!res.ok) throw new Error(res.message);
+                        onClose();
+                        router.refresh();
+                      }}
+                    />
+                  </div>
+                </DialogContent>
+              </Dialog>
             )}
 
             {moveTab === "manual" && (

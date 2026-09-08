@@ -1131,6 +1131,10 @@ export type ProspectSlotResult = {
   context: string;
   /** Ville du prospect */
   prospect_city: string | null;
+  /** Vrai voisin (RDV déjà booké) à ≤ 20 min — pas un départ domicile. */
+  anchoredToClient: boolean;
+  /** Premier créneau de la journée : départ du domicile du vendeur. */
+  startsFromHome: boolean;
 };
 
 /**
@@ -1178,7 +1182,7 @@ export async function findBestSlotsForProspect(
   const supabase = await createServerSupabaseClient();
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
-  const in30Days = format(addDays(today, 30), "yyyy-MM-dd");
+  const in30Days = format(addDays(today, 60), "yyyy-MM-dd");
 
   // 1. Vendeurs actifs + horaires + domicile (filtrés si vendeur assigné)
   let spQuery = supabase
@@ -1326,12 +1330,12 @@ export async function findBestSlotsForProspect(
   const apptsFor = (spId: string, date: string): ApptRow[] =>
     allAppts.filter((a) => a.salesperson_id === spId && a.scheduled_date === date);
 
-  // Seuil en secondes : un créneau ancré à un vrai client voisin ≤ ce seuil est prioritaire
-  // sur tout créneau dont l'origine est le domicile du vendeur (même si plus court en valeur absolue).
-  const ANCHOR_THRESHOLD_SEC = 20 * 60;
+  // Seuil vert : voisin client ≤ ce seuil → bordure verte dans l'UI.
+  // N'affecte plus le tri (liste plate par score), seulement l'affichage.
+  const GREEN_THRESHOLD_SEC = 20 * 60;
 
   // 5. Construire et scorer chaque créneau disponible
-  type ScoredSlot = ProspectSlotResult & { score: number; anchoredToClient: boolean };
+  type ScoredSlot = ProspectSlotResult & { score: number; hasClientNeighbor: boolean };
   const scored: ScoredSlot[] = [];
 
   for (const sp of salespeople) {
@@ -1342,7 +1346,7 @@ export async function findBestSlotsForProspect(
 
     const homeIdx = addPos(sp.home_lat as number | null, sp.home_lng as number | null, "");
 
-    for (let offset = 0; offset <= 30; offset++) {
+    for (let offset = 0; offset <= 60; offset++) {
       const date = addDays(today, offset);
       const dow = getISODay(date);
       const cfg = configByDow.get(dow);
@@ -1382,19 +1386,24 @@ export async function findBestSlotsForProspect(
         const score = scoreTravelSeconds(tPrev, tNext);
         const citySuffix = (city: string | null | undefined) =>
           city?.trim() ? ` · ${city.trim()}` : "";
-        const prevLabel = prevAppt?.label ?? `Domicile ${sp.name}`;
+        const startsFromHome = prevAppt == null;
+        const prevLabel = prevAppt?.label ?? "";
         const nextLabel = nextAppt?.label;
         const prospectTag = prospectCity?.trim() || null;
         const context = nextLabel
-          ? `${prevLabel}${citySuffix(prevAppt?.city)} → [prospect${citySuffix(prospectTag)}] → ${nextLabel}${citySuffix(nextAppt?.city)}`
-          : `Après : ${prevLabel}${citySuffix(prevAppt?.city)}${prospectTag ? ` · ${prospectTag}` : ""}`;
+          ? startsFromHome
+            ? `→ ${nextLabel}${citySuffix(nextAppt?.city)}`
+            : `${prevLabel}${citySuffix(prevAppt?.city)} → [prospect${citySuffix(prospectTag)}] → ${nextLabel}${citySuffix(nextAppt?.city)}`
+          : startsFromHome
+            ? ""
+            : `Après : ${prevLabel}${citySuffix(prevAppt?.city)}`;
 
-        // Tier 1 : au moins un voisin est un VRAI RDV client (pas le domicile) à ≤ 20 min.
-        // Cela garantit qu'enchaîner deux clients proches passe avant un départ domicile
-        // même si le domicile est légèrement plus proche en valeur absolue.
+        // hasClientNeighbor = a un vrai voisin client (peu importe la distance) → tri liste.
+        // anchoredToClient  = voisin client ≤ seuil vert → bordure verte dans l'UI.
+        const hasClientNeighbor = prevAppt != null || nextAppt != null;
         const anchoredToClient =
-          (prevAppt != null && tPrev != null && tPrev <= ANCHOR_THRESHOLD_SEC) ||
-          (nextAppt != null && tNext != null && tNext <= ANCHOR_THRESHOLD_SEC);
+          (prevAppt != null && tPrev != null && tPrev <= GREEN_THRESHOLD_SEC) ||
+          (nextAppt != null && tNext != null && tNext <= GREEN_THRESHOLD_SEC);
 
         scored.push({
           salesperson_id: sp.id,
@@ -1407,18 +1416,62 @@ export async function findBestSlotsForProspect(
           prospect_city: prospectTag,
           score,
           anchoredToClient,
+          startsFromHome,
+          hasClientNeighbor,
         });
       }
     }
   }
 
-  // 6. Trier : Tier 1 (ancré à un client proche) avant Tier 2 (domicile / client lointain),
-  //    puis par score croissant à l'intérieur de chaque tier.
-  scored.sort((a, b) => {
-    if (a.anchoredToClient !== b.anchoredToClient) return a.anchoredToClient ? -1 : 1;
-    return a.score - b.score;
-  });
-  const top = scored.slice(0, maxResults).map(({ score: _, anchoredToClient: __, ...rest }) => rest);
+  // 6. Construire la liste finale :
+  //    A) Pour chaque vendeur+jour : garder le meilleur créneau anchoré à un vrai client.
+  //    B) Pour chaque vendeur : ajouter son meilleur créneau de départ domicile,
+  //       seulement si ce vendeur n'a aucun créneau anchoré retenu.
+  //    C) Fusion des deux groupes triée uniquement par score (temps trajet) → top N.
+  //
+  //    Résultat : liste plate triée par temps, domiciles concurrencent les adresses Google.
+
+  // A — max 2 créneaux avec voisin client par vendeur+jour :
+  //     le meilleur slot AVANT le premier RDV du jour (matin) et le meilleur APRÈS (après-midi).
+  //     Ça permet d'offrir un choix matin OU après-midi autour du même client voisin.
+  const anchoredByDayAM = new Map<string, ScoredSlot>(); // meilleur avant le dernier RDV
+  const anchoredByDayPM = new Map<string, ScoredSlot>(); // meilleur après le dernier RDV
+  for (const s of scored) {
+    if (!s.hasClientNeighbor) continue;
+    const key = `${s.salesperson_id}|${s.date}`;
+    // slot "avant" = pas de nextAppt ou prevAppt présent ; "après" = pas de prevAppt ou nextAppt présent
+    // On utilise le contexte pour distinguer : startsFromHome=false et slot avant/après le RDV ancre.
+    // Approximation simple : utiliser l'heure du créneau — avant midi = AM, après = PM.
+    const isAM = s.start_time < "12:00";
+    const map = isAM ? anchoredByDayAM : anchoredByDayPM;
+    const existing = map.get(key);
+    if (!existing || s.score < existing.score) map.set(key, s);
+  }
+  // Fusionner AM et PM en évitant les doublons exacts (même slot)
+  const anchoredSeen = new Set<string>();
+  const anchoredList: ScoredSlot[] = [];
+  for (const s of [...anchoredByDayAM.values(), ...anchoredByDayPM.values()]) {
+    const uniq = `${s.salesperson_id}|${s.date}|${s.start_time}`;
+    if (anchoredSeen.has(uniq)) continue;
+    anchoredSeen.add(uniq);
+    anchoredList.push(s);
+  }
+
+  // B — meilleur départ domicile par vendeur (toujours 1 par vendeur, peu importe s'il a des créneaux clients)
+  const bestHomeByVendor = new Map<string, ScoredSlot>();
+  for (const s of scored) {
+    if (!s.startsFromHome) continue;
+    const existing = bestHomeByVendor.get(s.salesperson_id);
+    if (!existing || s.score < existing.score) bestHomeByVendor.set(s.salesperson_id, s);
+  }
+  const homeList = Array.from(bestHomeByVendor.values());
+
+  // C — fusion + tri par score + top N
+  const merged = [...anchoredList, ...homeList];
+  merged.sort((a, b) => a.score - b.score);
+  const top = merged
+    .slice(0, maxResults)
+    .map(({ score: _, hasClientNeighbor: __, ...rest }) => rest);
 
   return { ok: true, slots: top };
 }
@@ -1485,8 +1538,8 @@ export async function getSlotsForWeekWithScores(
     supabase
       .from("sales_appointments")
       .select(`id, salesperson_id, scheduled_date, start_time, client_lat, client_lng,
-               clients ( name, address_formatted ),
-               installation_addresses!installation_address_id ( lat, lng )`)
+               clients ( name, address_formatted, city ),
+               installation_addresses!installation_address_id ( lat, lng, city, address_formatted )`)
       .neq("status", "cancelled")
       .gte("scheduled_date", weekDates[0])
       .lte("scheduled_date", weekEnd)
@@ -1505,17 +1558,24 @@ export async function getSlotsForWeekWithScores(
       const r = a as {
         id: string; salesperson_id: string; scheduled_date: string; start_time: string;
         client_lat: number | null; client_lng: number | null;
-        clients: { name: string | null; address_formatted: string | null } | null;
-        installation_addresses: { lat: number | null; lng: number | null } | null;
+        clients: { name: string | null; address_formatted: string | null; city: string | null } | null;
+        installation_addresses: { lat: number | null; lng: number | null; city: string | null; address_formatted: string | null } | null;
       };
       const c = Array.isArray(r.clients) ? r.clients[0] : r.clients;
       const ia = Array.isArray(r.installation_addresses) ? r.installation_addresses[0] : r.installation_addresses;
+      const clientCity =
+        ia?.city?.trim() ||
+        cityFromAddress(ia?.address_formatted) ||
+        c?.city?.trim() ||
+        cityFromAddress(c?.address_formatted) ||
+        null;
       return {
         ...r,
         client_lat: r.client_lat ?? ia?.lat ?? null,
         client_lng: r.client_lng ?? ia?.lng ?? null,
         client_name: c?.name ?? null,
         client_address: c?.address_formatted ?? null,
+        client_city: clientCity,
       };
     });
 
@@ -1591,11 +1651,16 @@ export async function getSlotsForWeekWithScores(
 
       const dayAppts = weekAppts
         .filter((a) => a.salesperson_id === sp.id && a.scheduled_date === dateStr)
-        .map((a) => ({
-          time: (a.start_time as string).slice(0, 5),
-          name: a.client_name ?? "—",
-          posIdx: addPos(a.client_lat as number | null, a.client_lng as number | null),
-        }))
+        .map((a) => {
+          const city = (a as { client_city?: string | null }).client_city?.trim();
+          const name = a.client_name ?? "—";
+          return {
+            time: (a.start_time as string).slice(0, 5),
+            name,
+            occupiedLabel: city ? `${name} - ${city}` : name,
+            posIdx: addPos(a.client_lat as number | null, a.client_lng as number | null),
+          };
+        })
         .sort((a, b) => a.time.localeCompare(b.time));
 
       const occupiedTimes = new Set(dayAppts.map((a) => a.time));
@@ -1611,7 +1676,7 @@ export async function getSlotsForWeekWithScores(
             return {
               slot,
               occupied: true,
-              occupiedBy: occ.name,
+              occupiedBy: occ.occupiedLabel,
               travelSeconds: null,
               prevLabel: "",
             };

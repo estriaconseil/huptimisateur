@@ -69,12 +69,10 @@ const s = StyleSheet.create({
 
   // En-tête
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  logo: { width: 80, height: 40, objectFit: "contain" },
-  companyText: { fontSize: 8, color: C.muted, lineHeight: 1.5 },
-  companyName: { fontSize: 10, fontWeight: "bold", color: C.primary, marginBottom: 2 },
+  logo: { width: 225, height: 128, objectFit: "contain" },
   titleBlock: { alignItems: "flex-end" },
   mainTitle: { fontSize: 20, fontWeight: "bold", letterSpacing: 1, color: C.primary },
-  quoteNum: { fontSize: 12, fontWeight: "bold", color: C.accent, marginTop: 4 },
+  quoteNum: { fontSize: 18, fontWeight: "bold", color: C.accent, marginTop: 4 },
   statusPill: { marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: C.bg, borderRadius: 999, border: `1px solid ${C.border}` },
   statusText: { fontSize: 8, color: C.muted },
 
@@ -416,24 +414,17 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
             {logoBase64 && (
               <Image src={logoBase64} style={s.logo} />
             )}
-            <Text style={s.companyName}>Huppé Réfrigération</Text>
-            <Text style={s.companyText}>2710, King Est, Sherbrooke, QC J1G 5H1{"\n"}Tél. 819 566-8061{"\n"}huppe@hupperefrigeration.com</Text>
           </View>
           <View style={s.titleBlock}>
             <Text style={s.mainTitle}>{isInstall ? "INSTALLATION" : "SOUMISSION"}</Text>
             <Text style={s.quoteNum}>N° {quote.quote_number}</Text>
+            <Text style={[s.dateLabel, { marginTop: 8 }]}>Date soumission</Text>
+            <Text style={s.dateValue}>{quote.quote_date}</Text>
             {accepted && (
               <Text style={{ fontSize: 8, fontWeight: "bold", color: C.green, marginTop: 4 }}>
                 Option {page1Letter} retenue
               </Text>
             )}
-          </View>
-        </View>
-
-        <View style={s.flagsRow}>
-          <View style={{ marginLeft: "auto", alignItems: "flex-end" }}>
-            <Text style={s.dateLabel}>Date soumission</Text>
-            <Text style={s.dateValue}>{quote.quote_date}</Text>
           </View>
         </View>
 
@@ -616,11 +607,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
                     <Text style={s.finValue}>{fmt(tvq)} $</Text>
                   </View>
                   <View style={s.finRowDark}>
-                    <Text style={s.finLabelBold}>TOTAL</Text>
-                    <Text style={s.finValueBold}>{fmt(total)} $</Text>
-                  </View>
-                  <View style={s.finRow}>
-                    <Text style={s.finLabelBold}>Total dû</Text>
+                    <Text style={s.finLabelBold}>TOTAL DÛ</Text>
                     <Text style={s.finValueBold}>{fmt(totalDue)} $</Text>
                   </View>
                   {subsidies > 0 && (
@@ -704,7 +691,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
                       <Text style={s.finValue}>{fmt(otherTvq)} $</Text>
                     </View>
                     <View style={s.finRowDark}>
-                      <Text style={s.finLabelBold}>Total :</Text>
+                      <Text style={s.finLabelBold}>TOTAL DÛ</Text>
                       <Text style={s.finValueBold}>{fmt(otherTotal)} $</Text>
                     </View>
                   </View>

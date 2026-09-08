@@ -286,6 +286,7 @@ function OptimizerDialog({
               job={job}
               assigning={assigning}
               onPick={pickSlot}
+              precomputedSuggestions={suggestions}
             />
           )}
         </div>
@@ -298,10 +299,14 @@ function InstallWeekPicker({
   job,
   assigning,
   onPick,
+  precomputedSuggestions,
 }: {
   job: InstallJob;
   assigning: boolean;
   onPick: (teamId: string, date: string, half: "am" | "pm") => void;
+  /** Suggestions déjà calculées par le parent (Meilleur créneau).
+   *  Quand fournies, la navigation semaine n'appelle plus Google — lookup direct. */
+  precomputedSuggestions?: ScheduleSuggestion[];
 }) {
   const [monday, setMonday] = useState(nextAvailableWeekMonday);
   const [loading, setLoading] = useState(true);
@@ -327,18 +332,30 @@ function InstallWeekPicker({
       setError(e instanceof Error ? e.message : "Impossible de charger le calendrier.");
       setLoading(false);
     });
-    void getDistanceSuggestionsForJob(job.id, weekIso, undefined, null, 1).then((res) => {
+
+    // Si on a des suggestions pré-calculées (provenant du tab Meilleur créneau),
+    // on les utilise directement sans appel Google.
+    if (precomputedSuggestions && precomputedSuggestions.length > 0) {
       const next = new Map<string, number | null>();
-      if (res.ok) {
-        for (const s of res.suggestions) {
-          next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
-        }
+      for (const s of precomputedSuggestions) {
+        next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
       }
       setTravelByKey(next);
       setTravelLoading(false);
-    }).catch(() => {
-      setTravelLoading(false);
-    });
+    } else {
+      void getDistanceSuggestionsForJob(job.id, weekIso, undefined, null, 1).then((res) => {
+        const next = new Map<string, number | null>();
+        if (res.ok) {
+          for (const s of res.suggestions) {
+            next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
+          }
+        }
+        setTravelByKey(next);
+        setTravelLoading(false);
+      }).catch(() => {
+        setTravelLoading(false);
+      });
+    }
   }
 
   useEffect(() => {

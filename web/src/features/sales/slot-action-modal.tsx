@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addDays, addWeeks, format, startOfWeek } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, FilePlus, Loader2, MapPin, Plus, Search, Sparkles, X } from "lucide-react";
+import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, FilePlus, Home, Loader2, MapPin, Plus, Search, Sparkles, User, X } from "lucide-react";
 
 import {
   findBestSlotsForProspect,
@@ -277,8 +277,10 @@ function NewClientTab({
   };
 
   const findSlots = async () => {
-    if (!form.install_lat || !form.install_lng) return;
     if (!form.client_name.trim()) { setError("Le nom du client est requis."); return; }
+    if (!form.client_phone.trim()) { setError("Le numéro de téléphone est requis."); return; }
+    if (!form.client_email.trim() || !form.client_email.includes("@")) { setError("Le courriel est requis."); return; }
+    if (!form.install_lat || !form.install_lng) { setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google."); return; }
     setError(null);
 
     // Interception si adresse connue
@@ -393,7 +395,7 @@ function NewClientTab({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className={lbl}>Téléphone</label>
+            <label className={lbl}>Téléphone <span className="text-destructive text-base font-bold leading-none">*</span></label>
             <input
               type="tel"
               className={inp}
@@ -403,7 +405,7 @@ function NewClientTab({
             />
           </div>
           <div>
-            <label className={lbl}>Courriel</label>
+            <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
             <input
               type="email"
               className={inp}
@@ -413,7 +415,7 @@ function NewClientTab({
             />
           </div>
         </div>
-        <DualAddressBlock state={addrState} onChange={setAddr} inp={inp} lbl={lbl} />
+        <DualAddressBlock state={addrState} onChange={setAddr} inp={inp} lbl={lbl} required />
         {addrMatches && addrMatches.length > 0 && (
           <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
             <AlertTriangle className="size-3.5 mt-0.5 shrink-0" />
@@ -573,26 +575,37 @@ function NewClientTab({
               key={key}
               onClick={() => bookSlot(s)}
               disabled={booking}
-              className="w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm hover:bg-accent transition-colors disabled:opacity-60"
+              className={`w-full text-left flex items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors disabled:opacity-60 ${
+                s.anchoredToClient
+                  ? "border-emerald-500 bg-emerald-50/70 hover:bg-emerald-50"
+                  : "hover:bg-accent"
+              }`}
             >
               <span className="shrink-0 size-5 rounded-full bg-primary/10 text-primary text-[11px] font-bold flex items-center justify-center">
                 {i + 1}
               </span>
               <div className="flex-1 min-w-0">
                 <div className="font-medium capitalize">{s.dateFormatted} · {s.start_time}</div>
-                <div className="text-xs text-muted-foreground truncate">{s.context}</div>
-                {s.prospect_city && (
-                  <div className="text-xs font-medium text-primary truncate">{s.prospect_city}</div>
-                )}
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="text-xs font-medium text-primary">{s.salesperson_name}</div>
-                {s.travel_seconds !== null && (
-                  <div className="text-[10px] text-muted-foreground">
-                    <TravelDuration seconds={s.travel_seconds} />
+                {s.startsFromHome ? (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                    <Home className="size-3.5 shrink-0" />
+                    <span className="truncate">{s.salesperson_name}</span>
                   </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground truncate">
+                      <User className="size-3.5 shrink-0" />
+                      <span className="truncate">{s.context}</span>
+                    </div>
+                    <div className="text-xs font-medium text-primary truncate">{s.salesperson_name}</div>
+                  </>
                 )}
               </div>
+              {s.travel_seconds !== null && (
+                <div className="shrink-0 text-right">
+                  <TravelDuration seconds={s.travel_seconds} className="text-sm font-semibold" numberClassName="text-sm font-semibold" />
+                </div>
+              )}
               {isBooking
                 ? <Loader2 className="size-4 animate-spin text-muted-foreground shrink-0" />
                 : <ChevronRight className="size-4 text-muted-foreground shrink-0" />

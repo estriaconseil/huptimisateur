@@ -866,33 +866,32 @@ export function QuoteForm({
       {/* En-tête soumission */}
       <div className="bg-background rounded-xl border p-5 print:p-0">
         <div className="flex items-start justify-between gap-4 flex-wrap">
-          {/* Logo */}
-          <div className="flex items-center gap-3">
-            <div className="relative h-14 w-28">
-              <Image src="/logo.jpg" alt="Huppé Réfrigération" fill className="object-contain" sizes="112px" />
-            </div>
-            <div className="text-xs text-muted-foreground leading-relaxed">
-              <div className="font-semibold text-foreground">Huppé Réfrigération</div>
-              <div>2710, King Est, Sherbrooke, QC J1G 5H1</div>
-              <div>Tél. 819 566-8061</div>
-              <div>huppe@hupperefrigeration.com</div>
-            </div>
+          <div className="relative h-[7.5rem] w-[16.5rem] shrink-0">
+            <Image
+              src="/logo.jpg"
+              alt="Huppé Réfrigération"
+              fill
+              className="object-contain object-left"
+              sizes="264px"
+            />
           </div>
 
           {/* N° soumission + statut */}
           <div className="text-right space-y-2">
             <div className="text-2xl font-bold">SOUMISSION</div>
             <div className="flex items-center justify-end gap-2">
-              <span className="text-sm text-muted-foreground">N°</span>
+              <span className="text-lg font-semibold text-muted-foreground">N°</span>
               <input
                 type="number"
-                className="border-input bg-background h-8 w-28 rounded border px-2 text-sm text-right font-bold"
+                className="border-input bg-background h-11 w-36 rounded border px-2 text-xl text-right font-bold"
                 value={form.quote_number}
                 onChange={setF("quote_number")}
                 title="Modifiable — utile pour saisir un # de soumission papier existant"
               />
             </div>
             <div className="flex flex-col items-end gap-1">
+              <label className="text-xs text-muted-foreground">Date soumission</label>
+              <input type="date" className={`${inp} w-36`} value={form.quote_date} onChange={setF("quote_date")} {...noAc} />
               <span className={`inline-block rounded-full px-3 py-0.5 text-xs font-medium ${statusInfo.color}`}>
                 {statusInfo.label}
               </span>
@@ -902,13 +901,6 @@ export function QuoteForm({
                 </span>
               )}
             </div>
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-6 text-sm border-t pt-4">
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-xs text-muted-foreground">Date soumission</span>
-            <input type="date" className={`${inp} w-36`} value={form.quote_date} onChange={setF("quote_date")} {...noAc} />
           </div>
         </div>
       </div>
@@ -1530,11 +1522,7 @@ export function QuoteForm({
                 <span>{fmt(primaryFin.tvq)} $</span>
               </div>
               <div className="flex justify-between px-4 py-2.5 bg-foreground text-background font-bold border-t text-base">
-                <span>TOTAL</span>
-                <span>{fmt(primaryFin.total)} $</span>
-              </div>
-              <div className="flex justify-between px-4 py-2 text-sm border-t font-semibold">
-                <span>Total dû</span>
+                <span>TOTAL DÛ</span>
                 <span>{fmt(primaryFin.totalDue)} $</span>
               </div>
               {primaryFin.subsidies > 0 && (
@@ -1566,7 +1554,7 @@ export function QuoteForm({
                     <span>{fmt(altFin.tvq)} $</span>
                   </div>
                   <div className="flex justify-between px-4 py-2.5 bg-amber-500 text-white font-bold border-t text-base">
-                    <span>Total :</span>
+                    <span>TOTAL DÛ</span>
                     <span>{fmt(altFin.total)} $</span>
                   </div>
                 </div>

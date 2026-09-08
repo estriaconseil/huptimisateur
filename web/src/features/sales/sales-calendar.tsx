@@ -3,8 +3,9 @@
 import React, { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { addWeeks, format, getISODay, parse, parseISO, startOfWeek } from "date-fns";
+import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
 import { fr } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Clock, FileText, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, FileText, Loader2, Plus, RefreshCw, Search, X } from "lucide-react";
 
 import { searchSalesAppointments, type SalesAppointmentSearchHit } from "@/actions/sales";
 import { cityFromAddress } from "@/lib/address";
@@ -179,6 +180,7 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: 
 
   const prevWeek = () => shiftWeek(-1);
   const nextWeek = () => shiftWeek(1);
+  const dateInputRef = useRef<HTMLInputElement>(null);
 
   const DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
@@ -236,16 +238,52 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: 
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-        <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Semaine précédente">
-          <ChevronLeft className="size-5" />
-        </button>
-        <span className="text-sm font-semibold min-w-52 text-center">
-          Semaine du {format(parseISO(weekDates[0]), "d MMMM yyyy", { locale: fr })}
-        </span>
-        <button onClick={nextWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Semaine suivante">
-          <ChevronRight className="size-5" />
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Semaine précédente">
+            <ChevronLeft className="size-5" />
+          </button>
+          <span className="text-sm font-semibold min-w-52 text-center">
+            Semaine du {format(parseISO(weekDates[0]), "d MMMM yyyy", { locale: fr })}
+          </span>
+          <button onClick={nextWeek} className="p-1.5 rounded-lg hover:bg-muted transition-colors" aria-label="Semaine suivante">
+            <ChevronRight className="size-5" />
+          </button>
+
+          <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
+
+          {/* Input date caché — ouvert par le bouton calendrier */}
+          <input
+            ref={dateInputRef}
+            type="date"
+            className="sr-only"
+            value={weekDates[0] ?? ""}
+            onChange={(e) => {
+              if (!e.target.value) return;
+              navigateToMonday(parseISO(e.target.value));
+            }}
+            aria-label="Aller à une date"
+          />
+          <button
+            onClick={() => {
+              const el = dateInputRef.current;
+              if (!el) return;
+              typeof el.showPicker === "function" ? el.showPicker() : el.click();
+            }}
+            className="p-1.5 rounded-lg hover:bg-muted transition-colors"
+            title="Aller à une date"
+            aria-label="Choisir une date"
+          >
+            <CalendarDays className="size-4" />
+          </button>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => navigateToMonday(defaultBusinessWeekMonday())}
+          >
+            Cette semaine
+          </Button>
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => {

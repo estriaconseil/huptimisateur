@@ -8,11 +8,11 @@ import {
   startOfWeek,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-import { assignJobToSlot, removeSchedule } from "@/actions/schedules";
+import { assignJobToSlot, removeSchedule, searchInstallSchedules, type InstallSearchHit } from "@/actions/schedules";
 import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
 import { getJobDetails, type JobFullDetail } from "@/actions/jobs";
 import { rankJobsFromOrigin, type RankedPickerJob } from "@/actions/picker";
@@ -70,6 +70,7 @@ type Props = {
   teamBlocks: TeamBlock[];
   initialSuggestJobId: string | null;
   initialSuggestFlag: boolean;
+  highlightScheduleId?: string | null;
 };
 
 export function DispatchBoard(props: Props) {
@@ -84,7 +85,11 @@ export function DispatchBoard(props: Props) {
     teamBlocks,
     initialSuggestJobId,
     initialSuggestFlag,
+    highlightScheduleId,
   } = props;
+
+  const [highlightId, setHighlightId] = useState<string | null>(highlightScheduleId ?? null);
+  useEffect(() => { setHighlightId(highlightScheduleId ?? null); }, [highlightScheduleId]);
 
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -167,6 +172,32 @@ export function DispatchBoard(props: Props) {
   }, [suggestJobId, jobsForPicker, schedules]);
 
   const dateInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Recherche client install ──
+  const [installSearch, setInstallSearch] = useState("");
+  const [installSearchResults, setInstallSearchResults] = useState<InstallSearchHit[]>([]);
+  const [installSearchLoading, setInstallSearchLoading] = useState(false);
+  const installSearchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const q = installSearch.trim();
+    if (installSearchDebounce.current) clearTimeout(installSearchDebounce.current);
+    if (q.length < 2) { setInstallSearchResults([]); setInstallSearchLoading(false); return; }
+    setInstallSearchLoading(true);
+    installSearchDebounce.current = setTimeout(() => {
+      void searchInstallSchedules(q).then((res) => {
+        setInstallSearchLoading(false);
+        setInstallSearchResults(res.ok ? res.results : []);
+      });
+    }, 300);
+    return () => { if (installSearchDebounce.current) clearTimeout(installSearchDebounce.current); };
+  }, [installSearch]);
+
+  const handleInstallSearchSelect = (hit: InstallSearchHit) => {
+    setInstallSearch("");
+    setInstallSearchResults([]);
+    router.push(`/dispatch?week=${encodeURIComponent(hit.weekMonday)}&highlight=${encodeURIComponent(hit.scheduleId)}`);
+  };
 
   // ── Refresh automatique (2 min) — désactivé quand un dialogue est ouvert ──
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -503,6 +534,57 @@ export function DispatchBoard(props: Props) {
           </Button>
         </div>
 
+        {/* Recherche client install */}
+        <div className="relative">
+          <div className="flex items-center gap-1.5 rounded-lg border bg-background px-2 py-1.5 text-sm focus-within:ring-1 focus-within:ring-ring">
+            {installSearchLoading
+              ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+              : <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            }
+            <input
+              value={installSearch}
+              onChange={(e) => setInstallSearch(e.target.value)}
+              placeholder="Rechercher un client…"
+              className="w-40 bg-transparent outline-none placeholder:text-muted-foreground"
+              aria-label="Rechercher une installation"
+            />
+            {installSearch && (
+              <button
+                type="button"
+                onClick={() => { setInstallSearch(""); setInstallSearchResults([]); }}
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Effacer"
+              >
+                <X className="size-3.5" />
+              </button>
+            )}
+          </div>
+          {/* Résultats */}
+          {installSearchResults.length > 0 && (
+            <div className="absolute left-0 z-50 mt-1 w-72 rounded-lg border bg-background shadow-lg">
+              {installSearchResults.map((hit) => (
+                <button
+                  key={hit.scheduleId}
+                  type="button"
+                  onClick={() => handleInstallSearchSelect(hit)}
+                  className="flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted first:rounded-t-lg last:rounded-b-lg"
+                >
+                  <span className="font-medium">{hit.clientName}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {hit.scheduledDate} · {hit.teamName}
+                    {hit.clientCity ? ` · ${hit.clientCity}` : ""}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {installSearch.trim().length >= 2 && !installSearchLoading && installSearchResults.length === 0 && (
+            <div className="absolute left-0 z-50 mt-1 w-64 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground shadow-lg">
+              Aucune installation trouvée.
+            </div>
+          )}
+        </div>
+
         {/* Boutons droite */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Indicateur de refresh */}
@@ -647,6 +729,7 @@ export function DispatchBoard(props: Props) {
                             phone={fullDayBusy.phone}
                             email={fullDayBusy.email}
                             missingSerial={fullDayBusy.missingSerial}
+                            highlighted={highlightId === fullDayBusy.scheduleId}
                             onOpenDetail={() =>
                               openDetail(team.id, dateStr, {
                                 kind: "am",
@@ -687,6 +770,7 @@ export function DispatchBoard(props: Props) {
                               phone={amBusy?.phone}
                               email={amBusy?.email}
                               missingSerial={amBusy?.missingSerial}
+                              highlighted={!!amBusy && highlightId === amBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "am")}
                               onRequestDeleteBlock={setBlockToDelete}
                               onOpenDetail={
@@ -716,6 +800,7 @@ export function DispatchBoard(props: Props) {
                               phone={pmBusy?.phone}
                               email={pmBusy?.email}
                               missingSerial={pmBusy?.missingSerial}
+                              highlighted={!!pmBusy && highlightId === pmBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "pm")}
                               onRequestDeleteBlock={setBlockToDelete}
                               onOpenDetail={
@@ -805,8 +890,8 @@ export function DispatchBoard(props: Props) {
               })()}
               {pickerOriginLabel && (
                 <p>
-                  Liste triée par proximité depuis {pickerOriginLabel} (quand aucune recherche
-                  n&apos;est active).
+                  Les 10 plus proches depuis {pickerOriginLabel} (vol d&apos;oiseau, pas Google).
+                  Recherche pour voir les autres.
                 </p>
               )}
             </div>
@@ -1310,14 +1395,16 @@ function FullDayCell(props: {
   phone?: string | null;
   email?: string | null;
   missingSerial?: boolean;
+  highlighted?: boolean;
   onOpenDetail?: () => void;
 }) {
-  const { labelText, city, phone, email, missingSerial, onOpenDetail } = props;
+  const { labelText, city, phone, email, missingSerial, highlighted, onOpenDetail } = props;
   const hasContact = phone || email;
 
   const cellClassName = cn(
     "flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left transition-colors cursor-pointer hover:brightness-90",
-    missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#00854d] text-white"
+    missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#00854d] text-white",
+    highlighted && "ring-2 ring-inset ring-white animate-pulse",
   );
 
   const cellChildren = (
@@ -1376,6 +1463,7 @@ function HalfCell(props: {
   phone?: string | null;
   email?: string | null;
   missingSerial?: boolean;
+  highlighted?: boolean;
   onPick: () => void;
   onRequestDeleteBlock?: (block: TeamBlock) => void;
   onOpenDetail?: () => void;
@@ -1395,6 +1483,7 @@ function HalfCell(props: {
     phone,
     email,
     missingSerial,
+    highlighted,
     onPick,
     onRequestDeleteBlock,
     onOpenDetail,
@@ -1425,7 +1514,8 @@ function HalfCell(props: {
     const hasContact = phone || email;
     const cellClassName = cn(
       "flex h-[52px] w-full flex-1 flex-col items-start overflow-hidden px-2 py-1 text-left transition-colors cursor-pointer hover:brightness-90",
-      missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#0073ea] text-white"
+      missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#0073ea] text-white",
+      highlighted && "ring-2 ring-inset ring-white animate-pulse",
     );
     const cellChildren = (
       <>

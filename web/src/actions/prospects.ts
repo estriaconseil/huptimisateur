@@ -49,6 +49,13 @@ export async function createProspect(input: {
   if (!input.install_address && input.address) input = { ...input, install_address: input.address };
   if (input.install_lat == null && input.lat != null) input = { ...input, install_lat: input.lat };
   if (input.install_lng == null && input.lng != null) input = { ...input, install_lng: input.lng };
+
+  // Champs obligatoires pour tout nouveau prospect
+  if (!input.name?.trim()) return { ok: false, message: "Le nom du client est requis." };
+  if (!n(input.phone)) return { ok: false, message: "Le numéro de téléphone est requis." };
+  if (!n(input.email) || !input.email!.includes("@")) return { ok: false, message: "Le courriel est requis." };
+  if (!n(input.install_address)) return { ok: false, message: "L'adresse d'installation est requise." };
+
   const supabase = await createServerSupabaseClient();
 
   const { data: { user } } = await supabase.auth.getUser();

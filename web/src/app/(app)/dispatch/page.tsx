@@ -4,7 +4,7 @@ import { loadDispatchPageData } from "@/features/dispatch/load-dispatch-data";
 export default async function DispatchPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string; jobId?: string; suggest?: string }>;
+  searchParams: Promise<{ week?: string; jobId?: string; suggest?: string; highlight?: string }>;
 }) {
   const sp = await searchParams;
   const data = await loadDispatchPageData(sp.week);
@@ -36,6 +36,7 @@ export default async function DispatchPage({
         teamBlocks={data.teamBlocks}
         initialSuggestJobId={typeof sp.jobId === "string" ? sp.jobId : null}
         initialSuggestFlag={sp.suggest === "1"}
+        highlightScheduleId={typeof sp.highlight === "string" ? sp.highlight : null}
       />
     </div>
   );
