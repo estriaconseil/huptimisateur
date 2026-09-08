@@ -188,28 +188,29 @@ export async function searchInstallSchedules(
 
   if (error) return { ok: false, message: error.message };
 
+  type Rel<T> = T | T[] | null;
   type RawRow = {
     id: string;
     job_id: string;
     scheduled_date: string;
     status: string;
-    teams: { name: string } | { name: string }[] | null;
-    jobs: {
+    teams: Rel<{ name: string }>;
+    jobs: Rel<{
       id: string;
-      clients: { name: string; city: string | null } | { name: string; city: string | null }[] | null;
-      installation_addresses: { city: string | null } | { city: string | null }[] | null;
-    } | null;
+      clients: Rel<{ name: string; city: string | null }>;
+      installation_addresses: Rel<{ city: string | null }>;
+    }>;
   };
 
-  function unwrap<T>(v: T | T[] | null): T | null {
+  function unwrap<T>(v: T | T[] | null | undefined): T | null {
     if (!v) return null;
     return Array.isArray(v) ? (v[0] ?? null) : v;
   }
 
   const hits: InstallSearchHit[] = [];
-  for (const row of (data ?? []) as RawRow[]) {
+  for (const row of (data ?? []) as unknown as RawRow[]) {
     const team = unwrap(row.teams);
-    const job = row.jobs;
+    const job = unwrap(row.jobs);
     if (!job) continue;
     const client = unwrap(job.clients);
     const instAddr = unwrap(job.installation_addresses);

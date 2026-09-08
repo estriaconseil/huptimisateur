@@ -8,6 +8,11 @@
     "start": "next start",
     "lint": "eslint"
   },
+  "allowScripts": {
+    "msw": true,
+    "sharp": true,
+    "unrs-resolver": true
+  },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
     "@googlemaps/js-api-loader": "^2.0.2",
