@@ -87,7 +87,6 @@ const JOB_STATUSES = [
   { value: "a_planifier",           label: "À planifier" },
   { value: "reparti",               label: "Réparti" },
   { value: "retour_a_faire",        label: "Retour à faire" },
-  { value: "facturation",           label: "Facturation" },
   { value: "complete",              label: "Complété" },
   { value: "termine",               label: "Terminé" },
   { value: "annule",                label: "Annulé" },
@@ -101,7 +100,6 @@ const STATUS_PRIORITY: string[] = [
   "soumission_en_attente",
   "en_attente",
   "reparti",
-  "facturation",
   "complete",
   "termine",
   "annule",
@@ -125,7 +123,7 @@ function accentBarForJobs(jobs: { status: string }[]): string {
     case "soumission_repartie":   return "bg-blue-500";
     case "en_attente":            return "bg-violet-400";
     case "a_planifier":           return "bg-emerald-500";
-    case "reparti":               return "bg-green-500";
+    case "reparti":               return "bg-blue-500";
     case "retour_a_faire":        return "bg-orange-500";
     case "annule":                return "bg-red-400";
     default:                      return "bg-slate-300";

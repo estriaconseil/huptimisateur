@@ -2,9 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireUser } from "@/lib/auth/require-role";
+import { canTransition } from "@/lib/job-state-machine";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { EditClientFormValues, EditJobFormValues } from "@/lib/validations/client-job";
-import type { Client, InstallationAddress, Job } from "@/types/domain";
+import type { Client, InstallationAddress, Job, JobStatus } from "@/types/domain";
 
 // ── Types retour ─────────────────────────────────────────────────────────────
 
@@ -38,51 +40,9 @@ export type ClientSearchResult = {
   }>;
 };
 
-export async function searchClients(
-  q: string
-): Promise<{ ok: true; data: ClientSearchResult[] } | Err> {
-  if (q.trim().length < 2) return { ok: true as const, data: [] };
-
-  const supabase = await createServerSupabaseClient();
-  const safe = q.trim().replace(/[%_\\]/g, "\\$&");
-  const pattern = `%${safe}%`;
-
-  // Recherche en parallèle : clients (nom/tél/ville) + adresses d'installation
-  const [clientsRes, addrsRes] = await Promise.all([
-    supabase
-      .from("clients")
-      .select("id")
-      .or(`name.ilike.${pattern},phone.ilike.${pattern},billing_city.ilike.${pattern}`)
-      .limit(25),
-    supabase
-      .from("installation_addresses")
-      .select("client_id")
-      .ilike("address_formatted", pattern)
-      .limit(25),
-  ]);
-
-  if (clientsRes.error) return { ok: false as const, message: clientsRes.error.message };
-
-  // Union des client_ids trouvés (max 25 uniques)
-  const ids = new Set<string>([
-    ...(clientsRes.data ?? []).map((r) => r.id),
-    ...(addrsRes.data ?? []).map((r) => r.client_id),
-  ]);
-  if (ids.size === 0) return { ok: true as const, data: [] };
-
-  const { data, error } = await supabase
-    .from("clients")
-    .select(
-      `id, name, phone, email, billing_address, billing_city, billing_postal,
-       installation_addresses ( id, label, address_formatted, city, postal_code, lat, lng ),
-       jobs ( id, status, installation_address_id, quotes ( quote_number ) )`
-    )
-    .in("id", [...ids].slice(0, 25))
-    .order("name");
-
-  if (error) return { ok: false as const, message: error.message };
-
-  const mapped = (data ?? []).map((r) => {
+/** Mappe les lignes brutes Supabase en `ClientSearchResult[]`. */
+function mapClientRows(data: unknown[]): ClientSearchResult[] {
+  return data.map((r) => {
     const row = r as {
       id: string; name: string; phone: string | null; email: string | null;
       billing_address: string | null; billing_city: string | null; billing_postal: string | null;
@@ -119,8 +79,89 @@ export async function searchClients(
       jobs,
     };
   });
+}
 
-  return { ok: true as const, data: mapped };
+const CLIENT_DETAIL_SELECT = `id, name, phone, email, billing_address, billing_city, billing_postal,
+  installation_addresses ( id, label, address_formatted, city, postal_code, lat, lng ),
+  jobs ( id, status, installation_address_id, quotes ( quote_number ) )`;
+
+export async function searchClients(
+  q: string,
+  salespersonId?: string | null
+): Promise<{ ok: true; data: ClientSearchResult[] } | Err> {
+  const noSearch = q.trim().length < 2;
+
+  // Sans recherche et sans filtre vendeur → rien
+  if (noSearch && !salespersonId) return { ok: true as const, data: [] };
+
+  const supabase = await createServerSupabaseClient();
+
+  // Résoudre les client_ids du vendeur (si filtre vendeur)
+  let vendeurClientIds: Set<string> | null = null;
+  if (salespersonId) {
+    const { data: spJobs } = await supabase
+      .from("jobs")
+      .select("client_id")
+      .eq("salesperson_id", salespersonId);
+    vendeurClientIds = new Set(
+      (spJobs ?? []).map((j) => j.client_id as string).filter(Boolean)
+    );
+    if (vendeurClientIds.size === 0) return { ok: true as const, data: [] };
+  }
+
+  // Pas de recherche mais filtre vendeur → retourner tous leurs clients
+  if (noSearch && vendeurClientIds) {
+    const { data, error } = await supabase
+      .from("clients")
+      .select(CLIENT_DETAIL_SELECT)
+      .in("id", [...vendeurClientIds].slice(0, 50))
+      .order("name");
+    if (error) return { ok: false as const, message: error.message };
+    return { ok: true as const, data: mapClientRows(data ?? []) };
+  }
+
+  // Recherche textuelle
+  const safe = q.trim().replace(/[%_\\]/g, "\\$&");
+  const pattern = `%${safe}%`;
+
+  // Recherche en parallèle : clients (nom/tél/ville) + adresses d'installation
+  const [clientsRes, addrsRes] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("id")
+      .or(`name.ilike.${pattern},phone.ilike.${pattern},billing_city.ilike.${pattern}`)
+      .limit(25),
+    supabase
+      .from("installation_addresses")
+      .select("client_id")
+      .ilike("address_formatted", pattern)
+      .limit(25),
+  ]);
+
+  if (clientsRes.error) return { ok: false as const, message: clientsRes.error.message };
+
+  // Union des client_ids trouvés
+  let ids = new Set<string>([
+    ...(clientsRes.data ?? []).map((r) => r.id),
+    ...(addrsRes.data ?? []).map((r) => r.client_id),
+  ]);
+
+  // Si filtre vendeur, intersecter avec ses clients
+  if (vendeurClientIds) {
+    ids = new Set([...ids].filter((id) => vendeurClientIds!.has(id)));
+  }
+
+  if (ids.size === 0) return { ok: true as const, data: [] };
+
+  const { data, error } = await supabase
+    .from("clients")
+    .select(CLIENT_DETAIL_SELECT)
+    .in("id", [...ids].slice(0, 25))
+    .order("name");
+
+  if (error) return { ok: false as const, message: error.message };
+
+  return { ok: true as const, data: mapClientRows(data ?? []) };
 }
 
 // ── reassignJobToClient ───────────────────────────────────────────────────────
@@ -287,7 +328,29 @@ export async function updateJob(
   jobId: string,
   data: EditJobFormValues
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
+
+  const { data: current, error: currentErr } = await supabase
+    .from("jobs")
+    .select("status")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (currentErr || !current) {
+    return { ok: false as const, message: currentErr?.message ?? "Job introuvable" };
+  }
+
+  if (data.status !== current.status) {
+    if (!canTransition(current.status as JobStatus, data.status as JobStatus)) {
+      return {
+        ok: false as const,
+        message: `Transition invalide : ${current.status} → ${data.status}.`,
+      };
+    }
+  }
 
   const spId = data.salesperson_id !== undefined ? (data.salesperson_id || null) : undefined;
 

@@ -3,11 +3,18 @@
 import { format, getDay, parse, startOfWeek } from "date-fns";
 import { revalidatePath } from "next/cache";
 
-import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
+import { logActivity } from "@/actions/activity";
+import { requireStaff } from "@/lib/auth/require-role";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { jobBlocksFullDay } from "@/services/planning/slot-rules";
-import { logActivity } from "@/actions/activity";
-import type { ScheduleSlot } from "@/types/domain";
+import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
+import type { JobStatus, ScheduleSlot } from "@/types/domain";
+
+const ASSIGNABLE_STATUSES: JobStatus[] = [
+  "a_planifier",
+  "retour_a_faire",
+  "reparti", // déplacement d'un créneau déjà placé
+];
 
 function isWeekendYmd(ymd: string): boolean {
   const d = parse(ymd, "yyyy-MM-dd", new Date());
@@ -17,8 +24,8 @@ function isWeekendYmd(ymd: string): boolean {
 
 /**
  * Place une job sur un créneau.
- * Remplace atomiquement tout schedule « planned » existant pour cette job
- * (évite les doublons au déplacement).
+ * Si un schedule planned existe déjà → UPDATE (pas de delete-first).
+ * Sinon → INSERT. Le statut job passe à « reparti ».
  */
 export async function assignJobToSlot(input: {
   jobId: string;
@@ -28,18 +35,32 @@ export async function assignJobToSlot(input: {
   fullDayThresholdHours: number;
   estimatedDurationHours: number;
 }) {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return { ok: false as const, message: "Non authentifié" };
-  }
 
   if (isWeekendYmd(input.scheduledDate)) {
     return {
       ok: false as const,
       message: "Les interventions ne sont pas planifiées le samedi ni le dimanche.",
+    };
+  }
+
+  const { data: job, error: jobFetchErr } = await supabase
+    .from("jobs")
+    .select("id, status")
+    .eq("id", input.jobId)
+    .maybeSingle();
+
+  if (jobFetchErr || !job) {
+    return { ok: false as const, message: jobFetchErr?.message ?? "Job introuvable" };
+  }
+
+  if (!ASSIGNABLE_STATUSES.includes(job.status as JobStatus)) {
+    return {
+      ok: false as const,
+      message: `Impossible de planifier un job en statut « ${job.status} ».`,
     };
   }
 
@@ -56,33 +77,50 @@ export async function assignJobToSlot(input: {
     return { ok: false as const, message: "Ce créneau est bloqué pour cette équipe." };
   }
 
-  // Libère l'ancien créneau (déplacement / re-placement) avant d'insérer
-  const { error: clearErr } = await supabase
+  const { data: existing } = await supabase
     .from("schedules")
-    .delete()
+    .select("id")
     .eq("job_id", input.jobId)
-    .eq("status", "planned");
+    .eq("status", "planned")
+    .maybeSingle();
 
-  if (clearErr) {
-    return { ok: false as const, message: clearErr.message };
-  }
+  if (existing?.id) {
+    const { error } = await supabase
+      .from("schedules")
+      .update({
+        team_id: input.teamId,
+        scheduled_date: input.scheduledDate,
+        slot_type,
+      })
+      .eq("id", existing.id);
 
-  const { error } = await supabase.from("schedules").insert({
-    job_id: input.jobId,
-    team_id: input.teamId,
-    scheduled_date: input.scheduledDate,
-    slot_type,
-    status: "planned",
-  });
-
-  if (error) {
-    if (error.code === "23505") {
-      return {
-        ok: false as const,
-        message: "Conflit de planification. Réessayez ou choisissez un autre créneau.",
-      };
+    if (error) {
+      if (error.code === "23505") {
+        return {
+          ok: false as const,
+          message: "Conflit de planification. Réessayez ou choisissez un autre créneau.",
+        };
+      }
+      return { ok: false as const, message: error.message };
     }
-    return { ok: false as const, message: error.message };
+  } else {
+    const { error } = await supabase.from("schedules").insert({
+      job_id: input.jobId,
+      team_id: input.teamId,
+      scheduled_date: input.scheduledDate,
+      slot_type,
+      status: "planned",
+    });
+
+    if (error) {
+      if (error.code === "23505") {
+        return {
+          ok: false as const,
+          message: "Conflit de planification. Réessayez ou choisissez un autre créneau.",
+        };
+      }
+      return { ok: false as const, message: error.message };
+    }
   }
 
   const { error: jobErr } = await supabase
@@ -91,11 +129,17 @@ export async function assignJobToSlot(input: {
     .eq("id", input.jobId);
 
   if (jobErr) {
-    console.error("[assignJobToSlot] Impossible de mettre à jour le statut de la job :", jobErr.message);
+    return {
+      ok: false as const,
+      message: `Créneau enregistré mais statut non mis à jour : ${jobErr.message}`,
+    };
   }
 
-  // Journal d'activité
-  const { data: teamRow } = await supabase.from("teams").select("name").eq("id", input.teamId).maybeSingle();
+  const { data: teamRow } = await supabase
+    .from("teams")
+    .select("name")
+    .eq("id", input.teamId)
+    .maybeSingle();
   await logActivity(input.jobId, "schedule_assigned", {
     date: input.scheduledDate,
     slot: slot_type,
@@ -108,13 +152,10 @@ export async function assignJobToSlot(input: {
 }
 
 export async function removeSchedule(scheduleId: string) {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) {
-    return { ok: false as const, message: "Non authentifié" };
-  }
 
   const { data: row, error: fetchErr } = await supabase
     .from("schedules")
@@ -156,8 +197,8 @@ export async function removeSchedule(scheduleId: string) {
 export type InstallSearchHit = {
   scheduleId: string;
   jobId: string;
-  scheduledDate: string;   // yyyy-MM-dd
-  weekMonday: string;      // yyyy-MM-dd — lundi de la semaine à afficher
+  scheduledDate: string; // yyyy-MM-dd
+  weekMonday: string; // yyyy-MM-dd — lundi de la semaine à afficher
   teamName: string;
   clientName: string;
   clientCity: string | null;
@@ -165,8 +206,11 @@ export type InstallSearchHit = {
 };
 
 export async function searchInstallSchedules(
-  query: string,
+  query: string
 ): Promise<{ ok: true; results: InstallSearchHit[] } | { ok: false; message: string }> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const q = query.trim().toLowerCase();
   if (q.length < 2) return { ok: true, results: [] };
 
@@ -181,7 +225,7 @@ export async function searchInstallSchedules(
          id,
          clients ( name, city ),
          installation_addresses!installation_address_id ( city )
-       )`,
+       )`
     )
     .eq("status", "planned")
     .order("scheduled_date", { ascending: true });
@@ -227,19 +271,25 @@ export async function searchInstallSchedules(
 
     if (!haystack.includes(q)) continue;
 
+    const monday = format(
+      startOfWeek(parse(row.scheduled_date, "yyyy-MM-dd", new Date()), {
+        weekStartsOn: 1,
+      }),
+      "yyyy-MM-dd"
+    );
+
     hits.push({
       scheduleId: row.id,
-      jobId: row.job_id,
+      jobId: job.id,
       scheduledDate: row.scheduled_date,
-      weekMonday: format(
-        startOfWeek(new Date(row.scheduled_date + "T12:00:00"), { weekStartsOn: 1 }),
-        "yyyy-MM-dd",
-      ),
+      weekMonday: monday,
       teamName: team?.name ?? "—",
       clientName: client?.name ?? "—",
-      clientCity: instAddr?.city ?? client?.city ?? null,
+      clientCity: client?.city ?? null,
       installCity: instAddr?.city ?? null,
     });
+
+    if (hits.length >= 25) break;
   }
 
   return { ok: true, results: hits };

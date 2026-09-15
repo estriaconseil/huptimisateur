@@ -28,6 +28,10 @@ export type AppointmentRow = {
   id: string;
   salesperson_id: string;
   client_id: string;
+  /** Adresse d'installation liée. */
+  installation_address_id: string | null;
+  /** ID du job lié (pour lien pipeline prospect). */
+  job_id: string | null;
   /** Infos client via JOIN (chargées dans loadSalesPageData) */
   client_name: string;
   client_phone: string | null;

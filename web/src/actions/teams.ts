@@ -2,10 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireAdmin } from "@/lib/auth/require-role";
 import { PG_FK_VIOLATION } from "@/lib/constants";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export async function updateTeamActive(teamId: string, active: boolean) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("teams").update({ active }).eq("id", teamId);
 
@@ -22,6 +26,9 @@ export async function createTeam(data: {
   color?: string | null;
   notes?: string | null;
 }) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const name = data.name.trim();
   if (!name) {
     return { ok: false as const, message: "Le nom de l'équipe est requis." };
@@ -45,6 +52,9 @@ export async function createTeam(data: {
 }
 
 export async function deleteTeam(teamId: string) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("teams").delete().eq("id", teamId);
 

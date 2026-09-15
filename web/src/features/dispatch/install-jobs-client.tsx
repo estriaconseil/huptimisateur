@@ -13,7 +13,6 @@ import {
   MapPin,
   MessageSquare,
   Pencil,
-  Phone,
   PlusCircle,
   Search,
   Sparkles,
@@ -22,7 +21,6 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { statusLabel, statusColor } from "@/lib/job-status";
@@ -76,6 +74,19 @@ const STATUS_TABS = [
   { key: "retour_a_faire", label: "Retour à faire" },
 ] as const;
 type TabKey = (typeof STATUS_TABS)[number]["key"];
+
+function installAccent(status: string) {
+  switch (status) {
+    case "a_planifier":
+      return { bar: "border-l-emerald-500", badge: "bg-emerald-100 text-emerald-800" };
+    case "reparti":
+      return { bar: "border-l-blue-500", badge: "bg-blue-100 text-blue-800" };
+    case "retour_a_faire":
+      return { bar: "border-l-orange-500", badge: "bg-orange-100 text-orange-800" };
+    default:
+      return { bar: "border-l-border", badge: statusColor(status) };
+  }
+}
 
 function slotLabel(s: string) {
   if (s === "am") return "Avant-midi";
@@ -1020,7 +1031,6 @@ export function InstallJobsClient({
             {filtered.map((job) => {
               const isHighlighted = job.id === scrollJobId;
               const clientName = job.clients?.name ?? "Client sans nom";
-              const installAddr = job.installation_address?.address_formatted ?? job.clients?.address_formatted ?? null;
               const city =
                 job.installation_address?.city ??
                 cityFromAddress(job.installation_address?.address_formatted) ??
@@ -1030,177 +1040,138 @@ export function InstallJobsClient({
               const pref = job.preferred_date
                 ? format(parseISO(job.preferred_date), "d MMMM yyyy", { locale: fr })
                 : null;
-              const durationLabel =
-                job.estimated_duration_hours === 8 ? "Journée (8 h)" : "Demi-journée (4 h)";
+              const durationLabel = job.estimated_duration_hours === 8 ? "8 h" : "4 h";
+              const accent = installAccent(job.status);
+              const metaParts = [city, job.clients?.phone, durationLabel].filter(Boolean);
 
               return (
                 <li key={job.id} ref={isHighlighted ? highlightRef : null}>
                   <Card
                     className={cn(
-                      "transition-shadow hover:shadow-sm",
-                      isHighlighted && "ring-2 ring-primary shadow-md"
+                      "hover:shadow-sm transition-shadow border-l-4 bg-white",
+                      accent.bar,
+                      isHighlighted && "ring-2 ring-emerald-500 shadow-md"
                     )}
                   >
-                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-                      {/* ── Infos ── */}
-                      <div className="min-w-0 flex-1 space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold">{clientName}</span>
-                          <span
-                            className={cn(
-                              "rounded-full px-2 py-0.5 text-[11px] font-medium",
-                              statusColor(job.status)
-                            )}
-                          >
-                            {statusLabel(job.status)}
-                          </span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {durationLabel}
-                          </Badge>
-                          {job.accepted_option && (
-                            <Badge className="text-[10px] bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
-                              Option {job.accepted_option.toUpperCase()} retenue
-                            </Badge>
-                          )}
-                          {isHighlighted && (
-                            <Badge className="text-[10px] bg-primary text-primary-foreground">
-                              Nouveau
-                            </Badge>
-                          )}
-                        </div>
-
-                        {/* Créneau réparti */}
-                        {job.schedule && (
-                          <p className="text-xs text-emerald-700 flex items-center gap-1.5">
-                            <CalendarDays className="size-3" />
-                            {format(
-                              parseISO(job.schedule.scheduled_date),
-                              "EEEE d MMMM yyyy",
-                              { locale: fr }
-                            )}
-                            {job.schedule.team_name && (
-                              <span className="text-muted-foreground">
-                                · {job.schedule.team_name}
+                    <CardContent className="p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold">{clientName}</span>
+                            {job.installation_address?.lat && (
+                              <span className="text-[10px] text-emerald-600 flex items-center gap-0.5">
+                                <MapPin className="size-2.5" />GPS
                               </span>
                             )}
-                          </p>
-                        )}
-
-                        {pref && (
-                          <p className="text-muted-foreground text-xs">
-                            Date souhaitée : {pref}
-                          </p>
-                        )}
-
-                        {job.clients?.phone && (
-                          <p className="text-muted-foreground text-xs flex items-center gap-1">
-                            <Phone className="size-3" />
-                            <a href={`tel:${job.clients.phone}`} className="hover:underline">
-                              {job.clients.phone}
-                            </a>
-                          </p>
-                        )}
-
-                        {(city || installAddr) && (
-                          <p className="text-muted-foreground text-xs flex items-start gap-1">
-                            <MapPin className="size-3 mt-0.5 shrink-0" />
-                            <span>
-                              {city && <strong>{city}</strong>}
-                              {city && installAddr && " — "}
-                              {installAddr}
-                            </span>
-                          </p>
-                        )}
-
-                        {job.installation_info && (
-                          <p className="text-muted-foreground line-clamp-2 text-xs">
-                            {job.installation_info}
-                          </p>
-                        )}
-
-                        {job.missing_serial && (
-                          <p className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-800 w-fit">
-                            <AlertTriangle className="size-3 shrink-0" />
-                            # de série manquant
-                          </p>
-                        )}
+                            {job.accepted_option && (
+                              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
+                                Option {job.accepted_option.toUpperCase()}
+                              </span>
+                            )}
+                            {job.missing_serial && (
+                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                                <AlertTriangle className="size-2.5" />
+                                # série
+                              </span>
+                            )}
+                            {isHighlighted && (
+                              <span className="inline-flex items-center rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
+                                Nouveau
+                              </span>
+                            )}
+                          </div>
+                          {metaParts.length > 0 && (
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                              {metaParts.join(" · ")}
+                            </p>
+                          )}
+                          {job.schedule && (
+                            <p className="text-xs text-emerald-700 font-medium mt-0.5 truncate">
+                              {format(parseISO(job.schedule.scheduled_date), "EEEE d MMMM", { locale: fr })}
+                              {job.schedule.team_name ? ` · ${job.schedule.team_name}` : ""}
+                            </p>
+                          )}
+                          {pref && !job.schedule && (
+                            <p className="text-xs text-amber-600 font-medium mt-0.5">Souhaitée : {pref}</p>
+                          )}
+                        </div>
+                        <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0", accent.badge)}>
+                          {statusLabel(job.status)}
+                        </span>
                       </div>
 
-                      {/* ── Actions ── */}
-                      <div className="flex shrink-0 flex-wrap gap-2 sm:flex-col sm:items-end">
-                        {/* Modifier le dossier */}
-                        <button
-                          type="button"
-                          onClick={() => setEditJob(job)}
-                          className={cn(
-                            buttonVariants({ variant: "outline", size: "sm" }),
-                            "gap-1.5 cursor-pointer"
-                          )}
-                        >
-                          <Pencil className="size-3.5" />
-                          Modifier
-                        </button>
-                        {/* Notes / Historique */}
-                        <button
-                          type="button"
-                          onClick={() => setTimelineJobId((id) => id === job.id ? null : job.id)}
-                          className={cn(
-                            buttonVariants({ variant: timelineJobId === job.id ? "secondary" : "ghost", size: "sm" }),
-                            "gap-1.5 cursor-pointer"
-                          )}
-                          title="Notes et historique"
-                        >
-                          <MessageSquare className="size-3.5" />
-                          Notes
-                        </button>
-
-                        {/* Voir la soumission / PDF installation */}
-                        <Link
-                          href={withQuoteOrigin(`/ventes/soumission/${job.id}`, "a-planifier")}
-                          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
-                        >
-                          <FileText className="size-3.5" />
-                          Soumission
-                        </Link>
-                        <a
-                          href={`/api/pdf/soumission/${job.id}?mode=install`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "gap-1.5")}
-                        >
-                          <FileText className="size-3.5" />
-                          PDF install.
-                        </a>
-
-                        {/* Placer dans le calendrier / voir au calendrier */}
-                        {job.status !== "reparti" ? (
-                          <button
-                            type="button"
-                            onClick={() => setOptimizerJob(job)}
-                            className={cn(
-                              buttonVariants({ size: "sm" }),
-                              "gap-1.5 cursor-pointer"
-                            )}
-                          >
-                            <MapPin className="size-3.5" />
-                            Placer dans le calendrier
-                            <ChevronRight className="size-3" />
-                          </button>
-                        ) : (
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
                           <Link
-                            href={`/dispatch?week=${weekIso}`}
+                            href={withQuoteOrigin(`/ventes/soumission/${job.id}`, "a-planifier")}
                             className={cn(
                               buttonVariants({ variant: "secondary", size: "sm" }),
-                              "gap-1.5"
+                              "h-8 gap-1.5 bg-emerald-50 border-emerald-300 text-emerald-900 hover:bg-emerald-100"
                             )}
                           >
-                            <CalendarDays className="size-3.5" />
-                            Voir au calendrier
+                            <FileText className="size-3.5" />
+                            Soumission
                           </Link>
-                        )}
+                          <a
+                            href={`/api/pdf/soumission/${job.id}?mode=install`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-1.5")}
+                          >
+                            <FileText className="size-3.5" />
+                            PDF
+                          </a>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                          {job.status !== "reparti" ? (
+                            <button
+                              type="button"
+                              onClick={() => setOptimizerJob(job)}
+                              className={cn(buttonVariants({ size: "sm" }), "h-8 gap-1.5 cursor-pointer")}
+                            >
+                              <Sparkles className="size-3.5" />
+                              Trouver créneau
+                            </button>
+                          ) : (
+                            <Link
+                              href={`/dispatch?week=${weekIso}`}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-1.5")}
+                            >
+                              <CalendarDays className="size-3.5" />
+                              Calendrier
+                            </Link>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setTimelineJobId((id) => id === job.id ? null : job.id)}
+                            className={cn(
+                              buttonVariants({ variant: timelineJobId === job.id ? "secondary" : "ghost", size: "sm" }),
+                              "h-8 px-2"
+                            )}
+                            title="Notes et historique"
+                          >
+                            <MessageSquare className="size-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditJob(job)}
+                            className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "h-8 px-2")}
+                            title="Modifier la fiche"
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                        </div>
                       </div>
+
+                      {job.installation_info?.trim() && (
+                        <p className="text-xs text-muted-foreground border-t pt-2 line-clamp-2">
+                          <span className="font-semibold text-foreground">Note :</span>{" "}
+                          {job.installation_info.trim()}
+                        </p>
+                      )}
+
                       {timelineJobId === job.id && (
-                        <div className="border-t pt-3 mt-1 col-span-2">
+                        <div className="border-t pt-3">
                           <JobTimeline jobId={job.id} />
                         </div>
                       )}

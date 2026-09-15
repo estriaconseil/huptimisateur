@@ -3,10 +3,10 @@
 import { useState, useTransition, useCallback, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
-import { Mail, Printer, Pencil, ArrowDown, ArrowUp, Plus, CheckCircle2 } from "lucide-react";
+import { Mail, Printer, Pencil, ArrowDown, ArrowUp, Plus, CheckCircle2, ArrowRightLeft } from "lucide-react";
 import dynamic from "next/dynamic";
 
-import { createQuote, updateQuote, updateQuoteStatus, acceptQuote } from "@/actions/sales";
+import { createQuote, updateQuote, updateQuoteStatus, acceptQuote, switchAcceptedOption } from "@/actions/sales";
 import { getProspectJob } from "@/actions/prospects";
 import { SignaturePad } from "./signature-pad";
 import { SketchPad } from "./sketch-pad";
@@ -284,6 +284,13 @@ export function QuoteForm({
   const [acceptEmailTo, setAcceptEmailTo] = useState("");
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [acceptSending, setAcceptSending] = useState(false);
+  const [showSwitchOptionModal, setShowSwitchOptionModal] = useState(false);
+  const [switchOptionError, setSwitchOptionError] = useState<string | null>(null);
+  const [switchOptionPending, startSwitchOption] = useTransition();
+  const [switchOptionStep, setSwitchOptionStep] = useState<"confirm" | "email">("confirm");
+  const [switchEmailTo, setSwitchEmailTo] = useState("");
+  const [switchEmailSending, setSwitchEmailSending] = useState(false);
+  const [switchEmailError, setSwitchEmailError] = useState<string | null>(null);
   const [showCallBackModal, setShowCallBackModal] = useState(false);
   const [prospectJob, setProspectJob] = useState<PipelineJob | null>(null);
   const [liveInstall, setLiveInstall] = useState<string | null>(installAddress);
@@ -627,6 +634,49 @@ export function QuoteForm({
     setEmailTo(form.client_email || "");
     setEmailStatus(null);
     setShowCallBackModal(true);
+  };
+
+  const doSwitchOption = () => {
+    if (!liveQuoteId || !acceptedOption) return;
+    const target: "a" | "b" = acceptedOption === "a" ? "b" : "a";
+    setSwitchOptionError(null);
+    startSwitchOption(async () => {
+      const res = await switchAcceptedOption(liveQuoteId, target);
+      if (!res.ok) { setSwitchOptionError(res.message); return; }
+      setAcceptedOption(target);
+      // Passer à l'étape courriel (optionnel)
+      setSwitchEmailTo(form.client_email || "");
+      setSwitchEmailError(null);
+      setSwitchOptionStep("email");
+      router.refresh();
+    });
+  };
+
+  const doSendSwitchEmail = async () => {
+    if (!jobId || !switchEmailTo.trim()) return;
+    setSwitchEmailSending(true);
+    setSwitchEmailError(null);
+    try {
+      const res = await fetch(`/api/email/soumission/${jobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: switchEmailTo.trim() }),
+      });
+      const data = await res.json() as { ok: boolean; error?: string };
+      if (!data.ok) { setSwitchEmailError(`Erreur courriel : ${data.error ?? "inconnue"}`); return; }
+      closeSwitchModal();
+    } catch {
+      setSwitchEmailError("Erreur lors de l'envoi du courriel.");
+    } finally {
+      setSwitchEmailSending(false);
+    }
+  };
+
+  const closeSwitchModal = () => {
+    setShowSwitchOptionModal(false);
+    setSwitchOptionStep("confirm");
+    setSwitchOptionError(null);
+    setSwitchEmailError(null);
   };
 
   const handleAccepterClick = () => {
@@ -1920,10 +1970,22 @@ export function QuoteForm({
                 Accepter
               </button>
             ) : (
-              <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200 sm:ml-auto">
-                <CheckCircle2 className="size-4 mr-1.5" />
-                Acceptée — Option {(acceptedOption ?? "a").toUpperCase()} en installation
-              </span>
+              <div className="flex items-center gap-2 sm:ml-auto flex-wrap justify-end">
+                <span className="inline-flex items-center h-[38px] px-4 rounded-lg bg-green-50 text-green-700 text-sm font-medium border border-green-200">
+                  <CheckCircle2 className="size-4 mr-1.5" />
+                  Acceptée — Option {(acceptedOption ?? "a").toUpperCase()} en installation
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setSwitchOptionError(null); setSwitchOptionStep("confirm"); setShowSwitchOptionModal(true); }}
+                  disabled={switchOptionPending}
+                  className="h-[38px] px-3 rounded-lg border text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                  title="Changer l'option retenue"
+                >
+                  <ArrowRightLeft className="size-3.5" />
+                  Option {acceptedOption === "a" ? "B" : "A"}
+                </button>
+              </div>
             )}
           </div>
         )}
@@ -1941,6 +2003,102 @@ export function QuoteForm({
           </button>
         </div>
       </div>
+      {showSwitchOptionModal && acceptedOption && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
+          <div className="bg-background w-full max-w-sm rounded-xl border p-5 shadow-lg space-y-4">
+
+            {/* ── Étape 1 : confirmation ─────────────────────────────── */}
+            {switchOptionStep === "confirm" && (
+              <>
+                <h3 className="font-semibold text-base flex items-center gap-2">
+                  <ArrowRightLeft className="size-4 text-muted-foreground" />
+                  Changer l&apos;option retenue
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  La soumission passera de l&apos;option&nbsp;<strong>{acceptedOption.toUpperCase()}</strong> à l&apos;option&nbsp;
+                  <strong>{acceptedOption === "a" ? "B" : "A"}</strong>.
+                  Le job en installation sera mis à jour en conséquence.
+                </p>
+                {switchOptionError && (
+                  <p className="text-sm text-destructive">{switchOptionError}</p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeSwitchModal}
+                    className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={doSwitchOption}
+                    disabled={switchOptionPending}
+                    className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+                  >
+                    <ArrowRightLeft className="size-3.5" />
+                    Confirmer Option {acceptedOption === "a" ? "B" : "A"}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* ── Étape 2 : courriel optionnel ──────────────────────── */}
+            {switchOptionStep === "email" && (
+              <>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="size-5 text-green-600 shrink-0" />
+                  <h3 className="font-semibold text-base">
+                    Option {acceptedOption.toUpperCase()} activée
+                  </h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Voulez-vous renvoyer la soumission par courriel au client pour confirmer le choix de l&apos;option&nbsp;
+                  <strong>{acceptedOption.toUpperCase()}</strong>&nbsp;?
+                  <br />
+                  <span className="text-xs">(Optionnel — vous pouvez fermer sans envoyer.)</span>
+                </p>
+                {jobId && (
+                  <div className="space-y-1">
+                    <label className="block text-xs font-medium text-muted-foreground">Courriel du client</label>
+                    <input
+                      type="email"
+                      value={switchEmailTo}
+                      onChange={e => setSwitchEmailTo(e.target.value)}
+                      placeholder="client@exemple.com"
+                      className="w-full h-9 rounded-lg border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                )}
+                {switchEmailError && (
+                  <p className="text-sm text-destructive">{switchEmailError}</p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeSwitchModal}
+                    className="h-9 px-4 rounded-lg border text-sm font-medium hover:bg-muted"
+                  >
+                    Fermer sans envoyer
+                  </button>
+                  {jobId && (
+                    <button
+                      type="button"
+                      onClick={doSendSwitchEmail}
+                      disabled={switchEmailSending || !switchEmailTo.trim()}
+                      className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+                    >
+                      <Mail className="size-3.5" />
+                      {switchEmailSending ? "Envoi…" : "Envoyer le courriel"}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+
+          </div>
+        </div>
+      )}
       {showCallBackModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 print:hidden">
           <div className="bg-background w-full max-w-md rounded-xl border p-5 shadow-lg space-y-4">

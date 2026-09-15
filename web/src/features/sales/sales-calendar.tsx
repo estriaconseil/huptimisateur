@@ -19,6 +19,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { SlotActionModal } from "./slot-action-modal";
 import { AppointmentActionModal } from "./appointment-action-modal";
 import { QuickProspectModal } from "./pipeline-client";
@@ -439,30 +445,51 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: 
                                 !sp.active && !appt && "bg-muted/20"
                               )}
                             >
-                              {appt ? (
-                                <button
-                                  onClick={() => setActiveAppt(appt)}
-                                  className={cn(
-                                    "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
-                                    highlightId === appt.id && "ring-2 ring-primary ring-offset-1",
-                                    appt.quote_id
-                                      ? "bg-emerald-50 border-emerald-300 text-emerald-900"
-                                      : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
-                                  )}
-                                >
-                                  <div className="font-semibold truncate flex items-center gap-1">
-                                    <span className="truncate">{appt.client_name}</span>
-                                    {appt.quote_id && (
-                                      <span title="Soumission commencée">
-                                        <FileText className="shrink-0 size-3 opacity-70" />
-                                      </span>
+                              {appt ? (() => {
+                                const cardBtn = (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveAppt(appt)}
+                                    className={cn(
+                                      "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
+                                      highlightId === appt.id && "ring-2 ring-primary ring-offset-1",
+                                      appt.quote_id
+                                        ? "bg-emerald-50 border-emerald-300 text-emerald-900"
+                                        : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
                                     )}
-                                  </div>
-                                  <div className="opacity-70 truncate">
-                                    {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
-                                  </div>
-                                </button>
-                              ) : !sp.active ? null : (
+                                  >
+                                    <div className="font-semibold truncate flex items-center gap-1">
+                                      <span className="truncate">{appt.client_name}</span>
+                                      {appt.quote_id && (
+                                        <span title="Soumission commencée">
+                                          <FileText className="shrink-0 size-3 opacity-70" />
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="opacity-70 truncate">
+                                      {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
+                                    </div>
+                                  </button>
+                                );
+                                const note = appt.notes?.trim();
+                                if (!note) return cardBtn;
+                                return (
+                                  <TooltipProvider delay={400}>
+                                    <Tooltip>
+                                      <TooltipTrigger render={cardBtn} />
+                                      <TooltipContent
+                                        side="top"
+                                        className="max-w-xs whitespace-pre-wrap text-left"
+                                      >
+                                        <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide opacity-70">
+                                          Notes / plage
+                                        </p>
+                                        {note}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                );
+                              })() : !sp.active ? null : (
                                 <button
                                   onClick={() => setDialogSlot({ salesperson_id: sp.id, salesperson_name: sp.name, date, start_time: slot })}
                                   className="w-full h-full flex items-center justify-center rounded-md text-muted-foreground/30 hover:bg-muted/50 hover:text-muted-foreground transition-colors"

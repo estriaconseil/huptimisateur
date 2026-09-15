@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { CalendarDays, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Link2, Pencil, Plus, Trash2, Unlink } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,11 +11,13 @@ import {
   updateSalesperson,
   updateDayConfig,
   deleteSalesperson,
+  forceDeleteSalesperson,
   toggleSalespersonActive,
+  linkSalespersonToProfile,
   type DayConfigInput,
 } from "@/actions/vendeurs";
 import type { SalespersonDayConfig } from "@/types/domain";
-import type { SalespersonWithDays } from "@/app/(app)/vendeurs/page";
+import type { SalespersonWithDays, SalespersonProfile } from "@/app/(app)/vendeurs/page";
 
 const DAYS = [
   { dow: 1, label: "Lundi" },
@@ -213,11 +215,110 @@ function DayConfigEditor({
   );
 }
 
+// ── Liaison compte de connexion ────────────────────────────────────────────
+
+function ProfileLinker({
+  vendeur,
+  profiles,
+}: {
+  vendeur: SalespersonWithDays;
+  profiles: SalespersonProfile[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string>(vendeur.profile_id ?? "");
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const linkedProfile = profiles.find((p) => p.id === vendeur.profile_id);
+
+  const handleSave = () => {
+    setError(null);
+    start(async () => {
+      const res = await linkSalespersonToProfile(vendeur.id, selected || null);
+      if (!res.ok) { setError(res.message); return; }
+      setOpen(false);
+    });
+  };
+
+  const handleUnlink = () => {
+    setError(null);
+    start(async () => {
+      const res = await linkSalespersonToProfile(vendeur.id, null);
+      if (!res.ok) { setError(res.message); return; }
+    });
+  };
+
+  if (!open) {
+    return (
+      <div className="flex items-center gap-2">
+        {linkedProfile ? (
+          <>
+            <span className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 font-medium">
+              🔗 {linkedProfile.full_name ?? linkedProfile.email}
+            </span>
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+            >
+              Changer
+            </button>
+            <button
+              type="button"
+              onClick={handleUnlink}
+              disabled={pending}
+              className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+              title="Délier le compte"
+            >
+              <Unlink className="size-3.5" />
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-dashed rounded-full px-2 py-0.5 transition-colors hover:border-foreground/40"
+          >
+            <Link2 className="size-3" />
+            Lier un compte
+          </button>
+        )}
+        {error && <span className="text-destructive text-xs">{error}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        className="h-8 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        value={selected}
+        onChange={(e) => setSelected(e.target.value)}
+      >
+        <option value="">— Aucun compte lié —</option>
+        {profiles.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.full_name ?? p.email} {p.email ? `(${p.email})` : ""}
+          </option>
+        ))}
+      </select>
+      <Button type="button" size="sm" onClick={handleSave} disabled={pending} className="h-8">
+        {pending ? "…" : "Appliquer"}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} className="h-8">
+        Annuler
+      </Button>
+      {error && <span className="text-destructive text-xs w-full">{error}</span>}
+    </div>
+  );
+}
+
 // ── Ligne vendeur ──────────────────────────────────────────────────────────
 
-function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
+function VendeurRow({ vendeur, profiles }: { vendeur: SalespersonWithDays; profiles: SalespersonProfile[] }) {
   const [editing, setEditing] = useState(false);
   const [showDays, setShowDays] = useState(false);
+  const [showForceDelete, setShowForceDelete] = useState(false);
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -241,6 +342,20 @@ function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
     if (!confirm(`Supprimer le vendeur « ${vendeur.name} » ?`)) return;
     start(async () => {
       const res = await deleteSalesperson(vendeur.id);
+      if (!res.ok) {
+        setError(res.message);
+        setShowForceDelete(true); // afficher l'option force-delete si FK bloque
+      }
+    });
+  };
+
+  const handleForceDelete = () => {
+    if (!confirm(
+      `⚠️ SUPPRESSION FORCÉE\n\nCela va effacer DÉFINITIVEMENT « ${vendeur.name} » ainsi que tous ses rendez-vous, blocs et associations.\n\nContinuer ?`
+    )) return;
+    setError(null);
+    start(async () => {
+      const res = await forceDeleteSalesperson(vendeur.id);
       if (!res.ok) setError(res.message);
     });
   };
@@ -275,7 +390,7 @@ function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
       ) : (
         <div className="flex items-start gap-3 px-4 py-3">
           {/* Info principale */}
-          <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex-1 min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{vendeur.name}</span>
               <Badge
@@ -296,6 +411,8 @@ function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
               </span>
               {vendeur.notes && <span>· {vendeur.notes}</span>}
             </div>
+            {/* Liaison compte de connexion */}
+            <ProfileLinker vendeur={vendeur} profiles={profiles} />
           </div>
 
           {/* Actions */}
@@ -329,7 +446,20 @@ function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
       )}
 
       {error && !editing && (
-        <p className="text-destructive text-xs px-4 pb-2">{error}</p>
+        <div className="px-4 pb-3 space-y-2">
+          <p className="text-destructive text-xs">{error}</p>
+          {showForceDelete && (
+            <button
+              type="button"
+              onClick={handleForceDelete}
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              <Trash2 className="size-3" />
+              Supprimer avec toutes les données (test)
+            </button>
+          )}
+        </div>
       )}
 
       {showDays && (
@@ -347,7 +477,7 @@ function VendeurRow({ vendeur }: { vendeur: SalespersonWithDays }) {
 
 // ── Composant principal ────────────────────────────────────────────────────
 
-export function VendeursManager({ vendeurs }: { vendeurs: SalespersonWithDays[] }) {
+export function VendeursManager({ vendeurs, profiles }: { vendeurs: SalespersonWithDays[]; profiles: SalespersonProfile[] }) {
   const [showAdd, setShowAdd] = useState(false);
   const [pending, start] = useTransition();
   const [addError, setAddError] = useState<string | null>(null);
@@ -404,7 +534,7 @@ export function VendeursManager({ vendeurs }: { vendeurs: SalespersonWithDays[] 
       )}
 
       {vendeurs.map((v) => (
-        <VendeurRow key={v.id} vendeur={v} />
+        <VendeurRow key={v.id} vendeur={v} profiles={profiles} />
       ))}
     </div>
   );

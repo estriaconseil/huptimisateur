@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+
+import { requireStaff, requireUser } from "@/lib/auth/require-role";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type Ok  = { ok: true };
@@ -19,9 +21,10 @@ export type CreateBlockInput = {
 export type UpdateBlockInput = CreateBlockInput & { id: string };
 
 export async function createSalespersonBlock(input: CreateBlockInput): Promise<{ ok: true; id: string } | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { data, error } = await supabase
     .from("salesperson_blocks")
@@ -43,9 +46,10 @@ export async function createSalespersonBlock(input: CreateBlockInput): Promise<{
 }
 
 export async function updateSalespersonBlock(input: UpdateBlockInput): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("salesperson_blocks")
@@ -66,9 +70,10 @@ export async function updateSalespersonBlock(input: UpdateBlockInput): Promise<O
 }
 
 export async function deleteSalespersonBlock(blockId: string): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("salesperson_blocks")
@@ -92,9 +97,10 @@ export type CreateTeamBlockInput = {
 export type UpdateTeamBlockInput = CreateTeamBlockInput & { id: string };
 
 export async function createTeamBlock(input: CreateTeamBlockInput): Promise<{ ok: true; id: string } | Err> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { data, error } = await supabase
     .from("team_blocks")
@@ -113,9 +119,10 @@ export async function createTeamBlock(input: CreateTeamBlockInput): Promise<{ ok
 }
 
 export async function updateTeamBlock(input: UpdateTeamBlockInput): Promise<Ok | Err> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("team_blocks")
@@ -133,9 +140,10 @@ export async function updateTeamBlock(input: UpdateTeamBlockInput): Promise<Ok |
 }
 
 export async function deleteTeamBlock(blockId: string): Promise<Ok | Err> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("team_blocks")

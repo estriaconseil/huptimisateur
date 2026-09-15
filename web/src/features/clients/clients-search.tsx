@@ -19,7 +19,6 @@ const STATUS_PRIORITY = [
   "soumission_en_attente",
   "en_attente",
   "reparti",
-  "facturation",
   "complete",
   "termine",
   "annule",
@@ -103,7 +102,11 @@ export function ClientsSearchResults({
   results: ClientSearchResult[];
   query: string;
 }) {
-  if (!query || query.trim().length < 2) {
+  const hasQuery = query.trim().length >= 2;
+
+  // État vide sans recherche (admins/secrétaires) — les vendeurs reçoivent leurs
+  // clients pré-chargés, donc `results` n'est pas vide dans ce cas.
+  if (!hasQuery && results.length === 0) {
     return (
       <Card>
         <CardContent className="py-14 text-center">
@@ -128,7 +131,9 @@ export function ClientsSearchResults({
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        {results.length} résultat{results.length > 1 ? "s" : ""}{results.length === 25 ? " (25 max affichés)" : ""}
+        {hasQuery
+          ? `${results.length} résultat${results.length > 1 ? "s" : ""}${results.length === 25 ? " (25 max affichés)" : ""}`
+          : `${results.length} client${results.length > 1 ? "s" : ""} assigné${results.length > 1 ? "s" : ""}`}
       </p>
 
       {results.map((client) => {

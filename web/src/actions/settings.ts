@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireAdmin } from "@/lib/auth/require-role";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type SettingsPayload = {
@@ -18,6 +19,9 @@ export type SettingsPayload = {
 };
 
 export async function saveAppSettings(data: SettingsPayload) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   const { data: existing } = await supabase

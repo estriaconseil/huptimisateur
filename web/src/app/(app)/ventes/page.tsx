@@ -3,6 +3,7 @@ import { format, startOfWeek, parseISO } from "date-fns";
 import { SalesCalendar } from "@/features/sales/sales-calendar";
 import { loadSalesPageData } from "@/features/sales/load-sales-data";
 import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
+import { getCurrentSalespersonId } from "@/lib/supabase/profile";
 
 type Props = {
   searchParams: Promise<{ week?: string; highlight?: string }>;
@@ -19,7 +20,8 @@ export default async function VentesPage({ searchParams }: Props) {
       : defaultBusinessWeekMonday();
 
   const weekStartLabel = format(monday, "yyyy-MM-dd");
-  const data = await loadSalesPageData(monday);
+  const currentSalespersonId = await getCurrentSalespersonId();
+  const data = await loadSalesPageData(monday, currentSalespersonId);
 
   return (
     <div>

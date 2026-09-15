@@ -7,81 +7,107 @@ import type { SalesPageData, SalespersonForCalendar, BlockRow } from "./sales-ut
 
 export type { SalesPageData };
 
-export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
+export async function loadSalesPageData(
+  monday: Date,
+  currentSalespersonId?: string | null
+): Promise<SalesPageData> {
   const supabase = await createServerSupabaseClient();
   const weekDates = getBusinessWeekDateStrings(monday);
 
-  const [{ data: activeSalespeople }, { data: appointments }, { data: rawBlocks }] = await Promise.all([
-    supabase
-      .from("salespeople")
-      .select(`
-        id, name, active, profile_id,
-        home_address, home_lat, home_lng,
-        notes, created_at,
-        salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
-      `)
-      .eq("active", true)
-      .order("name"),
+  // Construction des requêtes de base
+  let spQuery = supabase
+    .from("salespeople")
+    .select(`
+      id, name, active, profile_id,
+      home_address, home_lat, home_lng,
+      notes, created_at,
+      salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
+    `)
+    .order("name");
 
-    supabase
-      .from("sales_appointments")
-      .select("id, salesperson_id, client_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted, city ), installation_addresses!installation_address_id ( city, address_formatted )")
-      .gte("scheduled_date", weekDates[0])
-      .lte("scheduled_date", weekDates[weekDates.length - 1])
-      .neq("status", "cancelled"),
+  let apptQuery = supabase
+    .from("sales_appointments")
+    .select("id, salesperson_id, client_id, installation_address_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted, city ), installation_addresses!installation_address_id ( city, address_formatted )")
+    .gte("scheduled_date", weekDates[0])
+    .lte("scheduled_date", weekDates[weekDates.length - 1])
+    .neq("status", "cancelled");
 
-    supabase
-      .from("salesperson_blocks")
-      .select("id, salesperson_id, block_type, start_date, end_date, start_time, end_time, notes")
-      .lte("start_date", weekDates[weekDates.length - 1])
-      .gte("end_date", weekDates[0]),
-  ]);
+  let blocksQuery = supabase
+    .from("salesperson_blocks")
+    .select("id, salesperson_id, block_type, start_date, end_date, start_time, end_time, notes")
+    .lte("start_date", weekDates[weekDates.length - 1])
+    .gte("end_date", weekDates[0]);
 
-  const activeIds = new Set((activeSalespeople ?? []).map((sp) => sp.id as string));
-
-  // Trouver les vendeurs inactifs qui ont quand même des RDV cette semaine
-  const inactiveSpIds = [
-    ...new Set(
-      (appointments ?? [])
-        .map((a) => a.salesperson_id as string)
-        .filter((id) => !activeIds.has(id))
-    ),
-  ];
-
-  let inactiveSalespeople: SalespersonForCalendar[] = [];
-  if (inactiveSpIds.length > 0) {
-    const { data } = await supabase
-      .from("salespeople")
-      .select(`
-        id, name, active, profile_id,
-        home_address, home_lat, home_lng,
-        notes, created_at,
-        salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
-      `)
-      .in("id", inactiveSpIds)
-      .order("name");
-    inactiveSalespeople = (data ?? []) as SalespersonForCalendar[];
+  if (currentSalespersonId) {
+    // Mode vendeur : restreindre à son propre ID (actif ou non)
+    spQuery = spQuery.eq("id", currentSalespersonId);
+    apptQuery = apptQuery.eq("salesperson_id", currentSalespersonId);
+    blocksQuery = blocksQuery.eq("salesperson_id", currentSalespersonId);
+  } else {
+    // Mode admin/secrétaire : uniquement les vendeurs actifs (+ inactifs avec RDV, détectés après)
+    spQuery = spQuery.eq("active", true);
   }
 
-  // Actifs en premier, inactifs (avec RDV cette semaine) à la fin
-  const salespeople = [
-    ...(activeSalespeople ?? []) as SalespersonForCalendar[],
-    ...inactiveSalespeople,
-  ];
+  const [{ data: salespeopleData }, { data: appointments }, { data: rawBlocks }] = await Promise.all([
+    spQuery,
+    apptQuery,
+    blocksQuery,
+  ]);
 
-  // Ownership lock + missing_serial depuis les jobs/quotes liés
+  let salespeople: SalespersonForCalendar[];
+
+  if (currentSalespersonId) {
+    // Le vendeur voit uniquement sa propre rangée
+    salespeople = (salespeopleData ?? []) as SalespersonForCalendar[];
+  } else {
+    // Admin/secrétaire : actifs + vendeurs inactifs qui ont quand même des RDV cette semaine
+    const activeIds = new Set((salespeopleData ?? []).map((sp) => sp.id as string));
+    const inactiveSpIds = [
+      ...new Set(
+        (appointments ?? [])
+          .map((a) => a.salesperson_id as string)
+          .filter((id) => !activeIds.has(id))
+      ),
+    ];
+
+    let inactiveSalespeople: SalespersonForCalendar[] = [];
+    if (inactiveSpIds.length > 0) {
+      const { data } = await supabase
+        .from("salespeople")
+        .select(`
+          id, name, active, profile_id,
+          home_address, home_lat, home_lng,
+          notes, created_at,
+          salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
+        `)
+        .in("id", inactiveSpIds)
+        .order("name");
+      inactiveSalespeople = (data ?? []) as SalespersonForCalendar[];
+    }
+
+    salespeople = [
+      ...(salespeopleData ?? []) as SalespersonForCalendar[],
+      ...inactiveSalespeople,
+    ];
+  }
+
+  // Ownership lock + job_id + missing_serial depuis les jobs/quotes liés
   const apptIds = (appointments ?? []).map((a) => a.id as string);
   const lockByAppt = new Map<string, boolean>();
+  const jobIdByAppt = new Map<string, string>();
   const missingSerialByAppt = new Map<string, boolean>();
 
   if (apptIds.length > 0) {
     const { data: linkedJobs } = await supabase
       .from("jobs")
-      .select("appointment_id, salesperson_locked")
+      .select("id, appointment_id, salesperson_locked")
       .in("appointment_id", apptIds);
     for (const j of linkedJobs ?? []) {
-      const row = j as { appointment_id: string | null; salesperson_locked: boolean | null };
-      if (row.appointment_id) lockByAppt.set(row.appointment_id, row.salesperson_locked ?? false);
+      const row = j as { id: string; appointment_id: string | null; salesperson_locked: boolean | null };
+      if (row.appointment_id) {
+        lockByAppt.set(row.appointment_id, row.salesperson_locked ?? false);
+        jobIdByAppt.set(row.appointment_id, row.id);
+      }
     }
   }
 
@@ -145,6 +171,7 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         id: string;
         salesperson_id: string;
         client_id: string;
+        installation_address_id: string | null;
         client_lat: number | null;
         client_lng: number | null;
         scheduled_date: string;
@@ -169,6 +196,7 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         id: raw.id,
         salesperson_id: raw.salesperson_id,
         client_id: raw.client_id,
+        installation_address_id: raw.installation_address_id ?? null,
         client_name: c?.name ?? "—",
         client_phone: c?.phone ?? null,
         client_address: inst?.address_formatted ?? c?.address_formatted ?? null,
@@ -180,6 +208,7 @@ export async function loadSalesPageData(monday: Date): Promise<SalesPageData> {
         status: raw.status,
         notes: raw.notes,
         quote_id: raw.quote_id,
+        job_id: jobIdByAppt.get(raw.id) ?? null,
         salesperson_locked: lockByAppt.get(raw.id) ?? false,
         missing_serial: missingSerialByAppt.get(raw.id) ?? false,
       };

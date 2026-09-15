@@ -60,7 +60,7 @@ export const STATUS_COLORS: Record<JobStatus, string> = {
   soumission_repartie:   "bg-blue-100 text-blue-800",
   en_attente:            "bg-violet-100 text-violet-800",
   a_planifier:           "bg-emerald-100 text-emerald-800",
-  reparti:               "bg-green-200 text-green-900",
+  reparti:               "bg-blue-100 text-blue-800",
   retour_a_faire:        "bg-orange-100 text-orange-800",
   complete:              "bg-gray-100 text-gray-600",
   termine:               "bg-gray-100 text-gray-600",

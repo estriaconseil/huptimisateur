@@ -1724,11 +1724,14 @@ function ProspectCard({
   salespeople,
   onBooked,
   highlighted = false,
+  onActivate,
 }: {
   job: PipelineJob;
   salespeople: Salesperson[];
   onBooked: (msg: string, bookedJobId?: string) => void;
   highlighted?: boolean;
+  /** Appelé quand l'utilisateur interagit avec une autre carte (retire le highlight). */
+  onActivate?: () => void;
 }) {
   const router = useRouter();
   const [showOptimizer, setShowOptimizer] = useState(false);
@@ -1819,11 +1822,14 @@ function ProspectCard({
   ].filter(Boolean);
 
   return (
-    <Card className={cn(
-      "hover:shadow-sm transition-shadow border-l-4 bg-white",
-      pipelineAccent(job.status).bar,
-      highlighted && "ring-2 ring-emerald-500 shadow-md"
-    )}>
+    <Card
+      className={cn(
+        "hover:shadow-sm transition-shadow border-l-4 bg-white",
+        pipelineAccent(job.status).bar,
+        highlighted && "ring-2 ring-emerald-500 shadow-md"
+      )}
+      onPointerDown={() => onActivate?.()}
+    >
       <CancelModal
         open={showCancelModal}
         pending={statusPending}
@@ -1997,7 +2003,6 @@ function ProspectCard({
             {!hideSlotFinder && (
               <Button
                 size="sm"
-                variant={showOptimizer ? "default" : "outline"}
                 onClick={handleSlotFinderClick}
                 className="gap-1.5 h-8"
               >
@@ -2159,6 +2164,16 @@ export function PipelineClient({
     if (!highlightId || !highlightRef.current) return;
     highlightRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [highlightId, jobs]);
+
+  const clearHighlight = useCallback(() => {
+    setHighlightId((prev) => {
+      if (!prev) return prev;
+      if (typeof window !== "undefined" && window.location.search.includes("highlight=")) {
+        window.history.replaceState(window.history.state, "", "/ventes/pipeline");
+      }
+      return null;
+    });
+  }, []);
 
   // Ouvrir la fiche prospect depuis ?job=
   useEffect(() => {
@@ -2344,6 +2359,7 @@ export function PipelineClient({
               key={status}
               type="button"
               onClick={() => {
+                clearHighlight();
                 if (filterStatus === status && !filterOverdue) {
                   setFilterStatus("all");
                   return;
@@ -2364,6 +2380,7 @@ export function PipelineClient({
                   tabIndex={0}
                   onClick={(e) => {
                     e.stopPropagation();
+                    clearHighlight();
                     if (filterOverdue) {
                       setFilterOverdue(false);
                       setFilterStatus("all");
@@ -2376,6 +2393,7 @@ export function PipelineClient({
                     if (e.key !== "Enter" && e.key !== " ") return;
                     e.preventDefault();
                     e.stopPropagation();
+                    clearHighlight();
                     if (filterOverdue) {
                       setFilterOverdue(false);
                       setFilterStatus("all");
@@ -2408,11 +2426,17 @@ export function PipelineClient({
             className="border-input bg-background h-9 w-full rounded-lg border pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             placeholder="Nom, adresse, téléphone, courriel…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              clearHighlight();
+              setSearch(e.target.value);
+            }}
           />
           {search && (
             <button
-              onClick={() => setSearch("")}
+              onClick={() => {
+                clearHighlight();
+                setSearch("");
+              }}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
             >
               <X className="size-3.5" />
@@ -2425,7 +2449,10 @@ export function PipelineClient({
           <select
             className="border-input bg-background h-9 rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={filterSalesperson}
-            onChange={(e) => setFilterSalesperson(e.target.value)}
+            onChange={(e) => {
+              clearHighlight();
+              setFilterSalesperson(e.target.value);
+            }}
           >
             <option value="all">Tous les vendeurs</option>
             {salespeople.map((sp) => (
@@ -2438,7 +2465,10 @@ export function PipelineClient({
         <select
           className="border-input bg-background h-9 rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           value={filterFlag ?? "all"}
-          onChange={(e) => setFilterFlag(e.target.value === "all" ? "all" : e.target.value as FollowUpFlag)}
+          onChange={(e) => {
+            clearHighlight();
+            setFilterFlag(e.target.value === "all" ? "all" : e.target.value as FollowUpFlag);
+          }}
         >
           <option value="all">Tous les drapeaux</option>
           <option value="a_suivre">À suivre</option>
@@ -2474,6 +2504,9 @@ export function PipelineClient({
               salespeople={salespeople}
               onBooked={handleBooked}
               highlighted={job.id === highlightId}
+              onActivate={() => {
+                if (highlightId && highlightId !== job.id) clearHighlight();
+              }}
             />
           </li>
         ))}

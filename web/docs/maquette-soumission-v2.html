@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maquette — Soumission PDF v2 (Stéphane / design)</title>
+  <style>
+    :root {
+      /* Bleus logo Huppé (détectés depuis logo.jpg) */
+      --brand: #003B7C;
+      --brand-mid: #195AA5;
+      --brand-dark: #002D62;
+      --ink: #1a1a2e;
+      --muted: #5a6570;
+      --border: #d0d0d0;
+      --bg: #f7f7f7;
+      --page: #ffffff;
+      --amber-bg: #fffbeb;
+      --amber-border: #fcd34d;
+      --amber-text: #92400e;
+      --total-bg: #1a1a1a;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Helvetica, Arial, "Segoe UI", sans-serif;
+      background: #e8edf2;
+      color: var(--ink);
+      padding: 28px 20px 60px;
+    }
+
+    .wrap { max-width: 1100px; margin: 0 auto; }
+
+    .intro h1 { font-size: 1.35rem; margin: 0 0 6px; color: var(--brand); }
+    .intro p { margin: 0 0 10px; color: var(--muted); font-size: 0.9rem; max-width: 720px; line-height: 1.45; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 22px; }
+    .chip {
+      font-size: 0.75rem;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--border);
+      color: var(--ink);
+    }
+    .chip strong { color: var(--brand); }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .tab {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .tab.on {
+      background: var(--brand);
+      color: #fff;
+      border-color: var(--brand);
+    }
+
+    .panel { display: none; }
+    .panel.on { display: block; }
+
+    .compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .compare { grid-template-columns: 1fr; }
+    }
+
+    .col-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    /* ── Page lettre ── */
+    .letter {
+      background: var(--page);
+      width: 100%;
+      max-width: 8.5in;
+      margin: 0 auto;
+      padding: 28px 32px;
+      box-shadow: 0 8px 28px rgba(0, 40, 80, 0.12);
+      border: 1px solid #cfd8e3;
+      font-size: 9pt;
+      line-height: 1.25;
+    }
+    .letter.compact { max-width: none; padding: 16px 14px; font-size: 8pt; }
+
+    .hdr {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand-block .name {
+      font-size: 14pt;
+      font-weight: 800;
+      color: var(--brand);
+      letter-spacing: 0.02em;
+    }
+    .brand-block .tag {
+      font-size: 7.5pt;
+      color: var(--brand-mid);
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .brand-block .addr {
+      font-size: 7.5pt;
+      color: var(--muted);
+      margin-top: 4px;
+      line-height: 1.35;
+    }
+    .title-block { text-align: right; }
+    .title-block .main {
+      font-size: 16pt;
+      font-weight: 800;
+      color: var(--ink);
+      letter-spacing: 0.04em;
+    }
+    .title-block .num {
+      font-size: 12pt;
+      font-weight: 700;
+      color: var(--brand);
+      margin-top: 2px;
+    }
+
+    .section {
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .section-h {
+      background: var(--bg);
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 7.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .section-b { padding: 7px 8px; }
+
+    .banner {
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      color: var(--amber-text);
+      font-weight: 700;
+      font-size: 8.5pt;
+      padding: 7px 10px;
+      border-radius: 3px;
+      margin-bottom: 10px;
+    }
+
+    .row2 { display: flex; gap: 10px; margin-bottom: 4px; }
+    .col { flex: 1; min-width: 0; }
+    .lbl {
+      font-size: 6.5pt;
+      color: var(--muted);
+      margin-bottom: 1px;
+    }
+    .val { font-size: 8.5pt; color: var(--ink); min-height: 1.1em; }
+    .val.empty { color: transparent; } /* cellule vraiment vide, grille conservée */
+    .note-same {
+      font-size: 7pt;
+      font-style: italic;
+      color: var(--ink); /* NOIR — plus de bleu */
+      margin: 2px 0 6px;
+    }
+    .note-same.bad { color: #0066cc; } /* ancien comportement */
+
+    .unit-title {
+      font-size: 9.5pt;
+      font-weight: 700;
+      margin: 2px 0 6px;
+    }
+    .unit-title.old { color: #0066cc; }
+    .unit-title.new { color: var(--brand); }
+
+    .unit-sep {
+      border-top: 1px solid var(--border);
+      margin: 8px 0;
+    }
+
+    .money-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border);
+      align-items: flex-end;
+    }
+    .money-cell { flex: 1; }
+    .money-amt {
+      font-weight: 800;
+    }
+    .money-amt.old-blue { color: #0066cc; font-size: 9pt; }
+    .money-amt.old-green { color: #065f46; font-size: 9pt; }
+    .money-amt.new-main {
+      color: var(--ink);
+      font-size: 13pt;
+      letter-spacing: -0.01em;
+    }
+    .money-amt.new-disc {
+      color: var(--ink);
+      font-size: 10pt;
+      font-weight: 600;
+    }
+    .money-amt .sign { color: var(--muted); font-weight: 600; }
+    .tax-base {
+      font-size: 7.5pt;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .fin {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      max-width: 220px;
+      margin-left: auto;
+    }
+    .fin .fr {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 8pt;
+    }
+    .fin .fr:last-child { border-bottom: 0; }
+    .fin .fr .k { color: var(--muted); }
+    .fin .fr.total {
+      background: var(--total-bg);
+      color: #fff;
+      font-weight: 700;
+      font-size: 9pt;
+      padding: 6px 8px;
+    }
+    .fin .fr.total .k { color: #fff; }
+    .fin .fr.net {
+      background: #f0f4f8;
+      font-weight: 700;
+    }
+    .fin .fr.net .k, .fin .fr.net .v { color: var(--brand); }
+
+    /* Bug reproduit : texte collé */
+    .fin.broken .fr.total {
+      display: block;
+    }
+    .fin.broken .fr.total .k,
+    .fin.broken .fr.total .v {
+      display: inline;
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: #fff;
+      border-left: 4px solid var(--brand);
+      border-radius: 0 8px 8px 0;
+      font-size: 0.85rem;
+      color: var(--ink);
+      line-height: 1.45;
+    }
+    .callout ul { margin: 8px 0 0; padding-left: 18px; }
+    .callout li { margin-bottom: 4px; }
+
+    .swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .swatch {
+      width: 72px;
+      text-align: center;
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+    .swatch i {
+      display: block;
+      height: 36px;
+      border-radius: 6px;
+      border: 1px solid rgba(0,0,0,.08);
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="intro">
+      <h1>Maquette HTML — Soumission PDF v2</h1>
+      <p>
+        Visuels <strong>avant</strong> modification de <code>QuoteDocument.tsx</code>.
+        Choix validé : <strong>B — garder la grille, cellules vraiment vides</strong> (pas de « — »).
+        Demandes Stéphane (août 2026) + retours design Mike.
+      </p>
+      <div class="chips">
+        <span class="chip"><strong>Bleu logo</strong> #003B7C</span>
+        <span class="chip"><strong>Montants</strong> plus gros, encre noire</span>
+        <span class="chip"><strong>Titre unité</strong> sans marque/modèle</span>
+        <span class="chip"><strong>Option B</strong> = financiers A</span>
+        <span class="chip"><strong>Note facturation</strong> noire</span>
+      </div>
+      <div class="swatches">
+        <div class="swatch"><i style="background:#003B7C"></i>Brand</div>
+        <div class="swatch"><i style="background:#195AA5"></i>Mid</div>
+        <div class="swatch"><i style="background:#1a1a2e"></i>Encre</div>
+        <div class="swatch"><i style="background:#0066cc"></i>Ancien accent ✕</div>
+        <div class="swatch"><i style="background:#065f46"></i>Ancien vert ✕</div>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab on" data-panel="p-compare">1. Avant / Après (unité)</button>
+      <button type="button" class="tab" data-panel="p-page-a">2. Page Option A (v2)</button>
+      <button type="button" class="tab" data-panel="p-page-b">3. Page Option B (v2 corrigée)</button>
+      <button type="button" class="tab" data-panel="p-bug-b">4. Bug actuel Option B</button>
+    </div>
+
+    <!-- ══════════ 1. COMPARE UNIT ══════════ -->
+    <div id="p-compare" class="panel on">
+      <div class="compare">
+        <div>
+          <div class="col-label">Avant — problèmes</div>
+          <div class="letter compact">
+            <div class="unit-title old">Unité 1 — sfagfs / gsgs</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val">sfagfs</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val">gsgs</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val">sgsg</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val">-25 °C</div></div>
+              <div class="col"><div class="lbl">Cap. chauf. à -25 °C</div><div class="val">sgsg</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Garantie pièces</div><div class="val">2 ans</div></div>
+              <div class="col"><div class="lbl">Garantie M-O</div><div class="val">4 ans</div></div>
+              <div class="col"><div class="lbl">Pieds tuyaux</div><div class="val">—</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capage 1</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 2</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 3</div><div class="val">gsgs</div></div>
+              <div class="col"><div class="lbl">Capage 4</div><div class="val">sgs</div></div>
+            </div>
+            <div class="val" style="margin:4px 0">Support / Au sol : Spécial · Inversé</div>
+            <div class="val">Autre : sgs</div>
+            <div class="money-row">
+              <div class="money-cell">
+                <div class="lbl">Montant</div>
+                <div class="money-amt old-blue">5000.00 $</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Rabais / promotion</div>
+                <div class="money-amt old-green">−400.00 $</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Subvention</div>
+                <div class="money-amt old-green">−1000.00 $</div>
+              </div>
+            </div>
+            <div class="tax-base">Base taxable : 4600.00 $</div>
+
+            <div class="unit-sep"></div>
+            <div class="unit-title old">Unité 2</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val">—</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val">—</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val">—</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val">—</div></div>
+              <div class="col"><div class="lbl">Cap. chauf.</div><div class="val">—</div></div>
+            </div>
+            <p style="font-size:7.5pt;color:#b91c1c;margin:8px 0 0">
+              ✕ Doublon titre · même bleu titre/prix · vert rabais · « — » partout
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <div class="col-label">Après — proposition v2</div>
+          <div class="letter compact">
+            <div class="unit-title new">Unité 1</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val">sfagfs</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val">gsgs</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val">sgsg</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val">-25 °C</div></div>
+              <div class="col"><div class="lbl">Cap. chauf. à -25 °C</div><div class="val">sgsg</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Garantie pièces</div><div class="val">2 ans</div></div>
+              <div class="col"><div class="lbl">Garantie M-O</div><div class="val">4 ans</div></div>
+              <div class="col"><div class="lbl">Pieds tuyaux</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capage 1</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 2</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 3</div><div class="val">gsgs</div></div>
+              <div class="col"><div class="lbl">Capage 4</div><div class="val">sgs</div></div>
+            </div>
+            <div class="val" style="margin:4px 0">Support / Au sol : Spécial · Inversé</div>
+            <div class="val">Autre : sgs</div>
+            <div class="money-row">
+              <div class="money-cell">
+                <div class="lbl">Montant</div>
+                <div class="money-amt new-main">5&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Rabais / promotion</div>
+                <div class="money-amt new-disc"><span class="sign">−</span> 400,00&nbsp;$</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Subvention</div>
+                <div class="money-amt new-disc"><span class="sign">−</span> 1&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+            <div class="tax-base">Base taxable : 4&nbsp;600,00&nbsp;$</div>
+
+            <div class="unit-sep"></div>
+            <div class="unit-title new">Unité 2</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val empty">&nbsp;</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Cap. chauf.</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="money-row">
+              <div class="money-cell">
+                <div class="lbl">Montant</div>
+                <div class="money-amt new-main empty">&nbsp;</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Rabais / promotion</div>
+                <div class="val empty">&nbsp;</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Subvention</div>
+                <div class="val empty">&nbsp;</div>
+              </div>
+            </div>
+            <p style="font-size:7.5pt;color:var(--brand);margin:8px 0 0">
+              ✓ Titre propre · montant mis de l’avant · grille sans « — »
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Décisions figées dans cette maquette</strong>
+        <ul>
+          <li>Titre = « Unité N » seulement (description libre OK ; pas de marque/modèle dans le titre).</li>
+          <li>Montant en <strong>encre noire</strong>, ~13pt ; rabais/subvention plus petits, sans vert.</li>
+          <li>Bleu logo <code>#003B7C</code> réservé aux titres d’unité / accents marque.</li>
+          <li>Cellules vides = blanc (labels restent pour garder la grille).</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- ══════════ 2. PAGE A ══════════ -->
+    <div id="p-page-a" class="panel">
+      <div class="col-label">Page complète — Option A (proposition v2)</div>
+      <div class="letter">
+        <div class="hdr">
+          <div class="brand-block">
+            <div class="name">HUPPÉ RÉFRIGÉRATION</div>
+            <div class="tag">CLIMATISATION · CHAUFFAGE</div>
+            <div class="addr">
+              2710, rue King Est, Sherbrooke, QC J1G 5H1<br />
+              819-566-8061
+            </div>
+          </div>
+          <div class="title-block">
+            <div class="main">SOUMISSION</div>
+            <div class="num">#60018</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-h">Informations client</div>
+          <div class="section-b">
+            <div class="row2">
+              <div class="col"><div class="lbl">Nom</div><div class="val">test 7</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Adresse</div><div class="val">165 Rue Main O, Coaticook, QC J1A 1P4, Canada</div></div>
+            </div>
+            <div class="note-same">L'adresse de facturation est identique à l'adresse d'installation.</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Téléphone</div><div class="val">438-888-6859</div></div>
+              <div class="col"><div class="lbl">Courriel</div><div class="val">optimisateurhuppe@gmail.com</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-h">Équipements — Option A</div>
+          <div class="section-b">
+            <div class="unit-title new">Unité 1</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val">sfagfs</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val">gsgs</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val">sgsg</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val">-25 °C</div></div>
+              <div class="col"><div class="lbl">Cap. chauf. à -25 °C</div><div class="val">sgsg</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Garantie pièces</div><div class="val">2 ans</div></div>
+              <div class="col"><div class="lbl">Garantie M-O</div><div class="val">4 ans</div></div>
+              <div class="col"><div class="lbl">Pieds tuyaux</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capage 1</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 2</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Capage 3</div><div class="val">gsgs</div></div>
+              <div class="col"><div class="lbl">Capage 4</div><div class="val">sgs</div></div>
+            </div>
+            <div class="val" style="margin:4px 0 2px">Support / Au sol : Spécial · Inversé</div>
+            <div class="val">Autre : sgs</div>
+            <div class="money-row">
+              <div class="money-cell">
+                <div class="lbl">Montant</div>
+                <div class="money-amt new-main">5&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Rabais / promotion</div>
+                <div class="money-amt new-disc"><span class="sign">−</span> 400,00&nbsp;$</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Subvention</div>
+                <div class="money-amt new-disc"><span class="sign">−</span> 1&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+            <div class="tax-base">Base taxable : 4&nbsp;600,00&nbsp;$</div>
+
+            <div class="unit-sep"></div>
+            <div class="unit-title new">Unité 2</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val empty">&nbsp;</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Cap. chauf.</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="money-row">
+              <div class="money-cell"><div class="lbl">Montant</div><div class="val empty">&nbsp;</div></div>
+              <div class="money-cell"><div class="lbl">Rabais / promotion</div><div class="val empty">&nbsp;</div></div>
+              <div class="money-cell"><div class="lbl">Subvention</div><div class="val empty">&nbsp;</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-h">Financiers + signature</div>
+          <div class="section-b" style="display:flex;gap:16px;align-items:flex-start">
+            <div style="flex:1">
+              <div class="lbl">Représentant</div>
+              <div class="val">Francis Daigle</div>
+              <div class="lbl" style="margin-top:8px">Signature client</div>
+              <div style="height:48px;border-bottom:1px solid var(--border);margin-top:4px"></div>
+            </div>
+            <div class="fin">
+              <div class="fr"><span class="k">Sous-total</span><span>4&nbsp;600,00&nbsp;$</span></div>
+              <div class="fr"><span class="k">TPS (5%)</span><span>230,00&nbsp;$</span></div>
+              <div class="fr"><span class="k">TVQ (9,975%)</span><span>458,85&nbsp;$</span></div>
+              <div class="fr total"><span class="k">TOTAL DÛ</span><span>5&nbsp;288,85&nbsp;$</span></div>
+              <div class="fr"><span class="k">− Subventions (info)</span><span>1&nbsp;000,00&nbsp;$</span></div>
+              <div class="fr net"><span class="k">Total net (indicatif)</span><span>4&nbsp;288,85&nbsp;$</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ 3. PAGE B FIXED ══════════ -->
+    <div id="p-page-b" class="panel">
+      <div class="col-label">Page Option B — même structure financiers que A</div>
+      <div class="letter">
+        <div class="banner">
+          SOUMISSION #60018 — test 7 — OPTION B
+        </div>
+
+        <div class="section">
+          <div class="section-h">Équipements — Option B</div>
+          <div class="section-b">
+            <div class="unit-title new">Unité 1</div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Marque</div><div class="val empty">&nbsp;</div></div>
+              <div class="col" style="flex:3"><div class="lbl">Modèle</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capacité (BTU)</div><div class="val">sgs</div></div>
+              <div class="col"><div class="lbl">Plage fonctionnement</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Cap. chauf.</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Garantie pièces</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Garantie M-O</div><div class="val">3 ans</div></div>
+              <div class="col"><div class="lbl">Pieds tuyaux</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="row2">
+              <div class="col"><div class="lbl">Capage 1</div><div class="val">gedgds</div></div>
+              <div class="col"><div class="lbl">Capage 2</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Capage 3</div><div class="val empty">&nbsp;</div></div>
+              <div class="col"><div class="lbl">Capage 4</div><div class="val empty">&nbsp;</div></div>
+            </div>
+            <div class="val" style="margin:4px 0">Support / Au sol : Spécial · Inversé</div>
+            <div class="money-row">
+              <div class="money-cell">
+                <div class="lbl">Montant</div>
+                <div class="money-amt new-main">7&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Rabais / promotion</div>
+                <div class="val empty">&nbsp;</div>
+              </div>
+              <div class="money-cell">
+                <div class="lbl">Subvention</div>
+                <div class="money-amt new-disc"><span class="sign">−</span> 2&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+            <div class="tax-base">Base taxable : 7&nbsp;000,00&nbsp;$</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-h">Financiers — Option B</div>
+          <div class="section-b">
+            <div class="fin">
+              <div class="fr"><span class="k">Sous-total</span><span>7&nbsp;000,00&nbsp;$</span></div>
+              <div class="fr"><span class="k">TPS (5%)</span><span>350,00&nbsp;$</span></div>
+              <div class="fr"><span class="k">TVQ (9,975%)</span><span>698,25&nbsp;$</span></div>
+              <div class="fr total"><span class="k">TOTAL DÛ</span><span>8&nbsp;048,25&nbsp;$</span></div>
+              <div class="fr"><span class="k">− Subventions (info)</span><span>2&nbsp;000,00&nbsp;$</span></div>
+              <div class="fr net"><span class="k">Total net (indicatif)</span><span>6&nbsp;048,25&nbsp;$</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="callout">
+        Même tableau qu’Option A : espace entre « TOTAL DÛ » et le montant, ligne subvention, total net.
+      </div>
+    </div>
+
+    <!-- ══════════ 4. BUG B ══════════ -->
+    <div id="p-bug-b" class="panel">
+      <div class="col-label">Bug actuel Option B (à corriger dans le PDF)</div>
+      <div class="letter compact" style="max-width:420px">
+        <div class="banner">SOUMISSION #60018 — test 7 — OPTION B</div>
+        <div class="section">
+          <div class="section-h">Financiers — Option B (actuel)</div>
+          <div class="section-b">
+            <div class="fin broken">
+              <div class="fr"><span class="k">Sous-total</span><span>7000.00 $</span></div>
+              <div class="fr"><span class="k">TPS (5%)</span><span>350.00 $</span></div>
+              <div class="fr"><span class="k">TVQ (9.975%)</span><span>698.25 $</span></div>
+              <div class="fr total"><span class="k">TOTAL DÛ</span><span>8048.25 $</span></div>
+            </div>
+            <p style="font-size:7.5pt;color:#b91c1c;margin:10px 0 0">
+              ✕ TOTAL DÛ collé au montant · pas de ligne subvention · pas de total net
+            </p>
+          </div>
+        </div>
+        <div class="note-same bad" style="margin-top:12px">
+          (Ancien) L'adresse de facturation est identique… en bleu — à remplacer par noir.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:28px">
+      <strong>Prochaine étape</strong> — dis-moi si cette v2 te convient (ou quoi ajuster : taille des montants, densités, etc.).
+      Ensuite on porte le design dans <code>QuoteDocument.tsx</code> + fix Option B.
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("on"));
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("on"));
+        btn.classList.add("on");
+        document.getElementById(btn.dataset.panel).classList.add("on");
+      });
+    });
+  </script>
+</body>
+</html>

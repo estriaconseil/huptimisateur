@@ -1,23 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+
+import { createAdminSupabaseClient } from "@/lib/supabase/admin";
 
 /**
  * Vercel Cron — s'exécute à 8h00 UTC (4h00 EST) chaque matin.
  * Passe les jobs "reparti" en "termine" si leur DERNIÈRE date d'installation
- * dans schedule_rows est passée (avant aujourd'hui).
+ * dans schedules est passée (avant aujourd'hui).
  *
- * Protégé par le header Authorization: Bearer CRON_SECRET.
+ * Protégé par le header Authorization: Bearer CRON_SECRET (obligatoire).
  */
 export async function GET(req: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  const auth = req.headers.get("authorization");
+  if (!secret || auth !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const supabase = await createServerSupabaseClient();
+  const supabase = createAdminSupabaseClient();
   const today = new Date().toISOString().slice(0, 10);
 
   // Trouver tous les jobs "reparti" dont la dernière date planifiée est passée
@@ -33,7 +32,7 @@ export async function GET(req: NextRequest) {
 
   // Grouper par job_id → prendre la date MAX par job
   const latestByJob = new Map<string, string>();
-  for (const row of (candidates ?? [])) {
+  for (const row of candidates ?? []) {
     const existing = latestByJob.get(row.job_id);
     if (!existing || row.scheduled_date > existing) {
       latestByJob.set(row.job_id, row.scheduled_date);

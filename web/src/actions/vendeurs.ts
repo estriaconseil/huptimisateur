@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireAdmin } from "@/lib/auth/require-role";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type Ok = { ok: true };
@@ -24,6 +25,9 @@ export type DayConfigInput = {
 };
 
 export async function createSalesperson(data: SalespersonInput): Promise<{ ok: true; id: string } | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { data: sp, error } = await supabase
     .from("salespeople")
@@ -59,6 +63,9 @@ export async function createSalesperson(data: SalespersonInput): Promise<{ ok: t
 }
 
 export async function updateSalesperson(id: string, data: SalespersonInput): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("salespeople")
@@ -82,6 +89,9 @@ export async function updateDayConfig(
   salespersonId: string,
   configs: DayConfigInput[]
 ): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   for (const cfg of configs) {
@@ -107,6 +117,9 @@ export async function updateDayConfig(
 }
 
 export async function deleteSalesperson(id: string): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   // Bloquer si des RDV futurs existent (le vendeur doit d'abord les transférer)
@@ -133,7 +146,7 @@ export async function deleteSalesperson(id: string): Promise<Ok | Err> {
     if (error.code === "23503") {
       return {
         ok: false,
-        message: "Ce vendeur a des rendez-vous dans l'historique. Désactivez-le plutôt que de le supprimer.",
+        message: "Ce vendeur a des rendez-vous ou données liées. Utilisez « Supprimer avec toutes les données » pour supprimer un vendeur test, ou désactivez-le pour conserver l'historique.",
       };
     }
     return { ok: false, message: error.message };
@@ -144,11 +157,104 @@ export async function deleteSalesperson(id: string): Promise<Ok | Err> {
   return { ok: true };
 }
 
+/**
+ * Suppression forcée : efface toutes les données liées (RDV, blocs, détache jobs/quotes)
+ * avant de supprimer le vendeur. À utiliser uniquement pour des données test.
+ */
+export async function forceDeleteSalesperson(id: string): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
+  const supabase = await createServerSupabaseClient();
+
+  // 1. Supprimer les blocs horaires
+  const { error: blocksErr } = await supabase
+    .from("salesperson_blocks")
+    .delete()
+    .eq("salesperson_id", id);
+  if (blocksErr) return { ok: false, message: `Erreur blocs : ${blocksErr.message}` };
+
+  // 2. Détacher les jobs liés (mettre salesperson_id à null)
+  const { error: jobsErr } = await supabase
+    .from("jobs")
+    .update({ salesperson_id: null, salesperson_locked: false })
+    .eq("salesperson_id", id);
+  if (jobsErr) return { ok: false, message: `Erreur jobs : ${jobsErr.message}` };
+
+  // 3. Détacher les soumissions liées
+  const { error: quotesErr } = await supabase
+    .from("quotes")
+    .update({ salesperson_id: null })
+    .eq("salesperson_id", id);
+  if (quotesErr) return { ok: false, message: `Erreur soumissions : ${quotesErr.message}` };
+
+  // 4. Supprimer tous les rendez-vous (y compris passés)
+  const { error: apptErr } = await supabase
+    .from("sales_appointments")
+    .delete()
+    .eq("salesperson_id", id);
+  if (apptErr) return { ok: false, message: `Erreur rendez-vous : ${apptErr.message}` };
+
+  // 5. Supprimer le vendeur
+  const { error } = await supabase.from("salespeople").delete().eq("id", id);
+  if (error) return { ok: false, message: error.message };
+
+  revalidatePath("/vendeurs");
+  revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
+  return { ok: true };
+}
+
 export async function toggleSalespersonActive(id: string, active: boolean): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("salespeople").update({ active }).eq("id", id);
   if (error) return { ok: false, message: error.message };
   revalidatePath("/vendeurs");
   revalidatePath("/ventes");
+  return { ok: true };
+}
+
+/**
+ * Lie (ou délie) un vendeur à un compte de connexion via `profile_id`.
+ * `profileId = null` supprime le lien.
+ */
+export async function linkSalespersonToProfile(
+  salespersonId: string,
+  profileId: string | null
+): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
+  const supabase = await createServerSupabaseClient();
+
+  // S'assurer qu'aucun autre vendeur n'est déjà lié à ce compte
+  if (profileId) {
+    const { data: existing } = await supabase
+      .from("salespeople")
+      .select("id, name")
+      .eq("profile_id", profileId)
+      .neq("id", salespersonId)
+      .maybeSingle();
+    if (existing) {
+      const row = existing as { id: string; name: string };
+      return {
+        ok: false,
+        message: `Ce compte est déjà lié au vendeur « ${row.name} ». Déliez-le d'abord.`,
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("salespeople")
+    .update({ profile_id: profileId })
+    .eq("id", salespersonId);
+
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/vendeurs");
+  revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
   return { ok: true };
 }

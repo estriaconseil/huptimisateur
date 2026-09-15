@@ -407,7 +407,6 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
               <option value="a_planifier">À planifier</option>
               <option value="reparti">Réparti</option>
               <option value="retour_a_faire">Retour à faire</option>
-              <option value="facturation">Facturation</option>
               <option value="complete">Complété</option>
               <option value="termine">Terminé</option>
               <option value="annule">Annulé</option>

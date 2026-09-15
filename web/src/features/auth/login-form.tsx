@@ -31,7 +31,7 @@ export function LoginForm() {
     setFormError(null);
     try {
       const supabase = createBrowserSupabaseClient();
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: values.email,
         password: values.password,
       });
@@ -39,7 +39,21 @@ export function LoginForm() {
         setFormError(error.message);
         return;
       }
-      router.push("/dispatch");
+
+      // Rediriger selon le rôle : vendeur → ventes, autres → dispatch
+      let destination = "/dispatch";
+      if (data.user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", data.user.id)
+          .maybeSingle();
+        if (profile?.role === "salesperson") {
+          destination = "/ventes";
+        }
+      }
+
+      router.push(destination);
       router.refresh();
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Connexion impossible");

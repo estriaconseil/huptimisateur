@@ -11,6 +11,7 @@ import {
   FileText,
   Home,
   Loader2,
+  Pencil,
   User,
   MapPin,
   Phone,
@@ -19,7 +20,15 @@ import {
   X,
 } from "lucide-react";
 
-import { moveAppointment, cancelAppointment, findBestSlotsForProspect, type ProspectSlotResult } from "@/actions/sales";
+import {
+  moveAppointment,
+  cancelAppointment,
+  findBestSlotsForProspect,
+  getJobForEdit,
+  updateJobQuick,
+  type ProspectSlotResult,
+  type JobQuickData,
+} from "@/actions/sales";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -61,7 +70,7 @@ type MoveTab = "optimizer" | "calendar" | "manual";
 
 export function AppointmentActionModal({ open, onClose, appointment, salespeople }: Props) {
   const router = useRouter();
-  const [mode, setMode] = useState<"view" | "move" | "cancel">("view");
+  const [mode, setMode] = useState<"view" | "move" | "cancel" | "edit">("view");
   const [moveTab, setMoveTab] = useState<MoveTab>("optimizer");
   const [moving, startMove] = useTransition();
   const [cancelling, startCancel] = useTransition();
@@ -71,8 +80,14 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   const [loadingSlots, startLoadSlots] = useTransition();
   const [bookingSlot, setBookingSlot] = useState<string | null>(null);
 
+  // ── Mode édition de la fiche prospect ──────────────────────────────────
+  const [jobData, setJobData] = useState<JobQuickData | null>(null);
+  const [loadingJob, startLoadJob] = useTransition();
+  const [saving, startSave] = useTransition();
+  const [editForm, setEditForm] = useState<JobQuickData | null>(null);
+
   const hasGps = !!(appointment.client_lat && appointment.client_lng);
-  const city = cityFromAddress(appointment.client_address);
+  const city = appointment.client_city ?? cityFromAddress(appointment.client_address);
 
   useEffect(() => {
     if (!open) {
@@ -80,8 +95,38 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
       setSlots(null);
       setError(null);
       setMoveTab("optimizer");
+      setJobData(null);
+      setEditForm(null);
     }
   }, [open]);
+
+  const openEdit = () => {
+    if (!appointment.job_id) return;
+    setError(null);
+    setJobData(null);
+    setEditForm(null);
+    setMode("edit");
+    startLoadJob(async () => {
+      const res = await getJobForEdit(appointment.job_id!);
+      if (res.ok) {
+        setJobData(res.data);
+        setEditForm(res.data);
+      } else {
+        setError(res.message);
+      }
+    });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editForm || !appointment.job_id) return;
+    setError(null);
+    startSave(async () => {
+      const res = await updateJobQuick(appointment.job_id!, editForm);
+      if (!res.ok) { setError(res.message); return; }
+      setMode("view");
+      router.refresh();
+    });
+  };
 
   useEffect(() => {
     if (mode === "move" && moveTab === "optimizer" && hasGps && slots === null) {
@@ -201,7 +246,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
               <span>{salespersonName}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground shrink-0">
+          <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground shrink-0">
             <X className="size-5" />
           </button>
         </div>
@@ -214,9 +259,18 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                   {appointment.client_phone && (
                     <p className="flex items-center gap-2">
                       <Phone className="size-3.5 text-muted-foreground shrink-0" />
-                      <a href={`tel:${appointment.client_phone}`} className="text-primary hover:underline">
+                      <a href={`tel:${appointment.client_phone}`} className="text-primary hover:underline flex-1">
                         {appointment.client_phone}
                       </a>
+                      {appointment.job_id && (
+                        <button
+                          onClick={openEdit}
+                          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                          title="Modifier la fiche prospect"
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                      )}
                     </p>
                   )}
                   {city && (
@@ -243,6 +297,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
+
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -305,6 +360,121 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
               )}
             </div>
           </>
+        )}
+
+        {mode === "edit" && (
+          <div className="space-y-3">
+            {loadingJob && (
+              <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground text-sm">
+                <Loader2 className="size-4 animate-spin" />
+                Chargement…
+              </div>
+            )}
+
+            {!loadingJob && editForm && (
+              <>
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Fiche prospect
+                </p>
+
+                {/* Nom et téléphone */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={lbl}>Nom du client</label>
+                    <input
+                      className={inp}
+                      value={editForm.client_name}
+                      onChange={(e) => setEditForm((f) => f ? { ...f, client_name: e.target.value } : f)}
+                    />
+                  </div>
+                  <div>
+                    <label className={lbl}>Téléphone</label>
+                    <input
+                      className={inp}
+                      type="tel"
+                      value={editForm.client_phone ?? ""}
+                      onChange={(e) => setEditForm((f) => f ? { ...f, client_phone: e.target.value || null } : f)}
+                    />
+                  </div>
+                </div>
+
+                {/* Notes internes */}
+                <div>
+                  <label className={lbl}>Notes internes</label>
+                  <textarea
+                    rows={3}
+                    className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                    value={editForm.internal_notes ?? ""}
+                    onChange={(e) => setEditForm((f) => f ? { ...f, internal_notes: e.target.value || null } : f)}
+                    placeholder="Notes visibles par l'équipe…"
+                  />
+                </div>
+
+                {/* Info installation */}
+                <div>
+                  <label className={lbl}>Info installation</label>
+                  <textarea
+                    rows={2}
+                    className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                    value={editForm.installation_info ?? ""}
+                    onChange={(e) => setEditForm((f) => f ? { ...f, installation_info: e.target.value || null } : f)}
+                    placeholder="Accès, type d'équipement…"
+                  />
+                </div>
+
+                {/* Date de relance + drapeau */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={lbl}>Date de relance</label>
+                    <input
+                      type="date"
+                      className={inp}
+                      value={editForm.follow_up_date ?? ""}
+                      onChange={(e) => setEditForm((f) => f ? { ...f, follow_up_date: e.target.value || null } : f)}
+                    />
+                  </div>
+                  <div>
+                    <label className={lbl}>Drapeau</label>
+                    <select
+                      className={inp}
+                      value={editForm.follow_up_flag ?? ""}
+                      onChange={(e) =>
+                        setEditForm((f) => f
+                          ? { ...f, follow_up_flag: (e.target.value || null) as JobQuickData["follow_up_flag"] }
+                          : f
+                        )
+                      }
+                    >
+                      <option value="">— Aucun —</option>
+                      <option value="a_suivre">À suivre</option>
+                      <option value="a_relancer">À relancer</option>
+                      <option value="rdv_passe">RDV passé</option>
+                    </select>
+                  </div>
+                </div>
+
+                {error && <p className="text-destructive text-sm">{error}</p>}
+
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleSaveEdit}
+                    disabled={saving}
+                    className="flex-1 h-9 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    {saving ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {saving ? "Sauvegarde…" : "Sauvegarder"}
+                  </button>
+                  <button
+                    onClick={() => setMode("view")}
+                    disabled={saving}
+                    className="px-4 h-9 rounded-lg border text-sm font-medium hover:bg-muted"
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         {mode === "move" && (

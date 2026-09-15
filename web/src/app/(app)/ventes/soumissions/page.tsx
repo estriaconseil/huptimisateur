@@ -5,6 +5,7 @@ import { fr } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Mail, Printer } from "lucide-react";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getCurrentSalespersonId } from "@/lib/supabase/profile";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { QuoteStatus } from "@/types/domain";
@@ -65,6 +66,9 @@ export default async function SoumissionsPage({
 
   const supabase = await createServerSupabaseClient();
 
+  // Vendeur connecté → filtre automatique sur ses propres soumissions
+  const currentSalespersonId = await getCurrentSalespersonId();
+
   // 1) Données — limit/offset (pas de count sur la même requête)
   let dataQuery = supabase
     .from("quotes")
@@ -78,6 +82,12 @@ export default async function SoumissionsPage({
   let countQuery = supabase
     .from("quotes")
     .select("id", { count: "exact", head: true });
+
+  // Restreindre aux soumissions du vendeur connecté
+  if (currentSalespersonId) {
+    dataQuery = dataQuery.eq("salesperson_id", currentSalespersonId);
+    countQuery = countQuery.eq("salesperson_id", currentSalespersonId);
+  }
 
   if (q) {
     const safe = escapeIlike(q);

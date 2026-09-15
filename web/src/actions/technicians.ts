@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { requireAdmin } from "@/lib/auth/require-role";
 import { PG_FK_VIOLATION } from "@/lib/constants";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -16,6 +17,9 @@ export async function createTechnician(data: {
   email?: string | null;
   phone?: string | null;
 }) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const first_name = data.first_name.trim();
   const last_name = data.last_name.trim();
 
@@ -48,6 +52,9 @@ export async function updateTechnician(
     active?: boolean;
   }
 ) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const patch: Record<string, unknown> = {};
 
@@ -66,6 +73,9 @@ export async function updateTechnician(
 }
 
 export async function deleteTechnician(id: string) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("technicians").delete().eq("id", id);
 
@@ -85,6 +95,9 @@ export async function deleteTechnician(id: string) {
 }
 
 export async function assignTechnicianToTeam(teamId: string, technicianId: string) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("team_technicians")
@@ -97,6 +110,9 @@ export async function assignTechnicianToTeam(teamId: string, technicianId: strin
 }
 
 export async function removeTechnicianFromTeam(teamId: string, technicianId: string) {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("team_technicians")

@@ -82,7 +82,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
 
   if (linkedJob) linkedJobStatus = linkedJob.status;
 
-  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "complete", "termine"];
   const alreadyConverted = !!(linkedJobStatus && INSTALL_STATUSES.includes(linkedJobStatus));
 
   // Vendeurs pour le formulaire

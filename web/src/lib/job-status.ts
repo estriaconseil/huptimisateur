@@ -42,7 +42,7 @@ export function statusColor(s: string): string {
     case "soumission_repartie":   return "bg-blue-100 text-blue-800";
     case "en_attente":            return "bg-violet-100 text-violet-800";
     case "a_planifier":           return "bg-emerald-100 text-emerald-800";
-    case "reparti":               return "bg-green-200 text-green-900";
+    case "reparti":               return "bg-blue-100 text-blue-800";
     case "retour_a_faire":        return "bg-orange-100 text-orange-800";
     case "complete":              return "bg-gray-100 text-gray-600";
     case "termine":               return "bg-gray-100 text-gray-600";

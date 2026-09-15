@@ -11,11 +11,19 @@ import { getDistanceFromOriginCacheOnly } from "@/lib/maps/distance-cache";
 import { haversineMeters, haversineSeconds, pickClosestByHaversine } from "@/lib/maps/haversine";
 import { cityFromAddress, todayYmd } from "@/lib/address";
 import { stripAutofilledPostal } from "@/lib/looks-like-postal";
+import { requireUser } from "@/lib/auth/require-role";
 import { FIXED_TIME_SLOTS, isSalespersonSlotBlocked } from "@/features/sales/sales-utils";
-import type { AppointmentStatus, QuoteStatus } from "@/types/domain";
+import type { AppointmentStatus, JobStatus, QuoteStatus } from "@/types/domain";
 
 /** Statuts ventes avant « Va nous rappeler » — seuls ceux-ci peuvent être promus. */
 const PRE_EN_ATTENTE = ["soumission_en_attente", "soumission_repartie"] as const;
+
+/** Statuts autorisés pour réserver / déplacer un RDV vendeur. */
+const SALES_BOOKABLE_STATUSES: JobStatus[] = [
+  "soumission_en_attente",
+  "soumission_repartie",
+  "en_attente",
+];
 
 /**
  * Si la soumission a un sous-total > 0, passe le job lié en « Va nous rappeler » (`en_attente`).
@@ -231,6 +239,9 @@ export async function searchSalesAppointments(
 export async function createAppointment(
   data: CreateAppointmentInput
 ): Promise<{ ok: true; id: string } | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   // Si client_id fourni, l'utiliser directement; sinon créer un client minimal
@@ -363,6 +374,9 @@ export async function createQuote(
   data: QuoteInput,
   units: UnitInput[]
 ): Promise<{ ok: true; id: string; quote_number: number } | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const appointmentId = link.appointmentId ?? null;
   let jobId = link.jobId ?? null;
@@ -506,6 +520,9 @@ export async function updateQuote(
   data: QuoteInput,
   units: UnitInput[]
 ): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   const { error: qErr } = await supabase
@@ -653,6 +670,9 @@ export async function convertQuoteToInstallationJob(
     acceptedOption?: "a" | "b";
   }
 ): Promise<{ ok: true; jobId: string } | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   const { data: quote, error: qErr } = await supabase
@@ -677,7 +697,7 @@ export async function convertQuoteToInstallationJob(
     return { ok: false, message: "Durée des travaux requise (demi-journée ou journée complète)." };
   }
 
-  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+  const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "complete", "termine"];
 
   // Résoudre le job lié (colonne job_id, sinon via appointment_id)
   let linkedJobId: string | null = quote.job_id ?? null;
@@ -934,9 +954,11 @@ export async function bookProspectToSlot(input: {
   /** true = déplacer un RDV existant (fiche prospect). false = case vide du calendrier. */
   allowReschedule?: boolean;
 }): Promise<{ ok: true; appointmentId: string } | { ok: false; message: string }> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
+  const user = { id: auth.profile.id };
 
   // Récupérer les infos du client + adresse d'installation via la job
   const { data: job, error: jobErr } = await supabase
@@ -950,6 +972,13 @@ export async function bookProspectToSlot(input: {
     .maybeSingle();
 
   if (jobErr || !job) return { ok: false, message: jobErr?.message ?? "Job introuvable" };
+
+  if (!SALES_BOOKABLE_STATUSES.includes((job as { status: string }).status as JobStatus)) {
+    return {
+      ok: false,
+      message: `Impossible de réserver un RDV pour un job en statut « ${(job as { status: string }).status} ».`,
+    };
+  }
 
   if (input.scheduledDate < todayYmd()) {
     return { ok: false, message: "Impossible de réserver un créneau déjà passé." };
@@ -2106,6 +2135,9 @@ export async function acceptQuote(
   quoteId: string,
   acceptedOption: "a" | "b",
 ): Promise<{ ok: true; jobId: string } | { ok: false; message: string }> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   // Récupérer la soumission pour valider les pré-requis
@@ -2127,7 +2159,7 @@ export async function acceptQuote(
     return { ok: false, message: "La durée des travaux doit être sélectionnée avant d'accepter." };
   }
 
-  const INSTALL_STATUSES_LOCAL = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+  const INSTALL_STATUSES_LOCAL = ["a_planifier", "reparti", "retour_a_faire", "complete", "termine"];
   if (quote.status === "accepted") {
     // Déjà acceptée — vérifier si le job est déjà converti
     if (quote.job_id) {
@@ -2149,4 +2181,151 @@ export async function acceptQuote(
   });
 
   return res;
+}
+
+/**
+ * Bascule l'option retenue (A→B ou B→A) sur une soumission déjà acceptée.
+ * Ne recrée pas le job ; met seulement à jour accepted_option + accepted_at.
+ * Bloqué si le job est en statut terminal (termine / annule).
+ */
+export async function switchAcceptedOption(
+  quoteId: string,
+  newOption: "a" | "b",
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  const { data: quote, error: qErr } = await supabase
+    .from("quotes")
+    .select("id, status, accepted_option, job_id")
+    .eq("id", quoteId)
+    .single();
+
+  if (qErr || !quote) return { ok: false, message: qErr?.message ?? "Soumission introuvable." };
+  if (quote.status !== "accepted") return { ok: false, message: "La soumission doit être acceptée avant de basculer l'option." };
+  if (quote.accepted_option === newOption) return { ok: true }; // Rien à faire
+
+  if (quote.job_id) {
+    const { data: job } = await supabase
+      .from("jobs")
+      .select("status")
+      .eq("id", quote.job_id)
+      .maybeSingle();
+    const BLOCKED = ["termine", "annule", "complete"];
+    if (job && BLOCKED.includes(job.status)) {
+      return { ok: false, message: `Impossible : le job est déjà en statut « ${job.status} ».` };
+    }
+  }
+
+  const { error: updErr } = await supabase
+    .from("quotes")
+    .update({ accepted_option: newOption, accepted_at: new Date().toISOString() })
+    .eq("id", quoteId);
+
+  if (updErr) return { ok: false, message: updErr.message };
+
+  revalidatePath("/ventes");
+  revalidatePath("/ventes/soumissions");
+  if (quote.job_id) revalidatePath(`/ventes/soumission/${quote.job_id}`);
+  revalidatePath("/a-planifier");
+  return { ok: true };
+}
+
+// ── Fiche prospect rapide (depuis la modale calendrier) ───────────────────────
+
+export type JobQuickData = {
+  id: string;
+  internal_notes: string | null;
+  installation_info: string | null;
+  follow_up_date: string | null;
+  follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
+  client_name: string;
+  client_phone: string | null;
+};
+
+/** Charge les champs modifiables d'un job depuis la modale calendrier. */
+export async function getJobForEdit(
+  jobId: string
+): Promise<{ ok: true; data: JobQuickData } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  const { data, error } = await supabase
+    .from("jobs")
+    .select("id, internal_notes, installation_info, follow_up_date, follow_up_flag, clients ( name, phone )")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  if (error || !data) return { ok: false, message: error?.message ?? "Dossier introuvable" };
+
+  const raw = data as {
+    id: string;
+    internal_notes: string | null;
+    installation_info: string | null;
+    follow_up_date: string | null;
+    follow_up_flag: string | null;
+    clients: { name: string; phone: string | null } | { name: string; phone: string | null }[] | null;
+  };
+  const client = Array.isArray(raw.clients) ? raw.clients[0] : raw.clients;
+
+  return {
+    ok: true,
+    data: {
+      id: raw.id,
+      internal_notes: raw.internal_notes,
+      installation_info: raw.installation_info,
+      follow_up_date: raw.follow_up_date,
+      follow_up_flag: raw.follow_up_flag as JobQuickData["follow_up_flag"],
+      client_name: client?.name ?? "—",
+      client_phone: client?.phone ?? null,
+    },
+  };
+}
+
+/** Met à jour les notes et infos rapides d'un job depuis la modale calendrier. */
+export async function updateJobQuick(
+  jobId: string,
+  data: {
+    internal_notes: string | null;
+    installation_info: string | null;
+    follow_up_date: string | null;
+    follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
+    client_name: string;
+    client_phone: string | null;
+  }
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const supabase = await createServerSupabaseClient();
+
+  // Récupérer le client_id lié au job pour mettre à jour le client
+  const { data: jobRow } = await supabase
+    .from("jobs")
+    .select("client_id")
+    .eq("id", jobId)
+    .maybeSingle();
+
+  const { error: jobErr } = await supabase
+    .from("jobs")
+    .update({
+      internal_notes: data.internal_notes || null,
+      installation_info: data.installation_info || null,
+      follow_up_date: data.follow_up_date || null,
+      follow_up_flag: data.follow_up_flag,
+    })
+    .eq("id", jobId);
+
+  if (jobErr) return { ok: false, message: jobErr.message };
+
+  // Mettre à jour nom/téléphone du client si fournis
+  if (jobRow?.client_id) {
+    await supabase
+      .from("clients")
+      .update({
+        name: data.client_name || undefined,
+        phone: data.client_phone || null,
+      })
+      .eq("id", jobRow.client_id as string);
+  }
+
+  revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
+  revalidatePath("/clients");
+  return { ok: true };
 }

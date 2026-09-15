@@ -2,21 +2,23 @@
 
 import React from "react";
 import {
+  addDays,
   addWeeks,
   format,
   parseISO,
   startOfWeek,
+  subWeeks,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
 import { assignJobToSlot, removeSchedule, searchInstallSchedules, type InstallSearchHit } from "@/actions/schedules";
 import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
+import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { getJobDetails, type JobFullDetail } from "@/actions/jobs";
 import { rankJobsFromOrigin, type RankedPickerJob } from "@/actions/picker";
-import { MAX_SUGGESTIONS } from "@/lib/constants";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -37,6 +39,8 @@ import type { JobPickerRow, RetourAFaireRow, TeamWithTechs } from "@/features/di
 import { slotLabel } from "@/services/planning/slot-rules";
 import {
   buildDispatchStateMap,
+  canAssignFullDay,
+  canAssignToHalf,
   getDayState,
   type EnrichedScheduleRow,
 } from "@/services/planning/dispatch-state";
@@ -158,7 +162,8 @@ export function DispatchBoard(props: Props) {
   /** Schedule à ignorer dans les suggestions (créneau source d'un déplacement / re-placement) */
   const [excludeScheduleId, setExcludeScheduleId] = useState<string | null>(null);
   const [suggestWarning, setSuggestWarning] = useState<string | null>(null);
-  const [suggestTargetDate, setSuggestTargetDate] = useState("");
+  const [suggestMode, setSuggestMode] = useState<"list" | "calendar">("list");
+  const [suggestExtended, setSuggestExtended] = useState(false);
 
   const suggestJobMeta = useMemo(() => {
     if (!suggestJobId) return null;
@@ -354,6 +359,7 @@ export function DispatchBoard(props: Props) {
   }
 
   function openDetail(_teamId: string, _dateStr: string, detailTarget: DetailTarget) {
+    setDeleteConfirm(false);
     setDetail(detailTarget);
     setDetailJobFull(null);
     setDetailOpen(true);
@@ -394,62 +400,75 @@ export function DispatchBoard(props: Props) {
         setPickError(res.message);
         return;
       }
+      setDeleteConfirm(false);
       setDetailOpen(false);
       setDetail(null);
       router.refresh();
     });
   }
 
-  async function openSuggestionsForJob(
-    jobId: string,
-    opts: { excludeScheduleId?: string | null; targetDate?: string } = {}
-  ) {
+  /** Même appel que le pipeline installation : 4 semaines, puis 8 si vide. */
+  function loadRankedSuggestions(jobId: string, sourceScheduleId: string | null) {
     setSuggestJobId(jobId);
+    setExcludeScheduleId(sourceScheduleId);
     setSuggestions([]);
     setSuggestWarning(null);
-    setExcludeScheduleId(opts.excludeScheduleId ?? null);
+    setSuggestExtended(false);
+    setSuggestMode("list");
     setSheetOpen(true);
     setSuggestLoading(true);
-    const fetchDate = opts.targetDate ?? weekStartLabel;
-    const res = await getDistanceSuggestionsForJob(
-      jobId,
-      weekStartLabel,
-      fetchDate !== weekStartLabel ? fetchDate : undefined,
-      opts.excludeScheduleId ?? null
-    );
-    setSuggestLoading(false);
-    if (res.ok) {
-      setSuggestions(res.suggestions);
-      setSuggestWarning(res.warning ?? null);
-    } else {
-      setSuggestWarning(res.message);
-    }
+
+    const startWeek = nextAvailableWeekMonday();
+    void (async () => {
+      const res4 = await getDistanceSuggestionsForJob(jobId, startWeek, undefined, sourceScheduleId, 4);
+      if (!res4.ok) {
+        setSuggestLoading(false);
+        setSuggestWarning(res4.message);
+        return;
+      }
+      if (res4.warning) {
+        setSuggestions(res4.suggestions);
+        setSuggestWarning(res4.warning);
+        setSuggestLoading(false);
+        return;
+      }
+      if (res4.suggestions.length > 0) {
+        setSuggestions(res4.suggestions);
+        setSuggestLoading(false);
+        return;
+      }
+
+      setSuggestExtended(true);
+      const res8 = await getDistanceSuggestionsForJob(jobId, startWeek, undefined, sourceScheduleId, 8);
+      if (res8.ok) {
+        setSuggestions(res8.suggestions);
+        setSuggestWarning(
+          res8.suggestions.length === 0
+            ? "Aucune plage disponible dans les 8 prochaines semaines. Vérifiez les équipes actives."
+            : null
+        );
+      } else {
+        setSuggestWarning(res8.message);
+      }
+      setSuggestLoading(false);
+    })();
+  }
+
+  function openSuggestionsForJob(
+    jobId: string,
+    opts: { excludeScheduleId?: string | null } = {}
+  ) {
+    loadRankedSuggestions(jobId, opts.excludeScheduleId ?? null);
   }
 
   function moveAppointment() {
     if (!detail) return;
     const jobId = detail.jobId;
     const sourceScheduleId = detail.scheduleId;
-    const sourceDate = schedules.find((s) => s.id === sourceScheduleId)?.scheduled_date ?? null;
-
+    setDeleteConfirm(false);
     setDetailOpen(false);
     setDetailJobFull(null);
-    setExcludeScheduleId(sourceScheduleId);
-    setSuggestJobId(jobId);
-    setSuggestions([]);
-    setSuggestWarning(null);
-    setSheetOpen(true);
-    setSuggestLoading(true);
-    void getDistanceSuggestionsForJob(
-      jobId,
-      weekStartLabel,
-      suggestTargetDate || sourceDate || undefined,
-      sourceScheduleId
-    ).then((r) => {
-      setSuggestLoading(false);
-      if (r.ok) { setSuggestions(r.suggestions); setSuggestWarning(r.warning ?? null); }
-      else setSuggestWarning(r.message);
-    });
+    loadRankedSuggestions(jobId, sourceScheduleId);
   }
 
   async function applySuggestion(s: ScheduleSuggestion) {
@@ -1267,101 +1286,106 @@ export function DispatchBoard(props: Props) {
       </Dialog>
 
       <Dialog open={sheetOpen} onOpenChange={(o) => { setSheetOpen(o); if (!o) setExcludeScheduleId(null); }}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col gap-0 overflow-hidden p-0">
-          {/* Header */}
+        <DialogContent className="sm:max-w-5xl max-h-[90vh] flex flex-col gap-0 overflow-hidden p-0">
           <div className="px-6 pt-6 pb-4 border-b">
             <DialogHeader>
-              <DialogTitle>Optimiser le trajet</DialogTitle>
+              <DialogTitle>Déplacer le rendez-vous</DialogTitle>
+              <DialogDescription>
+                Même classement que le pipeline installation. Le créneau actuel est exclu.
+              </DialogDescription>
             </DialogHeader>
-            {/* Sélecteur de journée cible */}
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <label htmlFor="suggest-date" className="text-sm font-medium whitespace-nowrap">
-                Journée cible
-              </label>
-              <input
-                id="suggest-date"
-                type="date"
-                value={suggestTargetDate}
-                onChange={(e) => setSuggestTargetDate(e.target.value)}
-                className="h-8 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-              />
-              <Button
+            <div className="mt-3 flex rounded-lg border overflow-hidden text-xs">
+              <button
                 type="button"
-                size="sm"
-                disabled={!suggestTargetDate || !suggestJobId || suggestLoading}
-                onClick={() => {
-                  if (!suggestJobId) return;
-                  setSuggestions([]);
-                  setSuggestWarning(null);
-                  setSuggestLoading(true);
-                  void getDistanceSuggestionsForJob(
-                    suggestJobId,
-                    weekStartLabel,
-                    suggestTargetDate,
-                    excludeScheduleId
-                  ).then((r) => {
-                    setSuggestLoading(false);
-                    if (r.ok) { setSuggestions(r.suggestions); setSuggestWarning(r.warning ?? null); }
-                    else setSuggestWarning(r.message);
-                  });
-                }}
+                onClick={() => setSuggestMode("list")}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors",
+                  suggestMode === "list" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                )}
               >
-                {suggestLoading ? <Loader2 className="size-3.5 animate-spin" /> : "Chercher"}
-              </Button>
+                <Sparkles className="size-3" />
+                Meilleur créneau
+              </button>
+              <button
+                type="button"
+                onClick={() => setSuggestMode("calendar")}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 font-medium transition-colors border-l",
+                  suggestMode === "calendar" ? "bg-primary text-primary-foreground" : "hover:bg-muted"
+                )}
+              >
+                <CalendarDays className="size-3" />
+                Par calendrier
+              </button>
             </div>
           </div>
 
-          {/* Liste */}
-          <div className="flex-1 overflow-y-auto px-4 py-3">
-            {suggestLoading && (
-              <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
-                <Loader2 className="size-4 animate-spin" /> Calcul Google Maps en cours…
-              </div>
+          <div className="flex-1 overflow-y-auto px-5 py-4">
+            {suggestMode === "list" && (
+              <>
+                {suggestLoading && (
+                  <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm">
+                    <Loader2 className="size-4 animate-spin" />
+                    {suggestExtended
+                      ? "Aucun créneau sur 4 semaines — recherche jusqu'à 8 semaines…"
+                      : "Calcul des distances en cours…"}
+                  </div>
+                )}
+                {suggestWarning && !suggestLoading && (
+                  <p className="text-sm rounded-md bg-destructive/10 text-destructive px-3 py-2">{suggestWarning}</p>
+                )}
+                {!suggestLoading && suggestExtended && suggestions.length > 0 && (
+                  <p className="mb-2 text-xs text-amber-600 bg-amber-50 rounded-md px-3 py-1.5 border border-amber-200">
+                    Les 4 prochaines semaines sont complètes — résultats sur les semaines 5 à 8.
+                  </p>
+                )}
+                <ul className="space-y-2 pb-4">
+                  {suggestions.slice(0, 15).map((s, idx) => (
+                    <li key={`${s.teamId}-${s.date}-${s.slot}-${idx}`}>
+                      <button
+                        type="button"
+                        disabled={pending}
+                        className="border-border hover:bg-accent w-full rounded-lg border px-3 py-2.5 text-left transition-colors disabled:opacity-50"
+                        onClick={() => void applySuggestion(s)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold capitalize">
+                            {format(parseISO(s.date), "EEEE d MMMM", { locale: fr })}
+                            <span className="ml-1.5 text-xs font-normal text-muted-foreground">{slotLabel(s.slot)}</span>
+                          </span>
+                          <TravelDuration
+                            seconds={s.durationSeconds}
+                            numberClassName="font-semibold"
+                            neutral={s.slot === "full_day"}
+                          />
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{s.teamName}</p>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
-            {suggestWarning && !suggestLoading && (
-              <p className="text-muted-foreground py-4 text-sm">{suggestWarning}</p>
+
+            {suggestMode === "calendar" && suggestJobId && suggestJobMeta && (
+              <MoveWeekPicker
+                jobId={suggestJobId}
+                durationHours={suggestJobMeta.estimated_duration_hours}
+                assigning={pending}
+                excludeScheduleId={excludeScheduleId}
+                precomputedSuggestions={suggestions}
+                onPick={(teamId, date, half) => {
+                  void applySuggestion({
+                    teamId,
+                    teamName: "",
+                    date,
+                    slot: half,
+                    distanceMeters: null,
+                    durationSeconds: null,
+                  });
+                }}
+              />
             )}
-            {!suggestLoading && !suggestWarning && (() => {
-              const filtered = suggestions
-                .filter((s) => !suggestTargetDate || s.date === suggestTargetDate);
-              if (filtered.length > 0) return null;
-              return (
-                <p className="text-muted-foreground py-4 text-sm">
-                  {suggestions.length === 0
-                    ? "Aucun créneau libre pour cette période."
-                    : `Aucun créneau libre le ${suggestTargetDate ? format(parseISO(suggestTargetDate), "EEEE d MMMM", { locale: fr }) : "jour sélectionné"}. Essaie une autre journée.`}
-                </p>
-              );
-            })()}
-            <ul className="space-y-2 pb-4">
-              {suggestions
-                .filter((s) => !suggestTargetDate || s.date === suggestTargetDate)
-                /* Déjà triés par temps de trajet depuis rankScheduleSuggestions */
-                .slice(0, MAX_SUGGESTIONS)
-                .map((s, idx) => (
-                  <li key={`${s.teamId}-${s.date}-${s.slot}-${idx}`}>
-                    <button
-                      type="button"
-                      disabled={pending}
-                      className="border-border hover:bg-accent w-full rounded-lg border px-3 py-2.5 text-left transition-colors"
-                      onClick={() => void applySuggestion(s)}
-                    >
-                      {/* Ligne principale : date à gauche, temps de trajet à droite */}
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-semibold capitalize">
-                          {format(parseISO(s.date), "EEEE d MMMM", { locale: fr })}
-                          <span className="ml-1.5 text-xs font-normal text-muted-foreground">{slotLabel(s.slot)}</span>
-                        </span>
-                        <span className="shrink-0 text-sm font-semibold tabular-nums">
-                          <TravelDuration seconds={s.durationSeconds} numberClassName="font-semibold" />
-                        </span>
-                      </div>
-                      {/* Équipe en dessous, plus petit */}
-                      <p className="mt-0.5 text-xs text-muted-foreground">{s.teamName}</p>
-                    </button>
-                  </li>
-                ))}
-            </ul>
           </div>
         </DialogContent>
       </Dialog>
@@ -1593,6 +1617,219 @@ function Legend() {
       <span>
         <span className="mr-1 inline-block size-3 rounded bg-amber-400 align-middle" /> # série manquant
       </span>
+    </div>
+  );
+}
+
+function nextAvailableWeekMonday(): string {
+  const today = new Date();
+  const todayIso = today.toISOString().slice(0, 10);
+  const thisMonday = startOfWeek(today, { weekStartsOn: 1 });
+  const thisFridayIso = format(addDays(thisMonday, 4), "yyyy-MM-dd");
+  if (thisFridayIso >= todayIso) return format(thisMonday, "yyyy-MM-dd");
+  return format(addDays(thisMonday, 7), "yyyy-MM-dd");
+}
+
+function MoveWeekPicker({
+  jobId,
+  durationHours,
+  assigning,
+  excludeScheduleId,
+  precomputedSuggestions,
+  onPick,
+}: {
+  jobId: string;
+  durationHours: EstimatedDurationHours;
+  assigning: boolean;
+  excludeScheduleId: string | null;
+  precomputedSuggestions: ScheduleSuggestion[];
+  onPick: (teamId: string, date: string, half: "am" | "pm") => void;
+}) {
+  const [monday, setMonday] = useState(nextAvailableWeekMonday);
+  const [loading, setLoading] = useState(true);
+  const [travelLoading, setTravelLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [weekDates, setWeekDates] = useState<string[]>([]);
+  const [teams, setTeams] = useState<TeamWithTechs[]>([]);
+  const [schedules, setSchedules] = useState<EnrichedScheduleRow[]>([]);
+  const [travelByKey, setTravelByKey] = useState<Map<string, number | null>>(new Map());
+
+  function loadWeek(weekIso: string) {
+    setMonday(weekIso);
+    setLoading(true);
+    setTravelLoading(true);
+    setError(null);
+    setTravelByKey(new Map());
+    void getInstallWeekGrid(weekIso)
+      .then((res) => {
+        setWeekDates(res.weekDates);
+        setTeams(res.teams);
+        setSchedules(res.schedules.filter((s) => s.id !== excludeScheduleId));
+        setLoading(false);
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : "Impossible de charger le calendrier.");
+        setLoading(false);
+      });
+
+    if (precomputedSuggestions.length > 0) {
+      const next = new Map<string, number | null>();
+      for (const s of precomputedSuggestions) {
+        next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
+      }
+      setTravelByKey(next);
+      setTravelLoading(false);
+    } else {
+      void getDistanceSuggestionsForJob(jobId, weekIso, undefined, excludeScheduleId, 1).then((res) => {
+        const next = new Map<string, number | null>();
+        if (res.ok) {
+          for (const s of res.suggestions) {
+            next.set(`${s.teamId}|${s.date}|${s.slot}`, s.durationSeconds);
+          }
+        }
+        setTravelByKey(next);
+        setTravelLoading(false);
+      }).catch(() => setTravelLoading(false));
+    }
+  }
+
+  useEffect(() => {
+    loadWeek(monday);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const stateMap = useMemo(() => buildDispatchStateMap(schedules), [schedules]);
+  const needsFullDay = durationHours === 8;
+  const DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
+
+  function travelFor(teamId: string, dateStr: string, slot: "am" | "pm" | "full_day") {
+    return travelByKey.get(`${teamId}|${dateStr}|${slot}`) ?? null;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => loadWeek(format(subWeeks(parseISO(monday), 1), "yyyy-MM-dd"))}
+          disabled={loading || assigning}
+          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+        >
+          <ChevronLeft className="size-4" />
+        </button>
+        <span className="text-sm font-medium flex-1 text-center">
+          Semaine du {format(parseISO(monday), "d MMM yyyy", { locale: fr })}
+        </span>
+        <button
+          type="button"
+          onClick={() => loadWeek(format(addWeeks(parseISO(monday), 1), "yyyy-MM-dd"))}
+          disabled={loading || assigning}
+          className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-40"
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
+
+      {travelLoading && !loading && (
+        <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+          <Loader2 className="size-3 animate-spin" /> Calcul des temps de trajet…
+        </p>
+      )}
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+          <Loader2 className="size-4 animate-spin" /> Chargement du calendrier…
+        </div>
+      )}
+      {error && <p className="text-destructive text-sm">{error}</p>}
+      {!loading && teams.length === 0 && (
+        <p className="text-sm text-muted-foreground">Aucune équipe active.</p>
+      )}
+
+      {!loading && teams.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[640px] border-collapse text-xs">
+            <thead>
+              <tr className="bg-muted/50">
+                <th className="px-2 py-1.5 text-left font-medium text-muted-foreground border-b border-r">Équipe</th>
+                {weekDates.map((d, i) => (
+                  <th key={d} className="px-1 py-1.5 text-center font-medium text-muted-foreground border-b border-r last:border-r-0">
+                    <div>{DAY_NAMES[i]}</div>
+                    <div className="text-foreground">{format(parseISO(d), "d MMM", { locale: fr })}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {teams.map((team) => (
+                <tr key={team.id} className="border-b last:border-b-0">
+                  <td className="px-2 py-1 font-medium border-r align-top whitespace-nowrap">{team.name}</td>
+                  {weekDates.map((dateStr) => {
+                    const state = getDayState(stateMap, team.id, dateStr);
+                    const amFree = canAssignToHalf(state, "am", true);
+                    const pmFree = canAssignToHalf(state, "pm", true);
+                    const fullFree = canAssignFullDay(state, true);
+                    const canAm = needsFullDay ? fullFree : amFree;
+                    const canPm = needsFullDay ? false : pmFree;
+                    const amTravel = needsFullDay
+                      ? travelFor(team.id, dateStr, "full_day")
+                      : travelFor(team.id, dateStr, "am");
+                    const pmTravel = travelFor(team.id, dateStr, "pm");
+                    return (
+                      <td key={dateStr} className="p-0.5 border-r last:border-r-0 align-top">
+                        <div className="flex flex-col gap-0.5">
+                          <button
+                            type="button"
+                            disabled={assigning || !canAm}
+                            onClick={() => canAm && onPick(team.id, dateStr, "am")}
+                            className={cn(
+                              "rounded px-1.5 py-1 text-left disabled:opacity-40",
+                              canAm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                            )}
+                          >
+                            <span className="block">
+                              {needsFullDay
+                                ? (fullFree ? "Journée libre" : "Occupé")
+                                : (amFree ? "AM libre" : "AM occupé")}
+                            </span>
+                            {canAm && (
+                              <TravelDuration
+                                seconds={amTravel}
+                                className="text-[11px] font-semibold"
+                                numberClassName="font-semibold"
+                                neutral={needsFullDay}
+                              />
+                            )}
+                          </button>
+                          {!needsFullDay && (
+                            <button
+                              type="button"
+                              disabled={assigning || !canPm}
+                              onClick={() => canPm && onPick(team.id, dateStr, "pm")}
+                              className={cn(
+                                "rounded px-1.5 py-1 text-left disabled:opacity-40",
+                                canPm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                              )}
+                            >
+                              <span className="block">{pmFree ? "PM libre" : "PM occupé"}</span>
+                              {canPm && (
+                                <TravelDuration
+                                  seconds={pmTravel}
+                                  className="text-[11px] font-semibold"
+                                  numberClassName="font-semibold"
+                                />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

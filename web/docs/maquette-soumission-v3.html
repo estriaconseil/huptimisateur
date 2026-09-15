@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Maquette — Soumission PDF v3</title>
+  <style>
+    :root {
+      --brand: #003B7C;
+      --brand-mid: #195AA5;
+      --brand-soft: #e8f0f8;
+      --ink: #142033;
+      --muted: #5c6b7a;
+      --border: #d5dde6;
+      --bg: #f4f7fa;
+      --page: #ffffff;
+      --amber-bg: #fffbeb;
+      --amber-border: #f5d78e;
+      --amber-text: #8a5a12;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+      background: #d9e2ec;
+      color: var(--ink);
+      padding: 28px 16px 64px;
+    }
+
+    .wrap { max-width: 980px; margin: 0 auto; }
+
+    .intro h1 { margin: 0 0 6px; font-size: 1.35rem; color: var(--brand); }
+    .intro p { margin: 0 0 12px; color: var(--muted); font-size: 0.9rem; line-height: 1.45; max-width: 720px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .chip {
+      font-size: 0.72rem;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--border);
+    }
+    .chip strong { color: var(--brand); }
+
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      color: var(--muted);
+    }
+    .tab.on { background: var(--brand); color: #fff; border-color: var(--brand); }
+    .panel { display: none; }
+    .panel.on { display: block; }
+
+    .letter {
+      background: var(--page);
+      max-width: 8.5in;
+      margin: 0 auto;
+      padding: 30px 34px;
+      box-shadow: 0 10px 32px rgba(0, 40, 90, 0.14);
+      border: 1px solid #c5d0dc;
+      font-size: 9.5pt;
+    }
+
+    /* Header + logo */
+    .hdr {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 3px solid var(--brand);
+    }
+    .brand-block {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .brand-block .logo {
+      width: 72px;
+      height: auto;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+    .brand .name {
+      font-size: 13pt;
+      font-weight: 800;
+      color: var(--brand);
+      letter-spacing: 0.02em;
+      line-height: 1.15;
+    }
+    .brand .tag {
+      font-size: 7.5pt;
+      font-weight: 650;
+      color: var(--brand-mid);
+      margin-top: 2px;
+    }
+    .brand .addr {
+      margin-top: 6px;
+      font-size: 7.5pt;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .doc-title { text-align: right; }
+    .doc-title .main {
+      font-size: 18pt;
+      font-weight: 800;
+      color: var(--ink);
+      letter-spacing: 0.06em;
+    }
+    .doc-title .num {
+      margin-top: 4px;
+      display: inline-block;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 700;
+      font-size: 11pt;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+
+    .banner {
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      color: var(--amber-text);
+      font-weight: 700;
+      font-size: 9pt;
+      padding: 8px 12px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+    }
+
+    .card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 8pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--brand);
+      margin: 0 0 10px;
+    }
+
+    /* Client : paires compactes en ligne */
+    .kv-flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+    }
+    .kv {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      max-width: 100%;
+    }
+    .kv .lbl {
+      font-size: 7.5pt;
+      font-weight: 700;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .kv .lbl::after { content: " :"; }
+    .kv .val {
+      font-size: 9.5pt;
+      font-weight: 650;
+      color: var(--ink);
+    }
+    .kv.full { flex: 1 1 100%; }
+    .note-same {
+      margin: 8px 0 0;
+      font-size: 7.5pt;
+      font-style: italic;
+      color: var(--ink);
+    }
+
+    /* Unité */
+    .unit {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 12px;
+      background: #fff;
+    }
+    .unit-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: var(--brand-soft);
+      border-bottom: 1px solid var(--border);
+    }
+    .unit-name {
+      font-size: 13pt;
+      font-weight: 800;
+      color: var(--brand);
+      margin: 0;
+    }
+    .unit-body { padding: 12px 14px; }
+
+    /*
+      Specs : pastilles qui se tassent à gauche.
+      Pas de grille à colonnes fixes → plus de gros trous.
+      Titre (gris) vs valeur (noir gras) clairement distincts.
+    */
+    /* Chaque spec-flow = une rangée qui occupe toute la largeur */
+    .spec-flow {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+    }
+    .spec {
+      flex: 1;           /* chaque pastille prend une part égale de la largeur */
+      background: #fff;
+      border: 1px solid #c8d0d8;
+      border-radius: 6px;
+      padding: 6px 10px;
+      min-width: 0;
+    }
+    .spec .lbl {
+      display: block;
+      font-size: 6.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 2px;
+      line-height: 1.2;
+    }
+    .spec .val {
+      display: block;
+      font-size: 10pt;
+      font-weight: 750;
+      color: var(--ink);
+      line-height: 1.2;
+    }
+    .spec.wide { flex: 2; }
+    .mount-line {
+      margin-top: 10px;
+      font-size: 9pt;
+      color: var(--ink);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 10px;
+    }
+    .mount-line .lbl {
+      font-weight: 700;
+      font-size: 6.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-right: 6px;
+    }
+
+    /* Cases à cocher (installation / électricité) */
+    .check-flow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      margin-top: 8px;
+    }
+    .chk {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 8.5pt;
+      color: var(--ink);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      background: #fff;
+    }
+    .chk .box {
+      width: 11px;
+      height: 11px;
+      border: 1.5px solid #444;
+      border-radius: 2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    .chk.on .box {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: #fff;
+    }
+    .chk.on { font-weight: 650; }
+    .chk:not(.on) { color: var(--muted); }
+
+    /* Prix */
+    .price-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 0;
+      margin-top: 12px;
+    }
+    .price-box {
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-height: 64px;
+      min-width: 120px;
+      flex: 1 1 140px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .price-box .lbl {
+      font-size: 7pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+      opacity: 0.9;
+    }
+    .price-box .amt {
+      font-size: 13pt;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      line-height: 1.1;
+    }
+    .price-box.main {
+      background: var(--brand);
+      color: #fff;
+      flex: 1.4 1 160px;
+    }
+    .price-box.main .lbl { color: rgba(255,255,255,0.85); }
+    .price-box.side {
+      background: #eef3f8;
+      border: 1px solid var(--border);
+      color: var(--ink);
+    }
+    .price-box.side .lbl { color: var(--muted); }
+    .price-box.side .amt { font-size: 12pt; color: var(--brand); }
+
+    /* Minus entre les cases Montant et Rabais */
+    .price-op {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      flex: 0 0 22px;
+      font-size: 14pt;
+      font-weight: 800;
+      color: var(--brand);
+      user-select: none;
+    }
+
+    .bottom {
+      display: grid;
+      grid-template-columns: 1fr 240px;
+      gap: 16px;
+      align-items: start;
+    }
+    .fin {
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+    .fin .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 12px;
+      font-size: 9pt;
+      border-bottom: 1px solid var(--border);
+    }
+    .fin .row:last-child { border-bottom: 0; }
+    .fin .row .k { color: var(--muted); }
+    .fin .row.total {
+      background: var(--brand);
+      color: #fff;
+      font-weight: 800;
+      font-size: 11pt;
+      padding: 11px 12px;
+    }
+    .fin .row.total .k { color: rgba(255,255,255,0.9); }
+    .fin .row.info {
+      background: var(--bg);
+      font-size: 8.5pt;
+    }
+    .fin .row.net {
+      background: var(--brand-soft);
+      font-weight: 750;
+    }
+    .fin .row.net .k,
+    .fin .row.net .v { color: var(--brand); }
+
+    .sig-box {
+      height: 52px;
+      border-bottom: 1.5px solid var(--border);
+      margin-top: 6px;
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 14px 16px;
+      background: #fff;
+      border-radius: 8px;
+      border-left: 4px solid var(--brand);
+      font-size: 0.86rem;
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .callout ul { margin: 8px 0 0; padding-left: 18px; }
+
+    @media (max-width: 700px) {
+      .bottom { grid-template-columns: 1fr; }
+      .price-op { width: 100%; flex-basis: 100%; height: 18px; }
+    }
+
+    /* ── Impression N&B : on enlève les ombres portées et les couleurs de fond légères.
+       Le bleu #003B7C imprime en noir intense, texte blanc reste lisible. ── */
+    @media print {
+      body { background: white !important; padding: 0 !important; }
+      .letter { box-shadow: none !important; border: none !important; }
+      .tabs, .intro, .callout { display: none !important; }
+      .spec { border-color: #888 !important; background: white !important; }
+      .unit-top { background: #e8e8e8 !important; }
+      .price-box.side { background: #f0f0f0 !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="intro">
+      <h1>Maquette HTML — Soumission PDF v3.1</h1>
+      <p>
+        Ajustements : logo visible, libellé <strong>Rabais</strong> (avec un « − » entre les cases),
+        specs en <strong>pastilles qui se tassent</strong> (plus de grille trouée / gros vides).
+      </p>
+      <div class="chips">
+        <span class="chip"><strong>Logo</strong> réel (aussi prévu au PDF)</span>
+        <span class="chip"><strong>Rabais</strong> + « − » entre cases</span>
+        <span class="chip"><strong>Specs</strong> compactes, pas de trous</span>
+        <span class="chip"><strong>Montant</strong> gros bloc bleu / blanc</span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button type="button" class="tab on" data-panel="p-a">Option A (remplie)</button>
+      <button type="button" class="tab" data-panel="p-b">Option B (partielle)</button>
+      <button type="button" class="tab" data-panel="p-unit">Zoom prix</button>
+    </div>
+
+    <!-- PAGE A -->
+    <div id="p-a" class="panel on">
+      <div class="letter">
+        <div class="hdr">
+          <img src="../public/logo.jpg" alt="Huppé Réfrigération" style="width:280px;height:auto;object-fit:contain;display:block;" />
+          <div class="doc-title">
+            <div class="main">SOUMISSION</div>
+            <div class="num">N° 60018</div>
+            <div style="margin-top:6px;font-size:8pt;color:var(--muted);">Date soumission</div>
+            <div style="font-size:9pt;font-weight:700;">2026-09-08</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Informations client</div>
+          <!-- rangée 1 : Nom / Téléphone / Courriel sur toute la largeur -->
+          <div class="spec-flow">
+            <div class="spec" style="flex:1.2"><span class="lbl">Nom</span><span class="val">test 7</span></div>
+            <div class="spec" style="flex:1"><span class="lbl">Téléphone</span><span class="val">438-888-6859</span></div>
+            <div class="spec" style="flex:1.6"><span class="lbl">Courriel</span><span class="val">optimisateurhuppe@gmail.com</span></div>
+          </div>
+          <!-- rangée 2 : Adresse pleine largeur -->
+          <div class="spec-flow" style="margin-top:8px">
+            <div class="spec"><span class="lbl">Adresse d'installation</span><span class="val">165 Rue Main O, Coaticook, QC J1A 1P4, Canada</span></div>
+          </div>
+          <div class="note-same">L'adresse de facturation est identique à l'adresse d'installation.</div>
+        </div>
+
+        <div class="card-title" style="margin:4px 0 8px">Équipements — Option A</div>
+
+        <!-- Unité 1 — données réelles #60018 -->
+        <div class="unit">
+          <div class="unit-top">
+            <h3 class="unit-name">Unité 1</h3>
+          </div>
+          <div class="unit-body">
+            <div class="spec-flow">
+              <div class="spec"><span class="lbl">Marque</span><span class="val">Mouveair</span></div>
+              <div class="spec" style="flex:2"><span class="lbl">Modèle</span><span class="val">MSH5121451</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Capacité (BTU)</span><span class="val">12000</span></div>
+              <div class="spec"><span class="lbl">Plage fonctionnement</span><span class="val">-25 °C</span></div>
+              <div class="spec"><span class="lbl">Cap. chauf. à -25 °C</span><span class="val">9600 BTU</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Garantie pièces</span><span class="val">2 ans</span></div>
+              <div class="spec"><span class="lbl">Garantie M-O</span><span class="val">4 ans</span></div>
+              <div class="spec"><span class="lbl">Pieds tuyaux</span><span class="val">150</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Capage 1</span><span class="val">5m, noir</span></div>
+              <div class="spec"><span class="lbl">Capage 2</span><span class="val">10m, rouge</span></div>
+              <div class="spec"><span class="lbl">Capage 3</span><span class="val">5 noir</span></div>
+              <div class="spec"><span class="lbl">Capage 4</span><span class="val">10 blanc</span></div>
+            </div>
+            <div class="mount-line" style="margin-top:6px">
+              <span class="lbl">Support / Au sol</span>
+              Régulier
+            </div>
+
+            <div class="price-strip">
+              <div class="price-box main">
+                <div class="lbl">Montant</div>
+                <div class="amt">5&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="price-op" aria-hidden="true">−</div>
+              <div class="price-box side">
+                <div class="lbl">Rabais</div>
+                <div class="amt">400,00&nbsp;$</div>
+              </div>
+              <div class="price-box side">
+                <div class="lbl">Subvention</div>
+                <div class="amt">1&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Unité 2 — données réelles #60018 -->
+        <div class="unit">
+          <div class="unit-top">
+            <h3 class="unit-name">Unité 2</h3>
+          </div>
+          <div class="unit-body">
+            <div class="spec-flow">
+              <div class="spec"><span class="lbl">Capacité (BTU)</span><span class="val">sfgsgf</span></div>
+              <div class="spec"><span class="lbl">Plage fonctionnement</span><span class="val">-20 °C</span></div>
+              <div class="spec"><span class="lbl">Cap. chauf. à -25 °C</span><span class="val">sgsgsg</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Garantie pièces</span><span class="val">8 ans</span></div>
+              <div class="spec"><span class="lbl">Garantie M-O</span><span class="val">10 ans</span></div>
+              <div class="spec"><span class="lbl">Pieds tuyaux</span><span class="val">sgsg</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Capage 1</span><span class="val">sgsg</span></div>
+              <div class="spec"><span class="lbl">Capage 2</span><span class="val">sgsg</span></div>
+              <div class="spec"><span class="lbl">Capage 3</span><span class="val">sgs</span></div>
+              <div class="spec"><span class="lbl">Capage 4</span><span class="val">sgsg</span></div>
+            </div>
+
+            <div class="price-strip">
+              <div class="price-box main">
+                <div class="lbl">Montant</div>
+                <div class="amt">5&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="price-op" aria-hidden="true">−</div>
+              <div class="price-box side">
+                <div class="lbl">Rabais</div>
+                <div class="amt">500,00&nbsp;$</div>
+              </div>
+              <div class="price-box side">
+                <div class="lbl">Subvention</div>
+                <div class="amt">1&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Autres détails d'installation — données #60018 -->
+        <div class="card">
+          <div class="card-title">Autres détails d'installation</div>
+          <div class="spec-flow">
+            <div class="spec"><span class="lbl">Durée des travaux</span><span class="val">Demi-journée (4 h)</span></div>
+            <div class="spec"><span class="lbl">Niveau</span><span class="val">Moyen</span></div>
+            <div class="spec"><span class="lbl">Techniciens</span><span class="val">2 tech.</span></div>
+          </div>
+          <div class="check-flow">
+            <span class="chk on"><span class="box">✓</span> Prépiping</span>
+            <span class="chk on"><span class="box">✓</span> Drill béton</span>
+            <span class="chk on"><span class="box">✓</span> Par grenier</span>
+            <span class="chk"><span class="box"></span> Par sous-sol</span>
+            <span class="chk"><span class="box"></span> Par garage</span>
+            <span class="chk"><span class="box"></span> Par garde-robe</span>
+            <span class="chk"><span class="box"></span> Changement appareil</span>
+            <span class="chk"><span class="box"></span> Ds Escalier</span>
+          </div>
+          <div class="spec-flow" style="margin-top:8px">
+            <div class="spec"><span class="lbl">Notes</span><span class="val">sgsgsgsgsg</span></div>
+          </div>
+        </div>
+
+        <!-- Informations électriques — données #60018 -->
+        <div class="card">
+          <div class="card-title">Informations électriques</div>
+          <div class="spec-flow">
+            <div class="spec"><span class="lbl">Ampérage</span><span class="val">20A/230v</span></div>
+            <div class="spec"><span class="lbl">Panneau</span><span class="val">59</span></div>
+            <div class="spec"><span class="lbl">Initiales</span><span class="val">mm</span></div>
+          </div>
+          <div class="check-flow">
+            <span class="chk"><span class="box"></span> Élect. incluse</span>
+            <span class="chk on"><span class="box">✓</span> Élect. non incluse</span>
+            <span class="chk on"><span class="box">✓</span> Élect. à céduler</span>
+          </div>
+        </div>
+
+        <div class="bottom">
+          <div>
+            <div class="card">
+              <div class="card-title">Signature</div>
+              <div class="spec-flow">
+                <div class="spec"><span class="lbl">Représentant</span><span class="val">Felix-Antoine Prévost</span></div>
+                <div class="spec"><span class="lbl">Approuvé par (client)</span><span class="val">MH</span></div>
+              </div>
+              <div class="field" style="margin-top:10px">
+                <div class="lbl" style="font-size:7.5pt;font-weight:700;color:var(--muted)">Signature client</div>
+                <div class="sig-box"></div>
+              </div>
+            </div>
+          </div>
+          <div class="fin">
+            <div class="row"><span class="k">Sous-total</span><span>9&nbsp;100,00&nbsp;$</span></div>
+            <div class="row"><span class="k">TPS (5%)</span><span>455,00&nbsp;$</span></div>
+            <div class="row"><span class="k">TVQ (9,975%)</span><span>907,73&nbsp;$</span></div>
+            <div class="row total"><span class="k">TOTAL DÛ</span><span>10&nbsp;462,73&nbsp;$</span></div>
+            <div class="row info"><span class="k">Subventions (info)</span><span>2&nbsp;000,00&nbsp;$</span></div>
+            <div class="row net"><span class="k">Total net (indicatif)</span><span>8&nbsp;462,73&nbsp;$</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE B — partielle : montrer que ça reste compact -->
+    <div id="p-b" class="panel">
+      <div class="letter">
+        <div class="banner">SOUMISSION #60018 — test 7 — OPTION B</div>
+
+        <div class="card-title" style="margin-bottom:8px">Équipements — Option B</div>
+
+        <div class="unit">
+          <div class="unit-top">
+            <h3 class="unit-name">Unité 1</h3>
+          </div>
+          <div class="unit-body">
+            <div class="spec-flow">
+              <div class="spec"><span class="lbl">Description</span><span class="val">sgsgsg</span></div>
+              <div class="spec"><span class="lbl">Capacité (BTU)</span><span class="val">sgs</span></div>
+              <div class="spec"><span class="lbl">Garantie M-O</span><span class="val">3 ans</span></div>
+            </div>
+            <div class="spec-flow" style="margin-top:6px">
+              <div class="spec"><span class="lbl">Capage 1</span><span class="val">gedgds</span></div>
+            </div>
+            <div class="mount-line">
+              <span class="lbl">Support / Au sol</span>
+              Spécial · Inversé
+            </div>
+
+            <div class="price-strip">
+              <div class="price-box main">
+                <div class="lbl">Montant</div>
+                <div class="amt">7&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="price-box side">
+                <div class="lbl">Subvention</div>
+                <div class="amt">2&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fin" style="max-width:260px;margin-left:auto">
+          <div class="row"><span class="k">Sous-total</span><span>7&nbsp;000,00&nbsp;$</span></div>
+          <div class="row"><span class="k">TPS (5%)</span><span>350,00&nbsp;$</span></div>
+          <div class="row"><span class="k">TVQ (9,975%)</span><span>698,25&nbsp;$</span></div>
+          <div class="row total"><span class="k">TOTAL DÛ</span><span>8&nbsp;048,25&nbsp;$</span></div>
+          <div class="row info"><span class="k">Subventions (info)</span><span>2&nbsp;000,00&nbsp;$</span></div>
+          <div class="row net"><span class="k">Total net (indicatif)</span><span>6&nbsp;048,25&nbsp;$</span></div>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Option B partielle</strong> : seulement 3 pastilles collées à gauche —
+        plus de grille à 3 colonnes avec un trou au milieu.
+      </div>
+    </div>
+
+    <!-- ZOOM -->
+    <div id="p-unit" class="panel">
+      <div class="letter" style="max-width:560px">
+        <div class="unit">
+          <div class="unit-top">
+            <h3 class="unit-name">Unité 1</h3>
+          </div>
+          <div class="unit-body">
+            <div class="spec-flow">
+              <div class="spec"><span class="lbl">Marque</span><span class="val">Mouveair</span></div>
+              <div class="spec" style="flex:2"><span class="lbl">Modèle</span><span class="val">MSH5121451</span></div>
+            </div>
+            <div class="price-strip" style="margin-top:12px">
+              <div class="price-box main">
+                <div class="lbl">Montant</div>
+                <div class="amt">5&nbsp;000,00&nbsp;$</div>
+              </div>
+              <div class="price-op" aria-hidden="true">−</div>
+              <div class="price-box side">
+                <div class="lbl">Rabais</div>
+                <div class="amt">400,00&nbsp;$</div>
+              </div>
+              <div class="price-box side">
+                <div class="lbl">Subvention</div>
+                <div class="amt">1&nbsp;000,00&nbsp;$</div>
+              </div>
+            </div>
+            <p style="margin:12px 0 0;font-size:8pt;color:var(--muted)">
+              Libellé = <strong>Rabais</strong>. Le « − » est <em>entre</em> les cases Montant et Rabais.
+              Subvention sans signe.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Corrections v3.1</strong>
+      <ul>
+        <li>Logo seul à gauche (le texte est déjà dans l'image).</li>
+        <li>Ordre des champs respecté : Marque/Modèle → Capacité/Plage/Cap.chauf. → Garanties → Capages → Support.</li>
+        <li>Pastilles B&amp;W : fond blanc + bordure grise → lisibles à l'impression N&amp;B.</li>
+        <li><code>@media print</code> : ombres et fonds décoratifs retirés à l'impression.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach((b) => b.classList.remove("on"));
+        document.querySelectorAll(".panel").forEach((p) => p.classList.remove("on"));
+        btn.classList.add("on");
+        document.getElementById(btn.dataset.panel).classList.add("on");
+      });
+    });
+  </script>
+</body>
+</html>

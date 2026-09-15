@@ -15,7 +15,7 @@ type Props = {
   searchParams: Promise<{ print?: string; from?: string; week?: string; accept?: string }>;
 };
 
-const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "facturation", "complete", "termine"];
+const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "complete", "termine"];
 
 export default async function JobQuotePage({ params, searchParams }: Props) {
   const { jobId } = await params;

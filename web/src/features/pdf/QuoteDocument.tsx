@@ -9,7 +9,6 @@ import {
   View,
 } from "@react-pdf/renderer";
 import type { Quote, QuoteUnit } from "@/types/domain";
-import { stripAutofilledPostal } from "@/lib/looks-like-postal";
 import {
   capageFieldsFromUnit,
   formatMountOptions,
@@ -17,7 +16,6 @@ import {
 } from "@/lib/quote-mount-options";
 
 // ── Enregistrement polices ────────────────────────────────────────────────────
-// Helvetica est toujours disponible sans enregistrement dans react-pdf
 Font.register({
   family: "Helvetica",
   fonts: [
@@ -26,17 +24,19 @@ Font.register({
   ],
 });
 
-// ── Palette ───────────────────────────────────────────────────────────────────
+// ── Palette (bleu logo Huppé) ─────────────────────────────────────────────────
 const C = {
-  primary:   "#1a1a2e",
-  accent:    "#0066cc",
-  border:    "#d0d0d0",
-  bg:        "#f7f7f7",
-  muted:     "#666666",
-  white:     "#ffffff",
-  green:     "#065f46",
-  greenBg:   "#ecfdf5",
-  darkBg:    "#1a1a1a",
+  primary: "#142033",
+  brand: "#003B7C",
+  brandSoft: "#e8f0f8",
+  border: "#c8d0d8",
+  bg: "#f4f7fa",
+  muted: "#5c6b7a",
+  white: "#ffffff",
+  amberBg: "#fffbeb",
+  amberBorder: "#fcd34d",
+  amberText: "#92400e",
+  warn: "#b91c1c",
 };
 
 // ── Taxes ─────────────────────────────────────────────────────────────────────
@@ -47,289 +47,456 @@ function calcTaxes(sub: number) {
   const tvq = Math.round(sub * TVQ * 100) / 100;
   return { tps, tvq, total: Math.round((sub + tps + tvq) * 100) / 100 };
 }
-const fmt = (n: number) => n.toFixed(2);
+const fmt = (n: number) =>
+  n.toLocaleString("fr-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// ── Labels ────────────────────────────────────────────────────────────────────
-const SUPPORT_LABELS: Record<string, string> = {
-  regular: "Régulier", inverted: "Inversé", special: "Spécial", inverted_adj: "Inversé ajust.",
-};
-const FLOOR_LABELS: Record<string, string> = {
-  alum_table: "Table alum.", plastic_base: "Base plast.", diversitech: "Diversitech",
-};
 const DIFF_LABELS: Record<string, string> = {
-  easy: "Facile", medium: "Moyen", hard: "Difficile",
-};
-const STATUS_LABELS: Record<string, string> = {
-  draft: "Brouillon", pending: "Va nous rappeler", accepted: "Acceptée", refused: "Refusée",
+  easy: "Facile",
+  medium: "Moyen",
+  hard: "Difficile",
 };
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
-  page: { fontFamily: "Helvetica", fontSize: 9, color: C.primary, paddingHorizontal: 32, paddingVertical: 28 },
+  page: {
+    fontFamily: "Helvetica",
+    fontSize: 9,
+    color: C.primary,
+    paddingHorizontal: 32,
+    paddingVertical: 28,
+  },
 
-  // En-tête
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  logo: { width: 225, height: 128, objectFit: "contain" },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
+  /** Largeur pour lire l’adresse/tél. dans le logo ; ratio ~1564×891 */
+  logo: { width: 280, height: 160, objectFit: "contain" },
   titleBlock: { alignItems: "flex-end" },
   mainTitle: { fontSize: 20, fontWeight: "bold", letterSpacing: 1, color: C.primary },
-  quoteNum: { fontSize: 18, fontWeight: "bold", color: C.accent, marginTop: 4 },
-  statusPill: { marginTop: 4, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: C.bg, borderRadius: 999, border: `1px solid ${C.border}` },
-  statusText: { fontSize: 8, color: C.muted },
-
-  flagsRow: { flexDirection: "row", gap: 16, paddingTop: 8, marginBottom: 10, borderTopWidth: 1, borderTopColor: C.border },
-  flagItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  box: { width: 9, height: 9, border: `1px solid ${C.border}`, borderRadius: 1 },
-  boxChecked: { width: 9, height: 9, backgroundColor: C.accent, borderRadius: 1 },
-  flagLabel: { fontSize: 8, color: C.muted },
+  quoteNum: { fontSize: 18, fontWeight: "bold", color: C.brand, marginTop: 4 },
   dateLabel: { fontSize: 8, color: C.muted },
   dateValue: { fontSize: 9, fontWeight: "bold" },
 
-  // Section
-  section: { marginBottom: 7, borderWidth: 1, borderColor: C.border, borderRadius: 3 },
-  sectionHeader: { backgroundColor: C.bg, paddingHorizontal: 7, paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: C.border },
-  sectionTitle: { fontSize: 7.5, fontWeight: "bold", textTransform: "uppercase", letterSpacing: 0.4, color: C.muted },
-  sectionBody: { paddingHorizontal: 7, paddingVertical: 5 },
+  section: { marginBottom: 8, borderWidth: 1, borderColor: C.border, borderRadius: 6 },
+  sectionHeader: {
+    backgroundColor: C.bg,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  sectionTitle: {
+    fontSize: 7.5,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    color: C.brand,
+  },
+  sectionBody: { paddingHorizontal: 8, paddingVertical: 7 },
 
-  // Grille 2 colonnes
-  row2: { flexDirection: "row", gap: 8, marginBottom: 3 },
+  row2: { flexDirection: "row", gap: 6, marginBottom: 4 },
   col: { flex: 1 },
-  colLabel: { fontSize: 6.5, color: C.muted, marginBottom: 0.5 },
-  colValue: { fontSize: 8.5 },
+  colLabel: { fontSize: 6.5, color: C.muted, marginBottom: 1 },
+  colValue: { fontSize: 9, fontWeight: "bold", color: C.primary },
 
-  // Unité
-  unitTitle: { fontSize: 9, fontWeight: "bold", marginBottom: 4, color: C.accent },
-  unitGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 4 },
-  unitCell: { width: "22%" },
-  unitCellWide: { width: "47%" },
-  unitCellFull: { width: "100%" },
-  tag: { paddingHorizontal: 4, paddingVertical: 1, backgroundColor: C.bg, borderRadius: 2, border: `1px solid ${C.border}`, marginRight: 3, marginBottom: 1 },
-  tagText: { fontSize: 6.5 },
-  tagActive: { backgroundColor: C.accent, borderColor: C.accent },
-  tagActiveText: { fontSize: 6.5, color: C.white },
+  // Pastilles specs (fond blanc + bordure — lisible N&B)
+  chipRow: { flexDirection: "row", gap: 5, marginBottom: 5 },
+  chip: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 5,
+    backgroundColor: C.white,
+  },
+  chipLabel: {
+    fontSize: 6,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    color: C.muted,
+    marginBottom: 2,
+  },
+  chipValue: { fontSize: 9, fontWeight: "bold", color: C.primary },
 
-  // Tableau financier
-  finTable: { borderWidth: 1, borderColor: C.border, borderRadius: 4, overflow: "hidden" },
-  finRow: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 3, borderBottomWidth: 1, borderBottomColor: C.border },
-  finRowDark: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 4, backgroundColor: C.darkBg },
-  finRowGreen: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 8, paddingVertical: 3, backgroundColor: C.greenBg },
+  unitCard: {
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 6,
+    overflow: "hidden",
+    marginBottom: 8,
+  },
+  unitTop: {
+    backgroundColor: C.brandSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  unitTitle: { fontSize: 13, fontWeight: "bold", color: C.brand },
+  unitBody: { paddingHorizontal: 8, paddingVertical: 7 },
+
+  mountLine: {
+    marginTop: 2,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+    backgroundColor: C.bg,
+  },
+  mountLabel: {
+    fontSize: 6,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    color: C.muted,
+    marginBottom: 2,
+  },
+  mountValue: { fontSize: 8.5, color: C.primary },
+
+  // Prix
+  priceStrip: { flexDirection: "row", alignItems: "stretch", marginTop: 6, gap: 0 },
+  priceMain: {
+    flex: 1.4,
+    backgroundColor: C.brand,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    justifyContent: "center",
+  },
+  priceMainLbl: {
+    fontSize: 6.5,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    color: "rgba(255,255,255,0.85)",
+    marginBottom: 3,
+  },
+  priceMainAmt: { fontSize: 13, fontWeight: "bold", color: C.white },
+  priceOp: {
+    width: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  priceOpText: { fontSize: 12, fontWeight: "bold", color: C.brand },
+  priceSide: {
+    flex: 1,
+    backgroundColor: C.bg,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    justifyContent: "center",
+    marginLeft: 4,
+  },
+  priceSideLbl: {
+    fontSize: 6.5,
+    fontWeight: "bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    color: C.muted,
+    marginBottom: 3,
+  },
+  priceSideAmt: { fontSize: 12, fontWeight: "bold", color: C.brand },
+
+  // Financiers
+  finTable: { borderWidth: 1, borderColor: C.border, borderRadius: 6, overflow: "hidden" },
+  finRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  finRowTotal: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    backgroundColor: C.brand,
+  },
+  finRowInfo: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: C.bg,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  finRowNet: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: C.brandSoft,
+  },
   finLabel: { fontSize: 8, color: C.muted },
-  finValue: { fontSize: 8 },
-  finLabelBold: { fontSize: 9, fontWeight: "bold", color: C.white },
-  finValueBold: { fontSize: 9, fontWeight: "bold", color: C.white },
-  finLabelGreen: { fontSize: 8, fontWeight: "bold", color: C.green },
-  finValueGreen: { fontSize: 8, fontWeight: "bold", color: C.green },
+  finValue: { fontSize: 8, color: C.primary },
+  finLabelBold: { fontSize: 10, fontWeight: "bold", color: C.white },
+  finValueBold: { fontSize: 10, fontWeight: "bold", color: C.white },
+  finLabelNet: { fontSize: 8, fontWeight: "bold", color: C.brand },
+  finValueNet: { fontSize: 8, fontWeight: "bold", color: C.brand },
 
-  // Textes légaux financiers
   legalBlock: { marginTop: 8, gap: 4 },
   legalText: { fontSize: 7, color: C.muted, lineHeight: 1.35 },
   legalTextBold: { fontSize: 7, fontWeight: "bold", color: C.primary, lineHeight: 1.35 },
-  legalTextWarn: { fontSize: 7, color: "#b91c1c", lineHeight: 1.35 },
+  legalTextWarn: { fontSize: 7, color: C.warn, lineHeight: 1.35 },
 
-  // Signature
   sigImage: { width: 180, height: 50, marginTop: 2, border: `1px solid ${C.border}` },
-  sigNotice: { fontSize: 7, color: C.muted, marginTop: 4, fontStyle: "italic" },
 
-  // Croquis (page dédiée, format lettre)
-  sketchPage: { fontFamily: "Helvetica", fontSize: 9, color: C.primary, paddingHorizontal: 28, paddingVertical: 24 },
+  sketchPage: {
+    fontFamily: "Helvetica",
+    fontSize: 9,
+    color: C.primary,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
+  },
   sketchPageTitle: { fontSize: 12, fontWeight: "bold", letterSpacing: 0.4, marginBottom: 2 },
   sketchPageSub: { fontSize: 8, color: C.muted, marginBottom: 10 },
   sketchPageFrame: { borderWidth: 1, borderColor: C.border, width: 556, height: 700 },
   sketchPageImage: { width: 554, height: 698, objectFit: "contain" },
 
-  // Page alternative / option retenue
-  altBanner: { backgroundColor: "#fffbeb", borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4, marginBottom: 10, borderWidth: 1, borderColor: "#fcd34d" },
-  altBannerText: { fontSize: 9, fontWeight: "bold", color: "#92400e" },
+  altBanner: {
+    backgroundColor: C.amberBg,
+    borderRadius: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: C.amberBorder,
+  },
+  altBannerText: { fontSize: 9, fontWeight: "bold", color: C.amberText },
 
-  // Checkbox list
-  checkRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 },
-  checkItem: { flexDirection: "row", alignItems: "center", gap: 3, width: "22%" },
-  checkLabel: { fontSize: 7.5 },
+  checkRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 4 },
+  checkItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    borderWidth: 1,
+    borderColor: C.border,
+    borderRadius: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    backgroundColor: C.white,
+  },
+  box: { width: 9, height: 9, border: `1.5px solid #444`, borderRadius: 1 },
+  boxChecked: { width: 9, height: 9, backgroundColor: C.primary, borderRadius: 1 },
+  checkLabel: { fontSize: 7.5, color: C.primary },
+  checkLabelOff: { fontSize: 7.5, color: C.muted },
 
-  // Notes
-  notes: { fontSize: 8, color: C.primary, lineHeight: 1.4 },
-
-  // Séparateur unités
-  unitSep: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 4 },
-
-  divider: { borderTopWidth: 1, borderTopColor: C.border, marginVertical: 4 },
+  notes: { fontSize: 8.5, color: C.primary, lineHeight: 1.35 },
+  noteSame: { fontSize: 7, fontStyle: "italic", color: C.primary, marginTop: 4, marginBottom: 2 },
 });
 
 // ── Sous-composants ───────────────────────────────────────────────────────────
-
-function Field({ label, value }: { label: string; value?: string | null }) {
-  if (!value) return null;
-  return (
-    <View style={s.col}>
-      <Text style={s.colLabel}>{label}</Text>
-      <Text style={s.colValue}>{value}</Text>
-    </View>
-  );
-}
 
 function CheckBox({ checked, label }: { checked: boolean; label: string }) {
   return (
     <View style={s.checkItem}>
       <View style={checked ? s.boxChecked : s.box} />
-      <Text style={s.checkLabel}>{label}</Text>
+      <Text style={checked ? s.checkLabel : s.checkLabelOff}>{label}</Text>
     </View>
   );
 }
 
-function CompactTags({ label, options, value }: { label: string; options: { v: string; l: string }[]; value: string | null }) {
+type ChipItem = { label: string; value?: string | number | null; flex?: number };
+
+/** Rangée de pastilles : champs vides masqués, le reste s’étire. */
+function SpecRow({ items }: { items: ChipItem[] }) {
+  const filled = items.filter(
+    (i) => i.value !== null && i.value !== undefined && String(i.value).trim() !== "",
+  );
+  if (filled.length === 0) return null;
   return (
-    <View style={{ flex: 1 }}>
-      <Text style={s.colLabel}>{label}</Text>
-      <View style={{ flexDirection: "row", flexWrap: "wrap", marginTop: 1 }}>
-        {options.map(({ v, l }) => (
-          <View key={v} style={value === v ? [s.tag, s.tagActive] : s.tag}>
-            <Text style={value === v ? s.tagActiveText : s.tagText}>{l}</Text>
-          </View>
-        ))}
-      </View>
+    <View style={s.chipRow}>
+      {filled.map((i) => (
+        <View key={i.label} style={[s.chip, { flex: i.flex ?? 1 }]}>
+          <Text style={s.chipLabel}>{i.label}</Text>
+          <Text style={s.chipValue}>{String(i.value)}</Text>
+        </View>
+      ))}
     </View>
   );
-}
-
-/** Cellule fixe : label + valeur (— si vide) pour éviter les trous dans la grille. */
-function Spec({
-  label,
-  value,
-  flex = 1,
-  last = false,
-  bold = false,
-  color,
-}: {
-  label: string;
-  value?: string | number | null;
-  flex?: number;
-  last?: boolean;
-  bold?: boolean;
-  color?: string;
-}) {
-  const display = value === null || value === undefined || value === "" ? "—" : String(value);
-  return (
-    <View style={{ flex, marginRight: last ? 0 : 5 }}>
-      <Text style={s.colLabel}>{label}</Text>
-      <Text style={[s.colValue, bold ? { fontWeight: "bold" } : {}, color ? { color } : {}]}>{display}</Text>
-    </View>
-  );
-}
-
-function DenseRow({ children }: { children: React.ReactNode }) {
-  return <View style={{ flexDirection: "row", marginBottom: 3, alignItems: "flex-start" }}>{children}</View>;
 }
 
 function LegalFooter() {
   return (
     <View style={s.legalBlock}>
       <Text style={[s.legalText, { fontStyle: "italic" }]}>
-        En acceptant la présente soumission, le client s'engage à respecter le terme de paiement à l'installation.
+        En acceptant la présente soumission, le client s'engage à respecter le terme de paiement à
+        l'installation.
       </Text>
       <Text style={s.legalText}>
         <Text style={s.legalTextBold}>Modes de paiements acceptés : </Text>
         Chèque, comptant, Visa, Mastercard. Financement disponible
       </Text>
       <Text style={s.legalTextWarn}>
-        Un frais administratif de 40,00$ est applicable sur tout appel de service couvert par la garantie du fabricant. Aucun frais de déplacement ou de diagnostic. Les appels de service qui ne sont pas couverts par la garantie du fabricant seront facturables au taux horaire régulier. Les détails de garantie seront fournis avec la facturation. * Aucun frais applicable la première année.
+        Un frais administratif de 40,00$ est applicable sur tout appel de service couvert par la garantie
+        du fabricant. Aucun frais de déplacement ou de diagnostic. Les appels de service qui ne sont pas
+        couverts par la garantie du fabricant seront facturables au taux horaire régulier. Les détails de
+        garantie seront fournis avec la facturation. * Aucun frais applicable la première année.
       </Text>
     </View>
   );
 }
 
-// ── Bloc unité (réutilisable principal / alternatif) ─────────────────────────
+function FinBlock({
+  sub,
+  tps,
+  tvq,
+  totalDue,
+  subsidies,
+  totalNet,
+}: {
+  sub: number;
+  tps: number;
+  tvq: number;
+  totalDue: number;
+  subsidies?: number;
+  totalNet?: number;
+}) {
+  return (
+    <View style={s.finTable}>
+      <View style={s.finRow}>
+        <Text style={s.finLabel}>Sous-total</Text>
+        <Text style={s.finValue}>{fmt(sub)} $</Text>
+      </View>
+      <View style={s.finRow}>
+        <Text style={s.finLabel}>TPS (5%)</Text>
+        <Text style={s.finValue}>{fmt(tps)} $</Text>
+      </View>
+      <View style={s.finRow}>
+        <Text style={s.finLabel}>TVQ (9,975%)</Text>
+        <Text style={s.finValue}>{fmt(tvq)} $</Text>
+      </View>
+      <View style={s.finRowTotal}>
+        <Text style={s.finLabelBold}>TOTAL DÛ</Text>
+        <Text style={s.finValueBold}>{fmt(totalDue)} $</Text>
+      </View>
+      {subsidies != null && subsidies > 0 && (
+        <View style={s.finRowInfo}>
+          <Text style={s.finLabel}>Subventions (info)</Text>
+          <Text style={s.finValue}>{fmt(subsidies)} $</Text>
+        </View>
+      )}
+      {totalNet != null && subsidies != null && subsidies > 0 && (
+        <View style={s.finRowNet}>
+          <Text style={s.finLabelNet}>Total net (indicatif)</Text>
+          <Text style={s.finValueNet}>{fmt(totalNet)} $</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ── Bloc unité ────────────────────────────────────────────────────────────────
 function UnitBlock({ u, idx }: { u: QuoteUnit; idx: number }) {
-  const tempLabel = u.operating_temp_c != null ? `${u.operating_temp_c} °C` : "—";
   const capages = capageFieldsFromUnit(u);
   const mountLabels = formatMountOptions(resolveMountOptions(u));
   const unitNum = idx + 1;
   const hasSerial = !!(u.serial_number?.trim() || u.serial_evaporator?.trim());
   const discount = u.discount_amount ?? 0;
-  const taxable = Math.max(0, (u.unit_subtotal ?? 0) - discount);
+  const subsidy = u.subsidy_amount ?? 0;
+  const montant = u.unit_subtotal ?? 0;
+  const plage = u.operating_temp_c != null ? `${u.operating_temp_c} °C` : null;
 
   return (
-    <View wrap={false}>
-      {idx > 0 && <View style={s.unitSep} />}
-      <Text style={s.unitTitle}>
-        Unité {unitNum}
-        {u.description ? `  —  ${u.description}` : ""}
-        {!u.description && (u.brand || u.model) ? `  —  ${[u.brand, u.model].filter(Boolean).join(" / ")}` : ""}
-      </Text>
-
-      {/* Ligne : Marque + Modèle */}
-      <DenseRow>
-        <Spec label="Marque" value={u.brand} flex={1} />
-        <Spec label="Modèle" value={u.model} flex={3} last />
-      </DenseRow>
-
-      {/* Ligne : Capacité + Plage + Cap. chauf. */}
-      <DenseRow>
-        <Spec label="Capacité (BTU)" value={u.capacity_btu} />
-        <Spec label="Plage fonctionnement" value={u.operating_temp_c != null ? `${u.operating_temp_c} °C` : null} />
-        <Spec label={`Cap. chauf. à ${tempLabel}`} value={u.heating_capacity_25} last />
-      </DenseRow>
-
-      {/* Ligne : Garanties + pieds */}
-      <DenseRow>
-        <Spec label="Garantie pièces" value={u.warranty_parts} />
-        <Spec label="Garantie M-O" value={u.warranty_months} />
-        <Spec label="Pieds tuyaux" value={u.pipe_feet} last />
-      </DenseRow>
-
-      {/* Capages 1–4 */}
-      <DenseRow>
-        <Spec label="Capage 1" value={capages.capage_1 || null} />
-        <Spec label="Capage 2" value={capages.capage_2 || null} />
-        <Spec label="Capage 3" value={capages.capage_3 || null} />
-        <Spec label="Capage 4" value={capages.capage_4 || null} last />
-      </DenseRow>
-
-      {/* Support / Au sol — multi-sélection */}
-      {(mountLabels || u.floor_mount_other) && (
-        <View style={{ marginBottom: 3 }}>
-          {mountLabels ? (
-            <Text style={[s.colValue, { fontSize: 8.5 }]}>
-              Support / Au sol : {mountLabels}
-            </Text>
-          ) : null}
-          {u.floor_mount_other ? (
-            <Text style={[s.colValue, { marginTop: 1, fontSize: 8 }]}>Autre : {u.floor_mount_other}</Text>
-          ) : null}
-        </View>
-      )}
-
-      {/* Prix */}
-      <DenseRow>
-        <Spec
-          label="Montant"
-          value={(u.unit_subtotal ?? 0) > 0 ? `${fmt(u.unit_subtotal ?? 0)} $` : null}
-          bold
-          color={C.accent}
-        />
-        <Spec
-          label="Rabais / promotion"
-          value={discount > 0 ? `−${fmt(discount)} $` : null}
-          color={C.green}
-        />
-        <Spec
-          label="Subvention"
-          value={(u.subsidy_amount ?? 0) > 0 ? `−${fmt(u.subsidy_amount ?? 0)} $` : "0.00 $"}
-          color={C.green}
-          last
-        />
-      </DenseRow>
-      {taxable !== (u.unit_subtotal ?? 0) && taxable > 0 && (
-        <Text style={[s.colValue, { fontSize: 8, marginBottom: 3 }]}>
-          Base taxable : {fmt(taxable)} $
+    <View style={s.unitCard} wrap={false}>
+      <View style={s.unitTop}>
+        <Text style={s.unitTitle}>
+          Unité {unitNum}
+          {u.description?.trim() ? `  —  ${u.description.trim()}` : ""}
         </Text>
-      )}
+      </View>
+      <View style={s.unitBody}>
+        <SpecRow
+          items={[
+            { label: "Marque", value: u.brand, flex: 1 },
+            { label: "Modèle", value: u.model, flex: 2 },
+          ]}
+        />
+        <SpecRow
+          items={[
+            { label: "Capacité (BTU)", value: u.capacity_btu },
+            { label: "Plage fonctionnement", value: plage },
+            { label: "Cap. chauf. à -25 °C", value: u.heating_capacity_25 },
+          ]}
+        />
+        <SpecRow
+          items={[
+            { label: "Garantie pièces", value: u.warranty_parts },
+            { label: "Garantie M-O", value: u.warranty_months },
+            { label: "Pieds tuyaux", value: u.pipe_feet },
+          ]}
+        />
+        <SpecRow
+          items={[
+            { label: "Capage 1", value: capages.capage_1 || null },
+            { label: "Capage 2", value: capages.capage_2 || null },
+            { label: "Capage 3", value: capages.capage_3 || null },
+            { label: "Capage 4", value: capages.capage_4 || null },
+          ]}
+        />
 
-      {/* # série — ligne dédiée pour ne pas déformer la grille */}
-      {hasSerial && (
-        <DenseRow>
-          <Spec label="# Série compresseur" value={u.serial_number?.trim() || null} />
-          <Spec label="# Série évaporateur" value={u.serial_evaporator?.trim() || null} last />
-        </DenseRow>
-      )}
+        {(mountLabels || u.floor_mount_other) && (
+          <View style={s.mountLine}>
+            <Text style={s.mountLabel}>Support / Au sol</Text>
+            <Text style={s.mountValue}>
+              {[mountLabels, u.floor_mount_other ? `Autre : ${u.floor_mount_other}` : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </Text>
+          </View>
+        )}
+
+        {(montant > 0 || discount > 0 || subsidy > 0) && (
+          <View style={s.priceStrip}>
+            {montant > 0 && (
+              <View style={s.priceMain}>
+                <Text style={s.priceMainLbl}>Montant</Text>
+                <Text style={s.priceMainAmt}>{fmt(montant)} $</Text>
+              </View>
+            )}
+            {discount > 0 && (
+              <>
+                <View style={s.priceOp}>
+                  <Text style={s.priceOpText}>−</Text>
+                </View>
+                <View style={[s.priceSide, { marginLeft: 0 }]}>
+                  <Text style={s.priceSideLbl}>Rabais</Text>
+                  <Text style={s.priceSideAmt}>{fmt(discount)} $</Text>
+                </View>
+              </>
+            )}
+            {subsidy > 0 && (
+              <View style={s.priceSide}>
+                <Text style={s.priceSideLbl}>Subvention</Text>
+                <Text style={s.priceSideAmt}>{fmt(subsidy)} $</Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {hasSerial && (
+          <View style={{ marginTop: 5 }}>
+            <SpecRow
+              items={[
+                { label: "# Série compresseur", value: u.serial_number?.trim() || null },
+                { label: "# Série évaporateur", value: u.serial_evaporator?.trim() || null },
+              ]}
+            />
+          </View>
+        )}
+      </View>
     </View>
   );
 }
@@ -352,7 +519,14 @@ export type QuoteDocumentProps = {
 };
 
 // ── Document ──────────────────────────────────────────────────────────────────
-export function QuoteDocument({ quote, units, salespersonName, logoBase64, installAddress = null, mode = "customer" }: QuoteDocumentProps) {
+export function QuoteDocument({
+  quote,
+  units,
+  salespersonName,
+  logoBase64,
+  installAddress = null,
+  mode = "customer",
+}: QuoteDocumentProps) {
   const accepted = quote.accepted_option ?? null;
   const isInstall = mode === "install";
   const chosen: "a" | "b" = accepted === "b" ? "b" : "a";
@@ -370,7 +544,6 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
   const aUnits = units.filter((u) => !u.is_alternative && isPriced(u)).sort(byOrder);
   const bUnits = units.filter((u) => u.is_alternative && isPriced(u)).sort(byOrder);
 
-  // Page 1 = option retenue (B si choisie, sinon A). Page 2 = l'autre, client seulement.
   const page1Units = chosen === "b" ? bUnits : aUnits;
   const page2Units = isInstall ? [] : chosen === "b" ? aUnits : bUnits;
   const page1Letter = chosen === "b" ? "B" : "A";
@@ -378,14 +551,16 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
 
   const aSub = taxableOf(aUnits);
   const bSub = taxableOf(bUnits);
-  const sub = chosen === "b" ? bSub : (aSub > 0 ? aSub : (quote.subtotal ?? 0));
+  const sub = chosen === "b" ? bSub : aSub > 0 ? aSub : (quote.subtotal ?? 0);
   const { tps, tvq, total } = calcTaxes(sub);
   const subsidies = chosen === "b" ? subsidiesOf(bUnits) : subsidiesOf(aUnits);
   const totalDue = total;
   const computedTotalNet = Math.max(0, totalDue - subsidies);
 
   const otherSub = chosen === "b" ? aSub : bSub;
+  const otherSubsidies = chosen === "b" ? subsidiesOf(aUnits) : subsidiesOf(bUnits);
   const { tps: otherTps, tvq: otherTvq, total: otherTotal } = calcTaxes(otherSub);
+  const otherNet = Math.max(0, otherTotal - otherSubsidies);
 
   const jobMetaUnit = page1Units[0] ?? units.find((u) => u.difficulty || u.tech_count) ?? null;
 
@@ -407,21 +582,16 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
       creator="Huppé CRM"
     >
       <Page size="LETTER" style={s.page}>
-
-        {/* ── En-tête ────────────────────────────────────────────── */}
+        {/* ── En-tête (logo seul — texte déjà dans l’image) ──────── */}
         <View style={s.headerRow}>
-          <View>
-            {logoBase64 && (
-              <Image src={logoBase64} style={s.logo} />
-            )}
-          </View>
+          <View>{logoBase64 ? <Image src={logoBase64} style={s.logo} /> : null}</View>
           <View style={s.titleBlock}>
             <Text style={s.mainTitle}>{isInstall ? "INSTALLATION" : "SOUMISSION"}</Text>
             <Text style={s.quoteNum}>N° {quote.quote_number}</Text>
             <Text style={[s.dateLabel, { marginTop: 8 }]}>Date soumission</Text>
             <Text style={s.dateValue}>{quote.quote_date}</Text>
             {accepted && (
-              <Text style={{ fontSize: 8, fontWeight: "bold", color: C.green, marginTop: 4 }}>
+              <Text style={{ fontSize: 8, fontWeight: "bold", color: C.brand, marginTop: 4 }}>
                 Option {page1Letter} retenue
               </Text>
             )}
@@ -430,106 +600,99 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
 
         {/* ── Client ─────────────────────────────────────────────── */}
         <View style={s.section} wrap={false}>
-          <View style={s.sectionHeader}><Text style={s.sectionTitle}>Informations client</Text></View>
+          <View style={s.sectionHeader}>
+            <Text style={s.sectionTitle}>Informations client</Text>
+          </View>
           <View style={s.sectionBody}>
-            <View style={s.row2}>
-              <View style={{ flex: 2 }}>
-                <Text style={s.colLabel}>Nom</Text>
-                <Text style={[s.colValue, { fontWeight: "bold" }]}>{quote.client_name}</Text>
-              </View>
-            </View>
+            <SpecRow
+              items={[
+                { label: "Nom", value: quote.client_name, flex: 1.2 },
+                { label: "Téléphone", value: quote.client_phone, flex: 1 },
+                { label: "Cellulaire", value: quote.client_cell, flex: 1 },
+                { label: "Courriel", value: quote.client_email, flex: 1.6 },
+              ]}
+            />
             {(() => {
               const billing = (quote.client_address ?? "").trim();
               const install = (installAddress ?? "").trim();
               const differ =
-                !!install &&
-                !!billing &&
-                install.toLowerCase() !== billing.toLowerCase();
+                !!install && !!billing && install.toLowerCase() !== billing.toLowerCase();
 
               if (differ) {
                 return (
                   <>
-                    <View style={s.row2}>
-                      <Field label="Adresse de facturation" value={quote.client_address} />
-                    </View>
-                    <View style={s.row2}>
-                      <Field label="Adresse d'installation" value={installAddress} />
-                    </View>
+                    <SpecRow items={[{ label: "Adresse de facturation", value: quote.client_address }]} />
+                    <SpecRow items={[{ label: "Adresse d'installation", value: installAddress }]} />
                   </>
                 );
               }
 
               return (
                 <>
-                  <View style={s.row2}>
-                    <Field label="Adresse" value={quote.client_address} />
-                  </View>
+                  <SpecRow
+                    items={[
+                      {
+                        label: "Adresse d'installation",
+                        value: install || quote.client_address,
+                      },
+                    ]}
+                  />
                   {!!install && (
-                    <View style={{ marginBottom: 4 }}>
-                      <Text style={{ fontSize: 7, color: C.accent, fontStyle: "italic" }}>
-                        L'adresse de facturation est identique à l'adresse d'installation.
-                      </Text>
-                    </View>
+                    <Text style={s.noteSame}>
+                      L'adresse de facturation est identique à l'adresse d'installation.
+                    </Text>
                   )}
                 </>
               );
             })()}
-            <View style={s.row2}>
-              <Field label="Téléphone" value={quote.client_phone} />
-              <Field label="Cellulaire" value={quote.client_cell} />
-              <Field label="Courriel" value={quote.client_email} />
-            </View>
           </View>
         </View>
 
         {/* ── Équipements option page 1 ──────────────────────────── */}
         {page1Units.length > 0 && (
-          <View style={s.section}>
-            <View style={s.sectionHeader} minPresenceAhead={100}>
-              <Text style={s.sectionTitle}>
-                {accepted
-                  ? `Équipements — Option ${page1Letter} (retenue)`
-                  : `Équipements — Option ${page1Letter}`}
-              </Text>
-            </View>
-            <View style={s.sectionBody}>
-              {page1Units.map((u, idx) => (
-                <UnitBlock key={u.id} u={u} idx={idx} />
-              ))}
-            </View>
+          <View style={{ marginBottom: 4 }}>
+            <Text
+              style={[s.sectionTitle, { marginBottom: 6, fontSize: 8 }]}
+              minPresenceAhead={80}
+            >
+              {accepted
+                ? `Équipements — Option ${page1Letter} (retenue)`
+                : `Équipements — Option ${page1Letter}`}
+            </Text>
+            {page1Units.map((u, idx) => (
+              <UnitBlock key={u.id} u={u} idx={idx} />
+            ))}
           </View>
         )}
 
         {/* ── Détails installation ───────────────────────────────── */}
         <View style={s.section} wrap={false}>
-          <View style={s.sectionHeader}><Text style={s.sectionTitle}>Autres détails d'installation</Text></View>
+          <View style={s.sectionHeader}>
+            <Text style={s.sectionTitle}>Autres détails d'installation</Text>
+          </View>
           <View style={s.sectionBody}>
-            <View style={s.row2}>
-              {quote.estimated_duration_hours && (
-                <View style={s.col}>
-                  <Text style={s.colLabel}>Durée des travaux</Text>
-                  <Text style={s.colValue}>
-                    {quote.estimated_duration_hours === 4 ? "Demi-journée (4 h)" : "Journée complète (8 h)"}
-                  </Text>
-                </View>
-              )}
-              {(jobMetaUnit?.difficulty || jobMetaUnit?.tech_count) && (
-                <View style={s.col}>
-                  {jobMetaUnit?.difficulty && (
-                    <>
-                      <Text style={s.colLabel}>Niveau</Text>
-                      <Text style={s.colValue}>{DIFF_LABELS[jobMetaUnit.difficulty] ?? jobMetaUnit.difficulty}</Text>
-                    </>
-                  )}
-                </View>
-              )}
-              {jobMetaUnit?.tech_count && (
-                <View style={s.col}>
-                  <Text style={s.colLabel}>Techniciens</Text>
-                  <Text style={s.colValue}>{jobMetaUnit.tech_count} tech.</Text>
-                </View>
-              )}
-            </View>
+            <SpecRow
+              items={[
+                {
+                  label: "Durée des travaux",
+                  value: quote.estimated_duration_hours
+                    ? quote.estimated_duration_hours === 4
+                      ? "Demi-journée (4 h)"
+                      : "Journée complète (8 h)"
+                    : null,
+                },
+                {
+                  label: "Niveau",
+                  value: jobMetaUnit?.difficulty
+                    ? (DIFF_LABELS[jobMetaUnit.difficulty] ?? jobMetaUnit.difficulty)
+                    : null,
+                },
+                {
+                  label: "Techniciens",
+                  value: jobMetaUnit?.tech_count ? `${jobMetaUnit.tech_count} tech.` : null,
+                },
+              ]}
+            />
 
             <View style={s.checkRow}>
               {instItems.map(({ key, label }) => (
@@ -537,25 +700,33 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
               ))}
             </View>
 
-            {quote.notes && (
+            {quote.notes ? (
               <View style={{ marginTop: 6 }}>
-                <Text style={s.colLabel}>Notes</Text>
-                <Text style={s.notes}>{quote.notes}</Text>
+                <SpecRow items={[{ label: "Notes", value: quote.notes }]} />
               </View>
-            )}
+            ) : null}
           </View>
         </View>
 
         {/* ── Électricité ────────────────────────────────────────── */}
-        {(quote.electrical_amperage || quote.electrical_panel || quote.electrical_included || quote.electrical_not_included || quote.electrical_to_schedule || quote.electrical_initials) && (
+        {(quote.electrical_amperage ||
+          quote.electrical_panel ||
+          quote.electrical_included ||
+          quote.electrical_not_included ||
+          quote.electrical_to_schedule ||
+          quote.electrical_initials) && (
           <View style={s.section} wrap={false}>
-            <View style={s.sectionHeader}><Text style={s.sectionTitle}>Informations électriques</Text></View>
+            <View style={s.sectionHeader}>
+              <Text style={s.sectionTitle}>Informations électriques</Text>
+            </View>
             <View style={s.sectionBody}>
-              <View style={s.row2}>
-                <Field label="Ampérage" value={quote.electrical_amperage} />
-                <Field label="Panneau" value={quote.electrical_panel} />
-                {quote.electrical_initials && <Field label="Initiales" value={quote.electrical_initials} />}
-              </View>
+              <SpecRow
+                items={[
+                  { label: "Ampérage", value: quote.electrical_amperage },
+                  { label: "Panneau", value: quote.electrical_panel },
+                  { label: "Initiales", value: quote.electrical_initials },
+                ]}
+              />
               <View style={s.checkRow}>
                 <CheckBox checked={quote.electrical_included} label="Élect. incluse" />
                 <CheckBox checked={quote.electrical_not_included} label="Élect. non incluse" />
@@ -574,62 +745,49 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
           </View>
           <View style={s.sectionBody}>
             <View style={{ flexDirection: "row", gap: 16 }}>
-              {/* Gauche : représentant + signature */}
               <View style={{ flex: 1 }}>
-                <View style={s.row2}>
-                  {salespersonName && <Field label="Représentant" value={salespersonName} />}
-                  {quote.approved_by && <Field label="Approuvé par (client)" value={quote.approved_by} />}
-                </View>
+                <SpecRow
+                  items={[
+                    { label: "Représentant", value: salespersonName },
+                    { label: "Approuvé par (client)", value: quote.approved_by },
+                  ]}
+                />
                 <View style={{ marginTop: 8 }}>
                   <Text style={s.colLabel}>Signature client</Text>
                   {quote.signature_data ? (
                     <Image src={quote.signature_data} style={s.sigImage} />
                   ) : (
-                    <View style={{ width: 180, height: 50, borderBottomWidth: 1, borderBottomColor: C.border, marginTop: 4 }}>
+                    <View
+                      style={{
+                        width: 180,
+                        height: 50,
+                        borderBottomWidth: 1,
+                        borderBottomColor: C.border,
+                        marginTop: 4,
+                      }}
+                    >
                       <Text style={[s.colLabel, { paddingTop: 34 }]}>Signature</Text>
                     </View>
                   )}
                 </View>
               </View>
-              {/* Droite : prix */}
-              <View style={{ width: 200 }}>
-                <View style={s.finTable}>
-                  <View style={s.finRow}>
-                    <Text style={s.finLabel}>Sous-total</Text>
-                    <Text style={s.finValue}>{fmt(sub)} $</Text>
-                  </View>
-                  <View style={s.finRow}>
-                    <Text style={s.finLabel}>TPS (5%)</Text>
-                    <Text style={s.finValue}>{fmt(tps)} $</Text>
-                  </View>
-                  <View style={s.finRow}>
-                    <Text style={s.finLabel}>TVQ (9.975%)</Text>
-                    <Text style={s.finValue}>{fmt(tvq)} $</Text>
-                  </View>
-                  <View style={s.finRowDark}>
-                    <Text style={s.finLabelBold}>TOTAL DÛ</Text>
-                    <Text style={s.finValueBold}>{fmt(totalDue)} $</Text>
-                  </View>
-                  {subsidies > 0 && (
-                    <View style={s.finRow}>
-                      <Text style={s.finLabel}>− Subventions (info)</Text>
-                      <Text style={s.finValue}>{fmt(subsidies)} $</Text>
-                    </View>
-                  )}
-                  <View style={s.finRowGreen}>
-                    <Text style={s.finLabelGreen}>Total net (indicatif)</Text>
-                    <Text style={s.finValueGreen}>{fmt(computedTotalNet)} $</Text>
-                  </View>
-                </View>
+              <View style={{ width: 210 }}>
+                <FinBlock
+                  sub={sub}
+                  tps={tps}
+                  tvq={tvq}
+                  totalDue={totalDue}
+                  subsidies={subsidies}
+                  totalNet={computedTotalNet}
+                />
               </View>
             </View>
             <LegalFooter />
           </View>
         </View>
-
       </Page>
 
-      {/* ── Croquis : une page lettre pleine ─────────────────────── */}
+      {/* ── Croquis ──────────────────────────────────────────────── */}
       {quote.sketch_data && (
         <Page size="LETTER" style={s.sketchPage}>
           <Text style={s.sketchPageTitle}>Croquis / plan d'installation</Text>
@@ -642,7 +800,7 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
         </Page>
       )}
 
-      {/* ── Page option non retenue (PDF client seulement) ──── */}
+      {/* ── Page option B / non retenue ─────────────────────────── */}
       {page2Units.length > 0 && (
         <Page size="LETTER" style={s.page}>
           <View style={s.altBanner}>
@@ -653,55 +811,38 @@ export function QuoteDocument({ quote, units, salespersonName, logoBase64, insta
             </Text>
           </View>
 
-          <View style={s.section}>
-            <View style={s.sectionHeader} minPresenceAhead={100}>
-              <Text style={s.sectionTitle}>
-                {accepted
-                  ? `Équipements — Option ${page2Letter} (Proposition)`
-                  : `Équipements — Option ${page2Letter}`}
-              </Text>
-            </View>
-            <View style={s.sectionBody}>
-              {page2Units.map((u, idx) => (
-                <UnitBlock key={u.id} u={u} idx={idx} />
-              ))}
-            </View>
+          <View style={{ marginBottom: 4 }}>
+            <Text style={[s.sectionTitle, { marginBottom: 6, fontSize: 8 }]} minPresenceAhead={80}>
+              {accepted
+                ? `Équipements — Option ${page2Letter} (Proposition)`
+                : `Équipements — Option ${page2Letter}`}
+            </Text>
+            {page2Units.map((u, idx) => (
+              <UnitBlock key={u.id} u={u} idx={idx} />
+            ))}
           </View>
 
           {!accepted && otherSub > 0 && (
             <View style={s.section} wrap={false}>
               <View style={s.sectionHeader}>
-                <Text style={s.sectionTitle}>
-                  {`Financiers — Option ${page2Letter}`}
-                </Text>
+                <Text style={s.sectionTitle}>{`Financiers — Option ${page2Letter}`}</Text>
               </View>
               <View style={s.sectionBody}>
-                <View style={{ marginLeft: "auto", maxWidth: 220 }}>
-                  <View style={s.finTable}>
-                    <View style={s.finRow}>
-                      <Text style={s.finLabel}>Sous-total</Text>
-                      <Text style={s.finValue}>{fmt(otherSub)} $</Text>
-                    </View>
-                    <View style={s.finRow}>
-                      <Text style={s.finLabel}>TPS (5%)</Text>
-                      <Text style={s.finValue}>{fmt(otherTps)} $</Text>
-                    </View>
-                    <View style={s.finRow}>
-                      <Text style={s.finLabel}>TVQ (9.975%)</Text>
-                      <Text style={s.finValue}>{fmt(otherTvq)} $</Text>
-                    </View>
-                    <View style={s.finRowDark}>
-                      <Text style={s.finLabelBold}>TOTAL DÛ</Text>
-                      <Text style={s.finValueBold}>{fmt(otherTotal)} $</Text>
-                    </View>
-                  </View>
+                <View style={{ marginLeft: "auto", width: 210 }}>
+                  <FinBlock
+                    sub={otherSub}
+                    tps={otherTps}
+                    tvq={otherTvq}
+                    totalDue={otherTotal}
+                    subsidies={otherSubsidies}
+                    totalNet={otherNet}
+                  />
                 </View>
               </View>
             </View>
           )}
         </Page>
       )}
-
     </Document>
   );
 }

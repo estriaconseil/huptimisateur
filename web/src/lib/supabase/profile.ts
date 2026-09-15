@@ -32,3 +32,35 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
     role: data.role as UserRole,
   };
 }
+
+/**
+ * Retourne l'ID du vendeur (table `salespeople`) lié au compte connecté,
+ * UNIQUEMENT si le rôle est `salesperson`.
+ * Les admins et secrétaires reçoivent `null` → ils voient tout.
+ */
+export async function getCurrentSalespersonId(): Promise<string | null> {
+  const supabase = await createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return null;
+
+  // Vérifier d'abord le rôle — seuls les vendeurs sont filtrés
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profile || profile.role !== "salesperson") return null;
+
+  // Résoudre la rangée salespeople liée au compte
+  const { data: sp } = await supabase
+    .from("salespeople")
+    .select("id")
+    .eq("profile_id", user.id)
+    .maybeSingle();
+
+  return (sp as { id: string } | null)?.id ?? null;
+}

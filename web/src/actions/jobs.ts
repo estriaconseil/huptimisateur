@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { cityFromAddress } from "@/lib/address";
+import { requireStaff, requireUser } from "@/lib/auth/require-role";
 import { canTransition } from "@/lib/job-state-machine";
 import { logActivity } from "@/actions/activity";
 import type { JobStatus } from "@/types/domain";
@@ -97,6 +98,9 @@ export async function updateJobStatus(
     cancelLinkedAppointment?: boolean;
   }
 ) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   // Lire le statut actuel pour valider la transition
@@ -174,6 +178,9 @@ export async function updateJobStatus(
 export async function acceptJobAsPlanifier(
   jobId: string
 ): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
 
   const { data: job } = await supabase
@@ -213,6 +220,9 @@ export async function updateJobFlag(
   jobId: string,
   flag: "a_suivre" | "a_relancer" | "rdv_passe" | null
 ) {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("jobs")

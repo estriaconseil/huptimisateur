@@ -4,6 +4,7 @@ import { Suspense } from "react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { searchClients } from "@/actions/clients";
+import { getCurrentSalespersonId } from "@/lib/supabase/profile";
 import { ClientsSearchInput, ClientsSearchResults } from "@/features/clients/clients-search";
 
 export default async function ClientsPage({
@@ -14,9 +15,12 @@ export default async function ClientsPage({
   const { q } = await searchParams;
   const query = (q ?? "").trim();
 
+  // Vendeur connecté → filtre automatique + affichage de tous ses clients sans recherche
+  const currentSalespersonId = await getCurrentSalespersonId();
+
   const results =
-    query.length >= 2
-      ? await searchClients(query).then((r) => (r.ok ? r.data : []))
+    query.length >= 2 || currentSalespersonId
+      ? await searchClients(query, currentSalespersonId).then((r) => (r.ok ? r.data : []))
       : [];
 
   return (
