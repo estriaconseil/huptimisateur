@@ -69,7 +69,7 @@ export async function assignJobToSlot(input: {
 
   const { data: teamBlockRows } = await supabase
     .from("team_blocks")
-    .select("id, team_id, blocked_date, slot_type, notes, created_at")
+    .select("id, team_id, blocked_date, slot_type, notes, group_id, created_at")
     .eq("team_id", input.teamId)
     .eq("blocked_date", input.scheduledDate);
 
@@ -216,6 +216,17 @@ export async function searchInstallSchedules(
 
   const supabase = await createServerSupabaseClient();
 
+  // Limiter la recherche : 1 an passé → 6 mois futur (évite un full-scan illimité)
+  const today = new Date();
+  const rangeFrom = format(
+    new Date(today.getFullYear() - 1, today.getMonth(), today.getDate()),
+    "yyyy-MM-dd"
+  );
+  const rangeTo = format(
+    new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()),
+    "yyyy-MM-dd"
+  );
+
   const { data, error } = await supabase
     .from("schedules")
     .select(
@@ -228,6 +239,8 @@ export async function searchInstallSchedules(
        )`
     )
     .eq("status", "planned")
+    .gte("scheduled_date", rangeFrom)
+    .lte("scheduled_date", rangeTo)
     .order("scheduled_date", { ascending: true });
 
   if (error) return { ok: false, message: error.message };

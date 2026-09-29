@@ -53,8 +53,16 @@ export async function createProspect(input: {
   // Champs obligatoires pour tout nouveau prospect
   if (!input.name?.trim()) return { ok: false, message: "Le nom du client est requis." };
   if (!n(input.phone)) return { ok: false, message: "Le numéro de téléphone est requis." };
-  if (!n(input.email) || !input.email!.includes("@")) return { ok: false, message: "Le courriel est requis." };
+  const emailTrimmed = input.email?.trim() ?? "";
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailTrimmed);
+  if (!emailValid) return { ok: false, message: "Le courriel est requis et doit être valide (ex. nom@domaine.com)." };
   if (!n(input.install_address)) return { ok: false, message: "L'adresse d'installation est requise." };
+  if (!n(input.billing_address)) {
+    return {
+      ok: false,
+      message: "L'adresse de facturation est requise (ou même adresse que l'installation).",
+    };
+  }
 
   const supabase = await createServerSupabaseClient();
 
@@ -67,49 +75,24 @@ export async function createProspect(input: {
 
   const billingAddr = n(input.billing_address);
 
-  // 1. Réutiliser un client existant si même adresse de facturation (évite les doublons)
-  let clientId: string | null = null;
-  if (billingAddr) {
-    const { data: existing } = await supabase
-      .from("clients")
-      .select("id, name, phone, email, billing_address")
-      .ilike("billing_address", billingAddr)
-      .order("created_at", { ascending: true })
-      .limit(20);
+  // 1. Toujours créer un nouveau client — chaque prospect est une personne distincte.
+  // La protection anti-doublon se fait via l'interception d'adresse d'installation
+  // (checkInstallationAddressExists) dans le formulaire, pas ici.
+  const { data: client, error: cErr } = await supabase
+    .from("clients")
+    .insert({
+      name: input.name.trim(),
+      phone: n(input.phone),
+      email: n(input.email),
+      billing_address: billingAddr,
+      billing_city: n(input.billing_city),
+      billing_postal: n(input.billing_postal),
+    })
+    .select("id")
+    .single();
 
-    // Match exact insensible à la casse / espaces (ilike seul n'est pas assez strict)
-    const match = (existing ?? []).find(
-      (c) => (c.billing_address ?? "").trim().toLowerCase() === billingAddr.toLowerCase()
-    );
-    if (match) {
-      clientId = match.id;
-      // Enrichir téléphone / courriel manquants sur la fiche existante
-      const patch: Record<string, string> = {};
-      if (!match.phone && n(input.phone)) patch.phone = n(input.phone)!;
-      if (!match.email && n(input.email)) patch.email = n(input.email)!;
-      if (Object.keys(patch).length > 0) {
-        await supabase.from("clients").update(patch).eq("id", match.id);
-      }
-    }
-  }
-
-  if (!clientId) {
-    const { data: client, error: cErr } = await supabase
-      .from("clients")
-      .insert({
-        name: input.name.trim(),
-        phone: n(input.phone),
-        email: n(input.email),
-        billing_address: billingAddr,
-        billing_city: n(input.billing_city),
-        billing_postal: n(input.billing_postal),
-      })
-      .select("id")
-      .single();
-
-    if (cErr) return { ok: false, message: cErr.message };
-    clientId = client.id;
-  }
+  if (cErr) return { ok: false, message: cErr.message };
+  const clientId = client.id;
 
   // 2. Réutiliser une adresse d'installation existante si même texte, sinon en créer une
   const installText = n(input.install_address);

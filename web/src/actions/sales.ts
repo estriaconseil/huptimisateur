@@ -289,6 +289,9 @@ export async function updateAppointmentStatus(
   id: string,
   status: AppointmentStatus
 ): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("sales_appointments")
@@ -310,9 +313,10 @@ export async function moveAppointment(
   newDate: string,
   newTime: string
 ): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("sales_appointments")
@@ -323,7 +327,12 @@ export async function moveAppointment(
     })
     .eq("id", appointmentId);
 
-  if (error) return { ok: false, message: error.message };
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, message: "Ce créneau vient d'être réservé. Choisissez un autre horaire." };
+    }
+    return { ok: false, message: error.message };
+  }
   revalidatePath("/ventes");
   return { ok: true };
 }
@@ -332,9 +341,10 @@ export async function moveAppointment(
  * Annule un rendez-vous (créneau libéré) et remet le job lié en Prospect.
  */
 export async function cancelAppointment(appointmentId: string): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
 
   const { error } = await supabase
     .from("sales_appointments")
@@ -356,6 +366,9 @@ export async function cancelAppointment(appointmentId: string): Promise<Ok | Err
 }
 
 export async function deleteAppointment(id: string): Promise<Ok | Err> {
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
+
   const supabase = await createServerSupabaseClient();
   const { error } = await supabase
     .from("sales_appointments")
@@ -2105,20 +2118,28 @@ export async function duplicateQuote(
 export async function updateQuoteUnitSerials(
   updates: { id: string; serial_number: string | null; serial_evaporator: string | null }[]
 ): Promise<Ok | Err> {
-  const supabase = await createServerSupabaseClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { ok: false, message: "Non authentifié" };
+  const auth = await requireUser();
+  if (!auth.ok) return auth;
 
-  for (const u of updates) {
-    const { error } = await supabase
-      .from("quote_units")
-      .update({
-        serial_number: u.serial_number?.trim() || null,
-        serial_evaporator: u.serial_evaporator?.trim() || null,
-      })
-      .eq("id", u.id);
-    if (error) return { ok: false, message: error.message };
-  }
+  if (updates.length === 0) return { ok: true };
+
+  const supabase = await createServerSupabaseClient();
+
+  // Toutes les mises à jour en parallèle (évite N requêtes séquentielles)
+  const results = await Promise.all(
+    updates.map((u) =>
+      supabase
+        .from("quote_units")
+        .update({
+          serial_number: u.serial_number?.trim() || null,
+          serial_evaporator: u.serial_evaporator?.trim() || null,
+        })
+        .eq("id", u.id)
+    )
+  );
+
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return { ok: false, message: failed.error.message };
 
   revalidatePath("/a-planifier");
   revalidatePath("/dispatch");

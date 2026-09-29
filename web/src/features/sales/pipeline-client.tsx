@@ -243,15 +243,26 @@ export function DualAddressBlock({
           disabled={disabled}
           className="rounded"
         />
-        Même adresse que l&apos;installation
+        <span>
+          Même adresse que l&apos;installation
+          {required && <span className="text-destructive text-base font-bold leading-none ml-0.5">*</span>}
+        </span>
       </label>
+      {required && !state.same_address && !state.billing_address.trim() && (
+        <p className="text-[11px] text-muted-foreground -mt-1">
+          Cochez la case ou saisissez une adresse de facturation.
+        </p>
+      )}
 
       {/* ── Facturation (texte seulement) ── */}
       {!state.same_address && (
         <div className="space-y-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Facturation</p>
           <div>
-            <label className={lbl}>Adresse de facturation</label>
+            <label className={lbl}>
+              Adresse de facturation
+              {required && <span className="text-destructive text-base font-bold leading-none ml-0.5">*</span>}
+            </label>
             <AddressAutocomplete
               value={state.billing_address}
               onChange={(v) => onChange({ billing_address: v })}
@@ -354,6 +365,11 @@ export function QuickProspectModal({
     if (!form.email.trim() || !form.email.includes("@")) { setError("Le courriel est requis."); return null; }
     if (!form.install_address.trim() || form.install_lat == null) {
       setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google.");
+      return null;
+    }
+    const billing = form.same_address ? form.install_address : form.billing_address;
+    if (!billing?.trim()) {
+      setError("Cochez « Même adresse que l'installation » ou saisissez une adresse de facturation.");
       return null;
     }
     setError(null);
@@ -726,7 +742,7 @@ const PIPELINE_STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
   { value: "soumission_en_attente", label: "Prospect" },
   { value: "soumission_repartie",   label: "Visite planifiée" },
   { value: "en_attente",            label: "Va nous rappeler" },
-  { value: "annule",                label: "Annulé" },
+  // Pas d'annule ici — utiliser le bouton dédié "Clôturer ce prospect" en bas du formulaire
 ];
 
 // ── Modal d'annulation (Dialog) ───────────────────────────────────────────────
@@ -817,9 +833,11 @@ export function ProspectEditModal({
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [cancelPending, startCancel] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<EditModalStep>("edit");
   const [showAbandon, setShowAbandon] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
   const client = job.clients;
 
@@ -878,6 +896,11 @@ export function ProspectEditModal({
   /** Persiste client (facturation) + adresse d'installation + job */
   const persist = async (): Promise<boolean> => {
     if (!form.client_name.trim()) { setError("Le nom est requis."); return false; }
+    const billing = form.same_address ? form.install_address : form.billing_address;
+    if (!billing?.trim()) {
+      setError("Cochez « Même adresse que l'installation » ou saisissez une adresse de facturation.");
+      return false;
+    }
     setError(null);
 
     if (client?.id) {
@@ -932,6 +955,15 @@ export function ProspectEditModal({
       client_email: form.client_email,
       billing_address: form.same_address ? form.install_address : form.billing_address,
       install_address: form.install_address,
+    });
+  };
+
+  const handleCancelConfirm = (reason: string, notes: string) => {
+    startCancel(async () => {
+      await updateJobStatus(job.id, "annule", { reason, notes });
+      setShowCancelModal(false);
+      router.refresh();
+      onClose();
     });
   };
 
@@ -1045,7 +1077,7 @@ export function ProspectEditModal({
                   <input type="email" className={inp} value={form.client_email} onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))} placeholder="marie@exemple.com" />
                 </div>
               </div>
-              <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} />
+              <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} required />
             </div>
 
             <hr />
@@ -1113,7 +1145,7 @@ export function ProspectEditModal({
               {allowSlotBooking && (
                 <Button
                   onClick={handleSaveAndOptimize}
-                  disabled={pending}
+                  disabled={pending || cancelPending}
                   className="w-full h-10 gap-2"
                 >
                   {pending
@@ -1125,24 +1157,35 @@ export function ProspectEditModal({
               <Button
                 variant={allowSlotBooking ? "outline" : "default"}
                 onClick={handleSaveOnly}
-                disabled={pending}
+                disabled={pending || cancelPending}
                 className="w-full h-9"
               >
                 {pending && !allowSlotBooking
                   ? <><Loader2 className="size-4 animate-spin" />En cours…</>
                   : allowSlotBooking ? "Sauvegarder seulement" : "Sauvegarder"}
               </Button>
-              <Button
-                variant="ghost"
-                onClick={tryClose}
-                disabled={pending}
-                className="w-full h-9 text-muted-foreground"
-              >
-                Annuler
-              </Button>
+              <div className="pt-1 border-t">
+                <Button
+                  variant="ghost"
+                  onClick={() => setShowCancelModal(true)}
+                  disabled={pending || cancelPending}
+                  className="w-full h-9 text-destructive hover:text-destructive hover:bg-destructive/10"
+                >
+                  {cancelPending
+                    ? <><Loader2 className="size-4 animate-spin" />Clôture en cours…</>
+                    : "Clôturer ce prospect…"}
+                </Button>
+              </div>
             </div>
           </div>
         )}
+
+        <CancelModal
+          open={showCancelModal}
+          pending={cancelPending}
+          onConfirm={handleCancelConfirm}
+          onCancel={() => setShowCancelModal(false)}
+        />
 
         {/* ── Étape 2 : chargement ── */}
         {step === "loading-slots" && (

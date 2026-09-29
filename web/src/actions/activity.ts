@@ -29,19 +29,26 @@ export async function logActivity(
 
 /** Récupère le journal d'activité d'un job (plus récent en premier). */
 export async function getActivityLog(
-  jobId: string
-): Promise<{ ok: true; entries: ActivityEntry[] } | { ok: false; message: string }> {
+  jobId: string,
+  /** Nombre max d'entrées à retourner. Défaut 250. */
+  limit = 250,
+  /** Décalage pour pagination. */
+  offset = 0,
+): Promise<{ ok: true; entries: ActivityEntry[]; hasMore: boolean } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
   const { data, error } = await supabase
     .from("job_activity_log")
     .select("id, action, details, created_at, profiles ( full_name )")
     .eq("job_id", jobId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .range(offset, offset + limit);
 
   if (error) return { ok: false, message: error.message };
 
-  const entries: ActivityEntry[] = (data ?? []).map((row: unknown) => {
+  const rows = data ?? [];
+  // `.range(offset, offset + limit)` retourne jusqu'à limit+1 rows — on coupe à limit
+  const hasMore = rows.length > limit;
+  const entries: ActivityEntry[] = rows.slice(0, limit).map((row: unknown) => {
     const r = row as {
       id: string;
       action: string;
@@ -59,6 +66,6 @@ export async function getActivityLog(
     };
   });
 
-  return { ok: true, entries };
+  return { ok: true, entries, hasMore };
 }
 

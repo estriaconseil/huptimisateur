@@ -132,9 +132,14 @@ export async function updateJobStatus(
   }
 
   const payload: Record<string, unknown> = { status };
-  if (status === "annule" && cancellation) {
-    payload.cancellation_reason = cancellation.reason;
-    payload.cancellation_notes = cancellation.notes ?? null;
+  if (status === "annule") {
+    if (cancellation) {
+      payload.cancellation_reason = cancellation.reason;
+      payload.cancellation_notes = cancellation.notes ?? null;
+    }
+    // Nettoyer les drapeaux de suivi — ils n'ont plus de sens sur un dossier annulé
+    payload.follow_up_flag = null;
+    payload.follow_up_date = null;
   }
 
   const { error } = await supabase.from("jobs").update(payload).eq("id", jobId);
@@ -154,6 +159,27 @@ export async function updateJobStatus(
       .eq("id", jobId);
 
     await logActivity(jobId, "appointment_cancelled", { appointment_id: appointmentId });
+  }
+
+  // Lors d'une annulation : toujours annuler le RDV lié et marquer la soumission comme refusée
+  if (status === "annule") {
+    if (appointmentId && !options?.cancelLinkedAppointment) {
+      await supabase
+        .from("sales_appointments")
+        .update({ status: "cancelled" })
+        .eq("id", appointmentId);
+      await supabase
+        .from("jobs")
+        .update({ appointment_id: null })
+        .eq("id", jobId);
+      await logActivity(jobId, "appointment_cancelled", { appointment_id: appointmentId });
+    }
+    // Passer la soumission liée en « refusée » si elle était draft ou en attente
+    await supabase
+      .from("quotes")
+      .update({ status: "refused" })
+      .eq("job_id", jobId)
+      .in("status", ["draft", "pending"]);
   }
 
   // Journal d'activité

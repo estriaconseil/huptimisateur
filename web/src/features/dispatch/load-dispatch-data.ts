@@ -136,7 +136,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     supabase.from("app_settings").select("*").limit(1).maybeSingle(),
     supabase
       .from("team_blocks")
-      .select("id, team_id, blocked_date, slot_type, notes, created_at")
+      .select("id, team_id, blocked_date, slot_type, notes, group_id, created_at")
       .gte("blocked_date", rangeStart)
       .lte("blocked_date", rangeEnd),
   ]);

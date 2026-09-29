@@ -216,6 +216,8 @@ export interface TeamBlock {
   blocked_date: string;
   slot_type: "am" | "pm" | "full_day";
   notes: string | null;
+  /** UUID partagé par toutes les lignes d'une même plage créée d'un coup. Null = ligne isolée (ancienne). */
+  group_id: string | null;
   created_at: string;
 }
 

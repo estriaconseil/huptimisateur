@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, FileText, MapPin, Phone } from "lucide-react";
+import { ArrowLeft, ExternalLink, FileText, Info, MapPin, Phone } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { NouvellesoumissionButton, ReprendreButton } from "@/features/clients/adresse-fiche-actions";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { statusColor, statusLabel } from "@/lib/job-status";
+import { CANCELLATION_REASONS } from "@/types/domain";
 import { cn } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
@@ -21,6 +22,8 @@ type JobRow = {
   installation_info: string | null;
   quote_number: number | null;
   quote_id: string | null;
+  cancellation_reason: string | null;
+  cancellation_notes: string | null;
 };
 
 type RelatedEntry = {
@@ -37,6 +40,8 @@ type JobQueryRow = {
   estimated_duration_hours: number;
   preferred_date: string | null;
   installation_info: string | null;
+  cancellation_reason: string | null;
+  cancellation_notes: string | null;
   quotes?: unknown;
 };
 
@@ -56,12 +61,14 @@ function mapJobRows(raw: JobQueryRow[]): JobRow[] {
       installation_info: j.installation_info,
       quote_number: latest?.quote_number ?? null,
       quote_id: latest?.id ?? null,
+      cancellation_reason: j.cancellation_reason,
+      cancellation_notes: j.cancellation_notes,
     };
   });
 }
 
 const JOB_SELECT =
-  "id, status, estimated_duration_hours, preferred_date, installation_info, quotes!job_id ( id, quote_number )";
+  "id, status, estimated_duration_hours, preferred_date, installation_info, cancellation_reason, cancellation_notes, quotes!job_id ( id, quote_number )";
 
 // ── Helper : lien fiche selon statut ─────────────────────────────────────────
 function jobFicheLink(status: string, jobId: string) {
@@ -117,7 +124,7 @@ export default async function AdresseFichePage({
     console.error("[fiche adresse jobs]", jobsErr.message, jobsErr.hint);
     const fallback = await supabase
       .from("jobs")
-      .select("id, status, estimated_duration_hours, preferred_date, installation_info, quotes!job_id ( id, quote_number )")
+      .select("id, status, estimated_duration_hours, preferred_date, installation_info, cancellation_reason, cancellation_notes, quotes!job_id ( id, quote_number )")
       .eq("installation_address_id", id)
       .order("created_at", { ascending: false });
     jobRows = fallback.data;
@@ -354,39 +361,63 @@ export default async function AdresseFichePage({
 }
 
 // ── JobCard ───────────────────────────────────────────────────────────────────
+
+function cancellationReasonLabel(reason: string | null): string | null {
+  if (!reason) return null;
+  return CANCELLATION_REASONS.find((r) => r.value === reason)?.label ?? reason;
+}
+
 function JobCard({ job }: { job: JobRow }) {
   const fiche = jobFicheLink(job.status, job.id);
+  const isAnnule = job.status === "annule";
+  const reasonLabel = cancellationReasonLabel(job.cancellation_reason);
+
   return (
-    <div className="flex items-center gap-3 px-6 py-2.5">
-      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0", statusColor(job.status))}>
-        {statusLabel(job.status)}
-      </span>
-      <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-        {job.estimated_duration_hours} h
-      </span>
-      {job.quote_number ? (
-        <Link
-          href={`/ventes/soumission/${job.id}`}
-          className="text-xs text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 min-w-0 truncate"
-        >
-          <FileText className="size-3 shrink-0" />
-          #{job.quote_number}
-        </Link>
-      ) : (
-        <span className="text-xs text-muted-foreground italic">Pas de soumission</span>
-      )}
-      {job.preferred_date && (
-        <span className="hidden sm:inline text-xs text-muted-foreground">
-          {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
+    <div className="px-6 py-2.5 space-y-1.5">
+      <div className="flex items-center gap-3">
+        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0", statusColor(job.status))}>
+          {statusLabel(job.status)}
         </span>
+        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+          {job.estimated_duration_hours} h
+        </span>
+        {job.quote_number ? (
+          <Link
+            href={`/ventes/soumission/${job.id}`}
+            className="text-xs text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 min-w-0 truncate"
+          >
+            <FileText className="size-3 shrink-0" />
+            #{job.quote_number}
+          </Link>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">Pas de soumission</span>
+        )}
+        {job.preferred_date && !isAnnule && (
+          <span className="hidden sm:inline text-xs text-muted-foreground">
+            {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
+          </span>
+        )}
+        <Link
+          href={fiche.href}
+          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 ml-auto shrink-0 text-xs gap-1")}
+        >
+          Ouvrir
+          <ExternalLink className="size-3" />
+        </Link>
+      </div>
+
+      {/* Infos de clôture — visible seulement si annulé avec une raison */}
+      {isAnnule && reasonLabel && (
+        <div className="flex items-start gap-1.5 rounded-md bg-red-50 border border-red-100 px-2.5 py-1.5 text-xs text-red-700">
+          <Info className="size-3 mt-0.5 shrink-0" />
+          <span>
+            <span className="font-medium">Raison :</span> {reasonLabel}
+            {job.cancellation_notes && (
+              <span className="text-red-600/80"> — {job.cancellation_notes}</span>
+            )}
+          </span>
+        </div>
       )}
-      <Link
-        href={fiche.href}
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 ml-auto shrink-0 text-xs gap-1")}
-      >
-        Ouvrir
-        <ExternalLink className="size-3" />
-      </Link>
     </div>
   );
 }

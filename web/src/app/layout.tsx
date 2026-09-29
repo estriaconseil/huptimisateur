@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 
 import { AppProviders } from "@/providers/app-providers";
@@ -14,6 +14,10 @@ const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
 });
+
+export const viewport: Viewport = {
+  themeColor: "#003B7C",
+};
 
 export const metadata: Metadata = {
   title: "Huptimisateur",
@@ -35,7 +39,6 @@ export const metadata: Metadata = {
     shortcut: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
   },
   manifest: "/manifest.webmanifest",
-  themeColor: "#003B7C",
 };
 
 export default function RootLayout({

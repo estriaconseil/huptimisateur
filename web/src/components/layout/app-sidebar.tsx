@@ -300,7 +300,7 @@ export function AppSidebar({ role }: { role: UserRole }) {
             <>
               <div className="relative size-8 shrink-0 overflow-hidden rounded">
                 <Image
-                  src="/logo.jpg"
+                  src="/icons/icon-192.png"
                   alt="Logo Huppé Réfrigération"
                   fill
                   sizes="32px"

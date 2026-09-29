@@ -6,6 +6,7 @@ import { fr } from "date-fns/locale";
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   FileText,
@@ -23,6 +24,12 @@ import { useRouter } from "next/navigation";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { statusLabel, statusColor } from "@/lib/job-status";
 import { cityFromAddress } from "@/lib/address";
 import { TravelDuration } from "@/lib/format-travel";
@@ -30,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { withQuoteOrigin } from "@/lib/quote-back";
 import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
 import { assignJobToSlot } from "@/actions/schedules";
+import { updateJobStatus } from "@/actions/jobs";
 import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { updateClient, updateJob } from "@/actions/clients";
 import { updateQuoteUnitSerials } from "@/actions/sales";
@@ -852,6 +860,8 @@ export function InstallJobsClient({
   const [tab, setTab] = useState<TabKey>("all");
   const [optimizerJob, setOptimizerJob] = useState<InstallJob | null>(null);
   const [editJob, setEditJob] = useState<InstallJob | null>(null);
+  const [terminateJob, setTerminateJob] = useState<InstallJob | null>(null);
+  const [terminating, startTerminate] = useTransition();
   const [timelineJobId, setTimelineJobId] = useState<string | null>(null);
   const [deepLinkToast, setDeepLinkToast] = useState<string | null>(null);
   const highlightRef = useRef<HTMLLIElement | null>(null);
@@ -1141,6 +1151,17 @@ export function InstallJobsClient({
                               Calendrier
                             </Link>
                           )}
+                          {(job.status === "reparti" || job.status === "retour_a_faire") && (
+                            <button
+                              type="button"
+                              onClick={() => setTerminateJob(job)}
+                              className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800")}
+                              title="Marquer l'installation comme terminée"
+                            >
+                              <CheckCircle2 className="size-3.5" />
+                              Terminée
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setTimelineJobId((id) => id === job.id ? null : job.id)}
@@ -1207,6 +1228,47 @@ export function InstallJobsClient({
             router.refresh();
           }}
         />
+      )}
+
+      {/* ── Dialog : Marquer comme terminée ── */}
+      {terminateJob && (
+        <Dialog open onOpenChange={(o) => { if (!o && !terminating) setTerminateJob(null); }}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Marquer l&apos;installation comme terminée ?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              L&apos;installation de <span className="font-semibold text-foreground">{terminateJob.clients?.name ?? "ce client"}</span> sera clôturée et disparaîtra du pipeline d&apos;installation.
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={terminating}
+                onClick={() => {
+                  startTerminate(async () => {
+                    await updateJobStatus(terminateJob.id, "termine");
+                    setTerminateJob(null);
+                    router.refresh();
+                  });
+                }}
+                className="flex-1 h-9 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 flex items-center justify-center gap-1.5"
+              >
+                {terminating
+                  ? <><Loader2 className="size-3.5 animate-spin" />En cours…</>
+                  : <><CheckCircle2 className="size-3.5" />Confirmer</>
+                }
+              </button>
+              <button
+                type="button"
+                disabled={terminating}
+                onClick={() => setTerminateJob(null)}
+                className="flex-1 h-9 rounded-lg border text-sm font-medium hover:bg-muted disabled:opacity-50"
+              >
+                Annuler
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       )}
 
       {deepLinkToast && (

@@ -10,7 +10,7 @@ import {
   subWeeks,
 } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AlertTriangle, ArrowRightLeft, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Sparkles, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, CircleHelp, FileDown, FileText, Loader2, MapPin, Printer, PlusCircle, Search, Sparkles, Trash2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
@@ -46,7 +46,7 @@ import {
 } from "@/services/planning/dispatch-state";
 import type { AppSettings, EstimatedDurationHours, ScheduleSuggestion, TeamBlock } from "@/types/domain";
 import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
-import { createTeamBlock, deleteTeamBlock } from "@/actions/blocks";
+import { createTeamBlock, createTeamBlockRange, countTeamBlockGroup, deleteTeamBlock, deleteTeamBlockGroup, deleteTeamBlockRange } from "@/actions/blocks";
 import { cn } from "@/lib/utils";
 import { TravelDuration } from "@/lib/format-travel";
 import { cityFromAddress } from "@/lib/address";
@@ -109,8 +109,21 @@ export function DispatchBoard(props: Props) {
   const [pickerRankLoading, setPickerRankLoading] = useState(false);
   const [blockNotes, setBlockNotes] = useState("");
   const [blockFullDay, setBlockFullDay] = useState(false);
-  const [blockFormOpen, setBlockFormOpen] = useState(false);
+  /** Onglet de la modale créneau : jobs à placer vs blocage (comme ventes) */
+  const [pickTab, setPickTab] = useState<"jobs" | "block">("jobs");
+  const [blockStartDate, setBlockStartDate] = useState("");
+  const [blockEndDate, setBlockEndDate] = useState("");
+  const [blockSuccessMsg, setBlockSuccessMsg] = useState<string | null>(null);
   const [blockToDelete, setBlockToDelete] = useState<TeamBlock | null>(null);
+  /** "day" = 1 ligne, "group" = toute la plage group_id */
+  const [blockDeleteMode, setBlockDeleteMode] = useState<"day" | "group">("day");
+  /** Nombre réel de jours dans le groupe (chargé depuis le serveur) */
+  const [groupCount, setGroupCount] = useState<number | null>(null);
+  /** Outil de nettoyage plage dans l'onglet Bloquer */
+  const [cleanupTeamId, setCleanupTeamId] = useState("");
+  const [cleanupStart, setCleanupStart] = useState("");
+  const [cleanupEnd, setCleanupEnd] = useState("");
+  const [cleanupMsg, setCleanupMsg] = useState<string | null>(null);
   const [pickHelpOpen, setPickHelpOpen] = useState(false);
   const [pickerOriginLabel, setPickerOriginLabel] = useState<string | null>(null);
 
@@ -266,6 +279,10 @@ export function DispatchBoard(props: Props) {
   async function confirmBlockSlot() {
     if (!pickTarget) return;
     setPickError(null);
+
+    const start = blockStartDate || pickTarget.scheduledDate;
+    const end = blockEndDate || pickTarget.scheduledDate;
+
     const otherHalfFree = (() => {
       const state = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
       const other = pickTarget.half === "am" ? state.pm : state.am;
@@ -277,38 +294,103 @@ export function DispatchBoard(props: Props) {
       );
       return other.kind !== "busy" && !otherBlocked;
     })();
+
     const slotType =
-      blockFullDay && otherHalfFree ? "full_day" : pickTarget.half;
+      blockFullDay && (start === end ? otherHalfFree : true)
+        ? "full_day"
+        : pickTarget.half;
 
     startTransition(async () => {
-      const res = await createTeamBlock({
-        team_id: pickTarget.teamId,
-        blocked_date: pickTarget.scheduledDate,
-        slot_type: slotType,
-        notes: blockNotes.trim() || null,
-      });
-      if (!res.ok) {
-        setPickError(res.message);
+      if (start === end) {
+        const res = await createTeamBlock({
+          team_id: pickTarget.teamId,
+          blocked_date: start,
+          slot_type: slotType,
+          notes: blockNotes.trim() || null,
+        });
+        if (!res.ok) {
+          setPickError(res.message);
+          return;
+        }
+      } else {
+        const res = await createTeamBlockRange({
+          team_id: pickTarget.teamId,
+          start_date: start,
+          end_date: end,
+          slot_type: slotType,
+          notes: blockNotes.trim() || null,
+          weekdays_only: true,
+        });
+        if (!res.ok) {
+          setPickError(res.message);
+          return;
+        }
+        const parts = [`${res.created} jour${res.created > 1 ? "s" : ""} bloqué${res.created > 1 ? "s" : ""}`];
+        if (res.skippedBlocked) parts.push(`${res.skippedBlocked} déjà bloqué${res.skippedBlocked > 1 ? "s" : ""}`);
+        if (res.skippedBusy) parts.push(`${res.skippedBusy} occupé${res.skippedBusy > 1 ? "s" : ""}`);
+        setBlockSuccessMsg(parts.join(" · "));
+        setPickTab("block");
+        setBlockNotes("");
+        setBlockFullDay(false);
+        router.refresh();
         return;
       }
-      setBlockFormOpen(false);
+      setPickTab("jobs");
       setPickOpen(false);
       setPickTarget(null);
       setBlockNotes("");
       setBlockFullDay(false);
+      setBlockStartDate("");
+      setBlockEndDate("");
       router.refresh();
     });
+  }
+
+  /** Ouvre le dialog de suppression et charge le vrai count du groupe depuis le serveur */
+  function openDeleteBlock(block: TeamBlock) {
+    setBlockToDelete(block);
+    setBlockDeleteMode(block.group_id ? "group" : "day");
+    setGroupCount(null);
+    if (block.group_id) {
+      void countTeamBlockGroup(block.group_id).then(setGroupCount);
+    }
   }
 
   async function confirmDeleteBlock() {
     if (!blockToDelete) return;
     startTransition(async () => {
-      const res = await deleteTeamBlock(blockToDelete.id);
+      let res: { ok: boolean; message?: string };
+      if (blockDeleteMode === "group" && blockToDelete.group_id) {
+        res = await deleteTeamBlockGroup(blockToDelete.group_id);
+      } else {
+        res = await deleteTeamBlock(blockToDelete.id);
+      }
       if (!res.ok) {
-        setPickError(res.message);
+        setPickError((res as { ok: false; message: string }).message);
         return;
       }
       setBlockToDelete(null);
+      setBlockDeleteMode("day");
+      router.refresh();
+    });
+  }
+
+  async function confirmCleanupRange() {
+    if (!cleanupTeamId || !cleanupStart || !cleanupEnd) return;
+    startTransition(async () => {
+      const res = await deleteTeamBlockRange({
+        team_id: cleanupTeamId,
+        start_date: cleanupStart,
+        end_date: cleanupEnd,
+      });
+      if (!res.ok) {
+        setCleanupMsg(`Erreur : ${res.message}`);
+        return;
+      }
+      setCleanupMsg(`${res.deleted} blocage${res.deleted > 1 ? "s" : ""} retiré${res.deleted > 1 ? "s" : ""}.`);
+      setCleanupTeamId("");
+      setCleanupStart("");
+      setCleanupEnd("");
       router.refresh();
     });
   }
@@ -328,7 +410,10 @@ export function DispatchBoard(props: Props) {
     setPickerOriginLabel(null);
     setBlockNotes("");
     setBlockFullDay(false);
-    setBlockFormOpen(false);
+    setPickTab("jobs");
+    setBlockStartDate(dateStr);
+    setBlockEndDate(dateStr);
+    setBlockSuccessMsg(null);
     setPickTarget({ teamId, scheduledDate: dateStr, half });
     setPickOpen(true);
 
@@ -764,7 +849,7 @@ export function DispatchBoard(props: Props) {
                             type="button"
                             className="flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left bg-orange-100 text-orange-900 hover:bg-orange-200"
                             title="Cliquer pour retirer le blocage"
-                            onClick={() => setBlockToDelete(fullDayBlock)}
+                            onClick={() => openDeleteBlock(fullDayBlock)}
                           >
                             <span className="text-[10px] font-semibold uppercase opacity-80">Journée bloquée</span>
                             <span className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight">
@@ -791,7 +876,7 @@ export function DispatchBoard(props: Props) {
                               missingSerial={amBusy?.missingSerial}
                               highlighted={!!amBusy && highlightId === amBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "am")}
-                              onRequestDeleteBlock={setBlockToDelete}
+                              onRequestDeleteBlock={openDeleteBlock}
                               onOpenDetail={
                                 amBusy
                                   ? () =>
@@ -821,7 +906,7 @@ export function DispatchBoard(props: Props) {
                               missingSerial={pmBusy?.missingSerial}
                               highlighted={!!pmBusy && highlightId === pmBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "pm")}
-                              onRequestDeleteBlock={setBlockToDelete}
+                              onRequestDeleteBlock={openDeleteBlock}
                               onOpenDetail={
                                 pmBusy
                                   ? () =>
@@ -856,183 +941,317 @@ export function DispatchBoard(props: Props) {
             setPickerRanked(null);
             setPickerOriginLabel(null);
             setPickSearch("");
-            setBlockFormOpen(false);
+            setPickTab("jobs");
             setBlockNotes("");
             setBlockFullDay(false);
+            setBlockSuccessMsg(null);
             setPickHelpOpen(false);
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg flex flex-col gap-3 overflow-hidden">
-          <DialogHeader className="shrink-0 space-y-1">
-            <DialogTitle>Affecter une job</DialogTitle>
+        <DialogContent className="sm:max-w-lg flex flex-col gap-0 overflow-hidden max-h-[90vh] p-0">
+          <DialogHeader className="shrink-0 space-y-1 px-6 pt-6 pb-3">
+            <DialogTitle>
+              {pickTab === "block" ? "Bloquer une période" : "Affecter une job"}
+            </DialogTitle>
             <DialogDescription className="inline-flex items-center gap-1">
               <span>
                 Créneau {pickTarget?.half === "am" ? "AM" : "PM"}
                 {pickTarget ? ` — ${pickTarget.scheduledDate}` : ""}
               </span>
-              <button
-                type="button"
-                className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
-                aria-label="Aide"
-                aria-expanded={pickHelpOpen}
-                onClick={() => setPickHelpOpen((v) => !v)}
-              >
-                <CircleHelp className="size-3.5" />
-              </button>
+              {pickTab === "jobs" && (
+                <button
+                  type="button"
+                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label="Aide"
+                  aria-expanded={pickHelpOpen}
+                  onClick={() => setPickHelpOpen((v) => !v)}
+                >
+                  <CircleHelp className="size-3.5" />
+                </button>
+              )}
             </DialogDescription>
           </DialogHeader>
 
-          {pickHelpOpen && (
-            <div className="shrink-0 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1.5">
-              <p>
-                Choisis une job à placer sur ce créneau, ou utilise{" "}
-                <strong className="text-foreground">Bloquer ce créneau</strong> pour réserver
-                la plage (ex. client multi-jours) avec un libellé.
-              </p>
-              {pickTarget && (() => {
-                const st = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
-                const adj = pickTarget.half === "pm" ? st.am : st.pm;
-                if (adj.kind === "busy") {
-                  return (
-                    <p className="text-amber-700 dark:text-amber-400">
-                      L&apos;autre demi-journée est occupée : seules les jobs de 4 h sont proposées.
-                    </p>
-                  );
-                }
-                return (
-                  <p>
-                    Si l&apos;autre demi-journée est libre, tu peux cocher{" "}
-                    <strong className="text-foreground">journée complète</strong> au blocage.
-                  </p>
-                );
-              })()}
-              {pickerOriginLabel && (
+          {/* Onglets Jobs | Bloquer */}
+          <div className="flex border-b px-6 shrink-0">
+            <button
+              type="button"
+              onClick={() => { setPickTab("jobs"); setPickError(null); setBlockSuccessMsg(null); }}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                pickTab === "jobs"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Search className="size-3.5" />
+              Jobs
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPickTab("block"); setPickError(null); setPickHelpOpen(false); }}
+              className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                pickTab === "block"
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <CalendarOff className="size-3.5" />
+              Bloquer
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-3 px-6 py-4 min-h-0 overflow-y-auto flex-1">
+            {pickHelpOpen && pickTab === "jobs" && (
+              <div className="shrink-0 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1.5">
                 <p>
-                  Les 10 plus proches depuis {pickerOriginLabel} (vol d&apos;oiseau, pas Google).
-                  Recherche pour voir les autres.
+                  Choisis une job à placer sur ce créneau. Pour réserver des dates sans client,
+                  utilise l&apos;onglet <strong className="text-foreground">Bloquer</strong>.
                 </p>
-              )}
-            </div>
-          )}
-
-          {pickError && <p className="text-destructive text-sm shrink-0">{pickError}</p>}
-
-          <div className="relative shrink-0">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              type="search"
-              value={pickSearch}
-              onChange={(e) => setPickSearch(e.target.value)}
-              placeholder="Nom, ville ou adresse…"
-              className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              autoFocus
-            />
-          </div>
-
-          {/* Zone liste à hauteur fixe — évite que la modale / le champ saute au filtre */}
-          <div className="h-80 shrink-0 overflow-y-auto rounded-lg border bg-background">
-            {searchedJobsForPicker.length === 0 ? (
-              <p className="text-muted-foreground p-4 text-sm">
-                {pickSearch.trim()
-                  ? `Aucun client ne correspond à « ${pickSearch.trim()} ».`
-                  : jobsForPicker.length > 0
-                    ? "Aucune job de 4 h disponible pour ce créneau."
-                    : "Aucune job à planifier."}
-              </p>
-            ) : (
-              <ul className="space-y-1 p-2">
-                {(() => {
-                  const q = pickSearch.trim();
-                  const list = searchedJobsForPicker;
-                  const rankMap =
-                    !q && pickerRanked && pickerRanked.length > 0
-                      ? new Map(pickerRanked.map((r) => [r.id, r]))
-                      : null;
-
-                  let orderedJobs = list;
-                  let rankedPairs: { job: (typeof list)[number]; rank: RankedPickerJob }[] = [];
-
-                  if (rankMap) {
-                    rankedPairs = pickerRanked!
-                      .map((r) => {
-                        const job = list.find((j) => j.id === r.id);
-                        return job ? { job, rank: r } : null;
-                      })
-                      .filter(
-                        (x): x is { job: (typeof list)[number]; rank: RankedPickerJob } =>
-                          x !== null
-                      );
-                    const unranked = list.filter((j) => !rankMap.has(j.id));
-                    orderedJobs = [...rankedPairs.map((x) => x.job), ...unranked];
-                  }
-
-                  return orderedJobs.map((job) => {
-                    const rank = rankedPairs.find((r) => r.job.id === job.id)?.rank ?? null;
+                {pickTarget && (() => {
+                  const st = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
+                  const adj = pickTarget.half === "pm" ? st.am : st.pm;
+                  if (adj.kind === "busy") {
                     return (
-                      <li key={job.id}>
-                        <button
-                          type="button"
-                          disabled={pending}
-                          className="hover:bg-accent w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
-                          onClick={() => void confirmAssign(job)}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <span className="font-medium">
-                                {job.clients?.name ?? "Sans nom"}
-                              </span>
-                              {(job.installation_address?.city ?? job.clients?.city) && (
-                                <span className="text-muted-foreground block text-xs">
-                                  📍 {job.installation_address?.city ?? job.clients?.city}
-                                </span>
-                              )}
-                              {job.installation_address?.address_formatted && (
-                                <span className="text-muted-foreground block text-xs truncate">
-                                  {job.installation_address.address_formatted}
-                                </span>
-                              )}
-                              <span className="text-muted-foreground block text-xs">
-                                {job.estimated_duration_hours} h
-                              </span>
-                            </div>
-                            {rank && (
-                              <div className="shrink-0 text-right text-xs tabular-nums">
-                                <TravelDuration
-                                  seconds={rank.durationSeconds}
-                                  className="block font-medium"
-                                  numberClassName="font-medium"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      </li>
+                      <p className="text-amber-700 dark:text-amber-400">
+                        L&apos;autre demi-journée est occupée : seules les jobs de 4 h sont proposées.
+                      </p>
                     );
-                  });
+                  }
+                  return null;
                 })()}
-              </ul>
+                {pickerOriginLabel && (
+                  <p>
+                    Les 10 plus proches depuis {pickerOriginLabel} (vol d&apos;oiseau, pas Google).
+                    Recherche pour voir les autres.
+                  </p>
+                )}
+              </div>
             )}
-          </div>
 
-          <DialogFooter className="shrink-0 gap-2 sm:justify-between flex-col sm:flex-row">
-            {blockFormOpen ? (
-              <div className="flex w-full flex-col gap-3">
+            {pickError && <p className="text-destructive text-sm shrink-0">{pickError}</p>}
+            {blockSuccessMsg && (
+              <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 flex items-center justify-between gap-2">
+                <span>{blockSuccessMsg}</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 shrink-0"
+                  onClick={() => {
+                    setBlockSuccessMsg(null);
+                    setPickOpen(false);
+                    setPickTarget(null);
+                  }}
+                >
+                  Fermer
+                </Button>
+              </div>
+            )}
+
+            {pickTab === "jobs" ? (
+              <>
+                <div className="relative shrink-0">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    type="search"
+                    value={pickSearch}
+                    onChange={(e) => setPickSearch(e.target.value)}
+                    placeholder="Nom, ville ou adresse…"
+                    className="h-9 w-full rounded-lg border border-input bg-background pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    autoFocus
+                  />
+                </div>
+
+                <div className="h-72 shrink-0 overflow-y-auto rounded-lg border bg-background">
+                  {searchedJobsForPicker.length === 0 ? (
+                    <p className="text-muted-foreground p-4 text-sm">
+                      {pickSearch.trim()
+                        ? `Aucun client ne correspond à « ${pickSearch.trim()} ».`
+                        : jobsForPicker.length > 0
+                          ? "Aucune job de 4 h disponible pour ce créneau."
+                          : "Aucune job à planifier."}
+                    </p>
+                  ) : (
+                    <ul className="space-y-1 p-2">
+                      {(() => {
+                        const q = pickSearch.trim();
+                        const list = searchedJobsForPicker;
+                        const rankMap =
+                          !q && pickerRanked && pickerRanked.length > 0
+                            ? new Map(pickerRanked.map((r) => [r.id, r]))
+                            : null;
+
+                        let orderedJobs = list;
+                        let rankedPairs: { job: (typeof list)[number]; rank: RankedPickerJob }[] = [];
+
+                        if (rankMap) {
+                          rankedPairs = pickerRanked!
+                            .map((r) => {
+                              const job = list.find((j) => j.id === r.id);
+                              return job ? { job, rank: r } : null;
+                            })
+                            .filter(
+                              (x): x is { job: (typeof list)[number]; rank: RankedPickerJob } =>
+                                x !== null
+                            );
+                          const unranked = list.filter((j) => !rankMap.has(j.id));
+                          orderedJobs = [...rankedPairs.map((x) => x.job), ...unranked];
+                        }
+
+                        return orderedJobs.map((job) => {
+                          const rank = rankedPairs.find((r) => r.job.id === job.id)?.rank ?? null;
+                          return (
+                            <li key={job.id}>
+                              <button
+                                type="button"
+                                disabled={pending}
+                                className="hover:bg-accent w-full rounded-md border px-3 py-2 text-left text-sm transition-colors"
+                                onClick={() => void confirmAssign(job)}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <span className="font-medium">
+                                      {job.clients?.name ?? "Sans nom"}
+                                    </span>
+                                    {(job.installation_address?.city ?? job.clients?.city) && (
+                                      <span className="text-muted-foreground block text-xs">
+                                        📍 {job.installation_address?.city ?? job.clients?.city}
+                                      </span>
+                                    )}
+                                    {job.installation_address?.address_formatted && (
+                                      <span className="text-muted-foreground block text-xs truncate">
+                                        {job.installation_address.address_formatted}
+                                      </span>
+                                    )}
+                                    <span className="text-muted-foreground block text-xs">
+                                      {job.estimated_duration_hours} h
+                                    </span>
+                                  </div>
+                                  {rank && (
+                                    <div className="shrink-0 text-right text-xs tabular-nums">
+                                      <TravelDuration
+                                        seconds={rank.durationSeconds}
+                                        className="block font-medium"
+                                        numberClassName="font-medium"
+                                      />
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        });
+                      })()}
+                    </ul>
+                  )}
+                </div>
+
+                <DialogFooter className="shrink-0 sm:justify-end px-0">
+                  <Button type="button" variant="ghost" onClick={() => setPickOpen(false)}>
+                    Annuler
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <>
+                {pickTarget && (
+                  <div className="rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-sm text-orange-800 font-medium">
+                    Blocage pour : {teams.find((t) => t.id === pickTarget.teamId)?.name ?? "équipe"}
+                    {" · "}
+                    {pickTarget.half.toUpperCase()}
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-muted-foreground">Durée rapide</p>
+                  <div className="flex flex-wrap gap-2">
+                    {(() => {
+                      if (!pickTarget) return null;
+                      const weekMon = format(
+                        startOfWeek(new Date(pickTarget.scheduledDate + "T12:00:00"), { weekStartsOn: 1 }),
+                        "yyyy-MM-dd"
+                      );
+                      const weekFri = format(addDays(new Date(weekMon + "T12:00:00"), 4), "yyyy-MM-dd");
+                      const twoFri = format(addDays(new Date(weekMon + "T12:00:00"), 11), "yyyy-MM-dd");
+                      const presets = [
+                        { label: "Ce créneau", start: pickTarget.scheduledDate, end: pickTarget.scheduledDate },
+                        { label: "Cette semaine (lun–ven)", start: weekMon, end: weekFri },
+                        { label: "2 semaines", start: weekMon, end: twoFri },
+                      ];
+                      return presets.map((p) => (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => {
+                            setBlockStartDate(p.start);
+                            setBlockEndDate(p.end);
+                            if (p.start !== p.end) setBlockFullDay(true);
+                          }}
+                          className="rounded-full border px-3 py-1 text-xs font-medium hover:bg-muted transition-colors"
+                        >
+                          {p.label}
+                        </button>
+                      ));
+                    })()}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">Date début</label>
+                    <input
+                      type="date"
+                      value={blockStartDate}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setBlockStartDate(v);
+                        if (blockEndDate && v !== blockEndDate) setBlockFullDay(true);
+                      }}
+                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">Date fin</label>
+                    <input
+                      type="date"
+                      value={blockEndDate}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setBlockEndDate(v);
+                        if (blockStartDate && v !== blockStartDate) setBlockFullDay(true);
+                      }}
+                      className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                  </div>
+                </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">
-                    Libellé (ex. nom du client)
+                    Libellé (ex. vacances, nom client)
                   </label>
                   <input
                     type="text"
                     value={blockNotes}
                     onChange={(e) => setBlockNotes(e.target.value)}
-                    placeholder="Ex. Tremblay — 2 jours"
+                    placeholder="Ex. Vacances équipe · Tremblay 2 jours"
                     className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     autoFocus
                   />
                 </div>
                 {(() => {
                   if (!pickTarget) return null;
+                  const isRange = blockStartDate && blockEndDate && blockStartDate !== blockEndDate;
+                  if (isRange) {
+                    return (
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={blockFullDay}
+                          onChange={(e) => setBlockFullDay(e.target.checked)}
+                          className="rounded border-input"
+                        />
+                        Journée complète (AM + PM) chaque jour
+                      </label>
+                    );
+                  }
                   const st = getDayState(stateMap, pickTarget.teamId, pickTarget.scheduledDate);
                   const other = pickTarget.half === "am" ? st.pm : st.am;
                   const otherBlocked = isTeamSlotBlocked(
@@ -1054,30 +1273,76 @@ export function DispatchBoard(props: Props) {
                     </label>
                   ) : null;
                 })()}
-                <div className="flex flex-wrap gap-2 justify-end">
-                  <Button type="button" variant="ghost" onClick={() => setBlockFormOpen(false)} disabled={pending}>
-                    Retour
+                <p className="text-[11px] text-muted-foreground">
+                  Les samedis/dimanches sont ignorés. Les jours déjà bloqués ou occupés sont sautés.
+                </p>
+                <DialogFooter className="shrink-0 gap-2 sm:justify-end px-0 pt-1">
+                  <Button type="button" variant="ghost" onClick={() => setPickOpen(false)} disabled={pending}>
+                    Annuler
                   </Button>
                   <Button type="button" onClick={() => void confirmBlockSlot()} disabled={pending}>
-                    {pending ? "…" : "Confirmer le blocage"}
+                    {pending ? "…" : "Bloquer cette période"}
                   </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <Button type="button" variant="outline" onClick={() => setBlockFormOpen(true)} disabled={pending}>
-                  Bloquer ce créneau
-                </Button>
-                <Button type="button" variant="ghost" onClick={() => setPickOpen(false)}>
-                  Annuler
-                </Button>
+                </DialogFooter>
+
+                {/* ── Outil de nettoyage — retirer une plage existante sans group_id ── */}
+                <details className="mt-2">
+                  <summary className="text-[11px] text-muted-foreground cursor-pointer hover:text-foreground select-none">
+                    Retirer une plage existante (ancien blocage sans groupe)
+                  </summary>
+                  <div className="mt-3 space-y-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3">
+                    <p className="text-xs text-muted-foreground">
+                      Supprime tous les blocages d&apos;une équipe entre deux dates, peu importe le libellé.
+                    </p>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Équipe</label>
+                      <select
+                        value={cleanupTeamId}
+                        onChange={(e) => setCleanupTeamId(e.target.value)}
+                        className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <option value="">— choisir —</option>
+                        {teams.map((t) => (
+                          <option key={t.id} value={t.id}>{t.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Du</label>
+                        <input type="date" value={cleanupStart} onChange={(e) => setCleanupStart(e.target.value)}
+                          className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs font-medium text-muted-foreground">Au</label>
+                        <input type="date" value={cleanupEnd} onChange={(e) => setCleanupEnd(e.target.value)}
+                          className="h-9 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+                      </div>
+                    </div>
+                    {cleanupMsg && (
+                      <p className={`text-xs font-medium ${cleanupMsg.startsWith("Erreur") ? "text-destructive" : "text-emerald-700"}`}>
+                        {cleanupMsg}
+                      </p>
+                    )}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      className="w-full"
+                      disabled={pending || !cleanupTeamId || !cleanupStart || !cleanupEnd}
+                      onClick={() => void confirmCleanupRange()}
+                    >
+                      {pending ? "…" : "Retirer tous les blocages de cette plage"}
+                    </Button>
+                  </div>
+                </details>
               </>
             )}
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!blockToDelete} onOpenChange={(o) => { if (!o) setBlockToDelete(null); }}>
+      <Dialog open={!!blockToDelete} onOpenChange={(o) => { if (!o) { setBlockToDelete(null); setBlockDeleteMode("day"); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Retirer le blocage ?</DialogTitle>
@@ -1087,12 +1352,39 @@ export function DispatchBoard(props: Props) {
                 : `Créneau ${blockToDelete?.slot_type === "full_day" ? "journée complète" : blockToDelete?.slot_type?.toUpperCase()} du ${blockToDelete?.blocked_date}.`}
             </DialogDescription>
           </DialogHeader>
+
+          {/* Si la ligne fait partie d'une plage groupée → 2 choix */}
+          {blockToDelete?.group_id && (
+            <div className="space-y-2 py-1">
+              <p className="text-sm text-muted-foreground">
+                Cette case fait partie d&apos;une plage de{" "}
+                <strong>
+                  {groupCount === null ? "…" : `${groupCount} jour${groupCount > 1 ? "s" : ""}`}
+                </strong>.{" "}
+                Que veux-tu retirer ?
+              </p>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2 text-sm cursor-pointer rounded-lg border p-3 hover:bg-muted/40">
+                  <input type="radio" name="deleteMode" value="day" checked={blockDeleteMode === "day"} onChange={() => setBlockDeleteMode("day")} />
+                  <span>Ce jour seulement ({blockToDelete.blocked_date})</span>
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer rounded-lg border p-3 hover:bg-muted/40">
+                  <input type="radio" name="deleteMode" value="group" checked={blockDeleteMode === "group"} onChange={() => setBlockDeleteMode("group")} />
+                  <span>
+                    Toute la période{" "}
+                    {groupCount !== null ? `— ${groupCount} jour${groupCount > 1 ? "s" : ""}` : ""}
+                  </span>
+                </label>
+              </div>
+            </div>
+          )}
+
           <DialogFooter className="gap-2">
-            <Button type="button" variant="ghost" onClick={() => setBlockToDelete(null)} disabled={pending}>
+            <Button type="button" variant="ghost" onClick={() => { setBlockToDelete(null); setBlockDeleteMode("day"); }} disabled={pending}>
               Annuler
             </Button>
             <Button type="button" variant="destructive" onClick={() => void confirmDeleteBlock()} disabled={pending}>
-              {pending ? "…" : "Retirer le blocage"}
+              {pending ? "…" : blockDeleteMode === "group" ? "Retirer toute la période" : "Retirer ce jour"}
             </Button>
           </DialogFooter>
         </DialogContent>

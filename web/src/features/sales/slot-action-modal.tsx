@@ -21,7 +21,6 @@ import {
   type AddressMatch,
 } from "@/actions/prospects";
 import { DualAddressBlock, emptyDualAddress, type DualAddressState } from "@/features/sales/pipeline-client";
-import { createSalespersonBlock } from "@/actions/blocks";
 import { TravelDuration } from "@/lib/format-travel";
 import { FIXED_TIME_SLOTS } from "./sales-utils";
 import type { SalespersonForCalendar } from "./sales-utils";
@@ -120,11 +119,26 @@ function ProspectsTab({
     });
   };
 
-  if (loading) {
+  if (loading && !prospects) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
-        <Loader2 className="size-4 animate-spin" />
-        Calcul des distances depuis {slot.salesperson_name}…
+      <div className="space-y-1.5 min-h-[28rem]">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+          <Loader2 className="size-4 animate-spin shrink-0" />
+          Chargement des prospects…
+        </div>
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-3 rounded-lg border px-4 py-3 animate-pulse"
+          >
+            <div className="size-6 rounded-full bg-muted shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3.5 w-2/5 rounded bg-muted" />
+              <div className="h-2.5 w-1/3 rounded bg-muted" />
+            </div>
+            <div className="h-5 w-14 rounded bg-muted shrink-0" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -152,7 +166,7 @@ function ProspectsTab({
     : prospects;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5 min-h-[28rem]">
       <div className="relative mb-2">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <input
@@ -168,7 +182,7 @@ function ProspectsTab({
           Trajet : <strong>{prevLabel || "—"}</strong>
         </p>
         {loadingDist
-          ? <span className="flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="size-3 animate-spin" />Classement en cours…</span>
+          ? <span className="flex items-center gap-1 text-[10px] text-muted-foreground"><Loader2 className="size-3 animate-spin" />Calcul Google en cours…</span>
           : <span className="text-[10px] text-muted-foreground">Trié par temps de trajet</span>
         }
       </div>
@@ -197,7 +211,11 @@ function ProspectsTab({
             </div>
             <div className="shrink-0 text-right min-w-[4.5rem]">
               <div className="text-base leading-tight">
-                <TravelDuration seconds={p.travel_seconds} numberClassName="font-bold tabular-nums" />
+                {loadingDist && p.travel_seconds === null ? (
+                  <span className="inline-block h-5 w-12 rounded bg-muted animate-pulse align-middle" />
+                ) : (
+                  <TravelDuration seconds={p.travel_seconds} numberClassName="font-bold tabular-nums" />
+                )}
               </div>
               <div className="text-[10px] text-muted-foreground">de trajet</div>
             </div>
@@ -281,6 +299,11 @@ function NewClientTab({
     if (!form.client_phone.trim()) { setError("Le numéro de téléphone est requis."); return; }
     if (!form.client_email.trim() || !form.client_email.includes("@")) { setError("Le courriel est requis."); return; }
     if (!form.install_lat || !form.install_lng) { setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google."); return; }
+    const billing = form.same_address ? form.install_address : form.billing_address;
+    if (!billing?.trim()) {
+      setError("Cochez « Même adresse que l'installation » ou saisissez une adresse de facturation.");
+      return;
+    }
     setError(null);
 
     // Interception si adresse connue
@@ -334,6 +357,13 @@ function NewClientTab({
    */
   const bookSlot = (s: ProspectSlotResult) => {
     if (!form.client_name.trim()) { setError("Le nom du client est requis."); return; }
+    if (!interceptJobId) {
+      const billing = form.same_address ? form.install_address : form.billing_address;
+      if (!billing?.trim()) {
+        setError("Cochez « Même adresse que l'installation » ou saisissez une adresse de facturation.");
+        return;
+      }
+    }
     const key = `${s.date}|${s.start_time}`;
     setBookingKey(key);
     setError(null);
@@ -542,9 +572,24 @@ function NewClientTab({
   // ── Étape chargement ──────────────────────────────────────────────────────
   if (step === "loading") {
     return (
-      <div className="flex flex-col items-center gap-3 py-10 text-sm text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        Recherche des meilleurs créneaux…
+      <div className="space-y-1.5 min-h-[28rem]">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+          <Loader2 className="size-4 animate-spin shrink-0" />
+          Recherche des meilleurs créneaux (Google)…
+        </div>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div
+            key={i}
+            className="flex items-center gap-3 rounded-lg border px-4 py-3 animate-pulse"
+          >
+            <div className="size-6 rounded-full bg-muted shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3.5 w-1/2 rounded bg-muted" />
+              <div className="h-2.5 w-1/3 rounded bg-muted" />
+            </div>
+            <div className="h-5 w-14 rounded bg-muted shrink-0" />
+          </div>
+        ))}
       </div>
     );
   }
@@ -822,12 +867,12 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-background rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="bg-background rounded-xl shadow-xl w-[min(100vw-1rem,56rem)] h-[min(90vh,44rem)] flex flex-col overflow-hidden">
         {/* En-tête */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+        <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0">
           <div>
             <h2 className="text-base font-semibold">{slot.salesperson_name}</h2>
             <p className="text-xs text-muted-foreground capitalize">{dayLabel} · {slot.start_time}</p>
@@ -838,7 +883,7 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
         </div>
 
         {/* Onglets */}
-        <div className="flex border-b px-5">
+        <div className="flex border-b px-5 shrink-0">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -855,8 +900,8 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
           ))}
         </div>
 
-        {/* Contenu */}
-        <div className="px-5 py-4">
+        {/* Contenu — hauteur fixe, scroll interne */}
+        <div className="px-5 py-4 flex-1 min-h-0 overflow-y-auto">
           {tab === "prospects" && (
             <ProspectsTab slot={slot} onBooked={handleBooked} />
           )}
