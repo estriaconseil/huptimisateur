@@ -62,13 +62,16 @@ export async function proxy(request: NextRequest) {
       .maybeSingle();
 
     if (profile?.role === "salesperson") {
-      const allowed = SALESPERSON_ALLOWED.some(
-        (prefix) =>
-          pathname === prefix || pathname.startsWith(`${prefix}/`)
-      );
+      // Les routes /api/* authentifient elles-mêmes via Supabase — ne pas bloquer.
+      if (!pathname.startsWith("/api/")) {
+        const allowed = SALESPERSON_ALLOWED.some(
+          (prefix) =>
+            pathname === prefix || pathname.startsWith(`${prefix}/`)
+        );
 
-      if (!allowed) {
-        return NextResponse.redirect(new URL("/ventes", request.url));
+        if (!allowed) {
+          return NextResponse.redirect(new URL("/ventes", request.url));
+        }
       }
     }
   } catch {

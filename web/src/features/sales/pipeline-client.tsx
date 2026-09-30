@@ -299,10 +299,22 @@ export function QuickProspectModal({
   onClose,
   salespeople,
   onBooked,
+  initialSalespersonId = null,
+  currentSalespersonId = null,
 }: {
   onClose: () => void;
   salespeople: Salesperson[];
   onBooked?: (msg: string, bookedJobId?: string) => void;
+  /**
+   * Pré-sélectionne un vendeur (ex. depuis un créneau du calendrier).
+   * L'utilisateur peut encore changer si ce n'est pas un profil vendeur.
+   */
+  initialSalespersonId?: string | null;
+  /**
+   * ID du vendeur connecté. Quand fourni, verrouille le sélecteur de vendeur
+   * sur cet ID et masque l'option « Aucun ».
+   */
+  currentSalespersonId?: string | null;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -311,12 +323,13 @@ export function QuickProspectModal({
   const [showAbandon, setShowAbandon] = useState(false);
   const [createdJobId, setCreatedJobId] = useState<string | null>(null);
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
+  const effectiveSalesperson = currentSalespersonId ?? initialSalespersonId ?? "";
   const [form, setForm] = useState({
     name: "", phone: "", email: "",
     ...emptyDualAddress(),
     installation_info: "",
-    salesperson_id: "",
-    salesperson_locked: false,
+    salesperson_id: effectiveSalesperson,
+    salesperson_locked: !!effectiveSalesperson,
   });
 
   // ── Interception adresse connue ────────────────────────────────────────────
@@ -541,19 +554,21 @@ export function QuickProspectModal({
                 <div>
                   <label className={lbl}>Vendeur assigné</label>
                   <select
-                    className={inp}
+                    className={`${inp} ${currentSalespersonId ? "opacity-70 cursor-not-allowed" : ""}`}
                     value={form.salesperson_id}
-                    onChange={(e) => setForm((f) => ({
+                    disabled={!!currentSalespersonId}
+                    onChange={currentSalespersonId ? undefined : (e) => setForm((f) => ({
                       ...f,
                       salesperson_id: e.target.value,
                       salesperson_locked: e.target.value ? f.salesperson_locked : false,
                     }))}
                   >
-                    <option value="">— Aucun —</option>
+                    {!currentSalespersonId && <option value="">— Aucun —</option>}
                     {salespeople.map((sp) => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
                   </select>
                 </div>
-                {form.salesperson_id && (
+                {/* Masquer le checkbox de verrouillage pour les vendeurs (toujours verrouillé) */}
+                {form.salesperson_id && !currentSalespersonId && (
                   <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -2576,6 +2591,7 @@ export function PipelineClient({
       {showCreate && (
         <QuickProspectModal
           salespeople={salespeople}
+          currentSalespersonId={currentSalespersonId}
           onClose={() => { setShowCreate(false); router.refresh(); }}
           onBooked={(msg, bookedJobId) => { setShowCreate(false); handleBooked(msg, bookedJobId); }}
         />

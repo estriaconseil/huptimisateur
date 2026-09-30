@@ -36,6 +36,7 @@ export default async function VentesPage({ searchParams }: Props) {
         data={data}
         weekStartLabel={weekStartLabel}
         highlightAppointmentId={typeof highlight === "string" ? highlight : null}
+        currentSalespersonId={currentSalespersonId}
       />
     </div>
   );

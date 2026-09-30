@@ -9,6 +9,7 @@ import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-fo
 import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
 import { quoteBackLink } from "@/lib/quote-back";
+import { getCurrentSalespersonId } from "@/lib/supabase/profile";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
@@ -95,6 +96,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const salespeople: Salesperson[] = (spData ?? []) as Salesperson[];
 
   const nextQuoteNumber = quote ? undefined : await getNextQuoteNumber();
+  const currentSalespersonId = await getCurrentSalespersonId();
 
   const salesperson = Array.isArray(appt.salespeople) ? appt.salespeople[0] : appt.salespeople;
   const spId = (salesperson as { id?: string } | null)?.id ?? null;
@@ -146,6 +148,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
           defaultClient={quote ? undefined : defaultClient}
           installAddress={apptInstall?.address_formatted ?? null}
           alreadyConverted={alreadyConverted}
+          currentSalespersonId={currentSalespersonId}
         />
       </Suspense>
     </div>

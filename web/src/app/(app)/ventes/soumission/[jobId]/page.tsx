@@ -8,6 +8,7 @@ import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-fo
 import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
 import { quoteBackLink } from "@/lib/quote-back";
+import { getCurrentSalespersonId } from "@/lib/supabase/profile";
 import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
@@ -91,6 +92,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
   const nextQuoteNumber = quote ? undefined : await getNextQuoteNumber();
   const alreadyConverted = INSTALL_STATUSES.includes(job.status);
   const back = quoteBackLink({ from, week, alreadyConverted });
+  const currentSalespersonId = await getCurrentSalespersonId();
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -124,6 +126,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
           nextQuoteNumber={nextQuoteNumber}
           alreadyConverted={alreadyConverted}
           installAddress={jobInstall?.address_formatted ?? null}
+          currentSalespersonId={currentSalespersonId}
           defaultClient={
             quote
               ? undefined

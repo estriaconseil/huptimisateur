@@ -81,13 +81,17 @@ type Props = {
   data: SalesPageData;
   weekStartLabel: string;
   highlightAppointmentId?: string | null;
+  /** null = admin/secrétaire. string = vendeur connecté. */
+  currentSalespersonId?: string | null;
 };
 
-export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: Props) {
+export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, currentSalespersonId = null }: Props) {
   const router = useRouter();
   const [dialogSlot, setDialogSlot] = useState<PendingSlot>(null);
   const [activeAppt, setActiveAppt] = useState<AppointmentRow | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  /** Vendeur pré-sélectionné quand QuickProspectModal est ouvert depuis un créneau du calendrier. */
+  const [createInitialSalespersonId, setCreateInitialSalespersonId] = useState<string | null>(null);
   const [blockToDelete, setBlockToDelete] = useState<BlockRow | null>(null);
   const [blockDeleteError, setBlockDeleteError] = useState<string | null>(null);
   const [pendingDelete, startDeleteTransition] = useTransition();
@@ -535,6 +539,11 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: 
           onClose={() => setDialogSlot(null)}
           slot={dialogSlot}
           salespeople={salespeople}
+          onNewProspect={(salespersonId) => {
+            setDialogSlot(null);
+            setCreateInitialSalespersonId(salespersonId);
+            setShowCreate(true);
+          }}
         />
       )}
 
@@ -544,14 +553,17 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId }: 
           onClose={() => setActiveAppt(null)}
           appointment={activeAppt}
           salespeople={salespeople}
+          currentSalespersonId={currentSalespersonId}
         />
       )}
 
       {showCreate && (
         <QuickProspectModal
           salespeople={salespeople}
-          onClose={() => { setShowCreate(false); router.refresh(); }}
-          onBooked={() => { setShowCreate(false); router.refresh(); }}
+          initialSalespersonId={createInitialSalespersonId}
+          currentSalespersonId={currentSalespersonId}
+          onClose={() => { setShowCreate(false); setCreateInitialSalespersonId(null); router.refresh(); }}
+          onBooked={() => { setShowCreate(false); setCreateInitialSalespersonId(null); router.refresh(); }}
         />
       )}
 

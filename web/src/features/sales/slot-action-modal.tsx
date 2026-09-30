@@ -39,6 +39,11 @@ type Props = {
   onClose: () => void;
   slot: SlotInfo;
   salespeople: SalespersonForCalendar[];
+  /**
+   * Si fourni, l'onglet « Nouveau prospect » appelle ce callback au lieu d'afficher
+   * le formulaire interne. Permet au parent d'ouvrir QuickProspectModal à la place.
+   */
+  onNewProspect?: (salespersonId: string) => void;
 };
 
 type Tab = "prospects" | "new-client" | "block";
@@ -833,7 +838,7 @@ function BlockTab({
 
 // ── Modal principale ───────────────────────────────────────────────────────────
 
-export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
+export function SlotActionModal({ open, onClose, slot, salespeople, onNewProspect }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("prospects");
   const [toast, setToast] = useState<string | null>(null);
@@ -887,7 +892,15 @@ export function SlotActionModal({ open, onClose, slot, salespeople }: Props) {
           {TABS.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => {
+                // Si le parent gère « Nouveau prospect » lui-même, lui déléguer.
+                if (t.id === "new-client" && onNewProspect) {
+                  onClose();
+                  onNewProspect(slot.salesperson_id);
+                  return;
+                }
+                setTab(t.id);
+              }}
               className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
                 tab === t.id
                   ? "border-primary text-primary"

@@ -53,6 +53,11 @@ type Props = {
   onClose: () => void;
   appointment: AppointmentRow;
   salespeople: SalespersonForCalendar[];
+  /**
+   * null = admin/secrétaire (voit tous les vendeurs dans l'optimiseur).
+   * string = vendeur connecté → restreindre « Meilleur créneau » à son propre calendrier.
+   */
+  currentSalespersonId?: string | null;
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -68,7 +73,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 type MoveTab = "optimizer" | "calendar" | "manual";
 
-export function AppointmentActionModal({ open, onClose, appointment, salespeople }: Props) {
+export function AppointmentActionModal({ open, onClose, appointment, salespeople, currentSalespersonId = null }: Props) {
   const router = useRouter();
   const [mode, setMode] = useState<"view" | "move" | "cancel" | "edit">("view");
   const [moveTab, setMoveTab] = useState<MoveTab>("optimizer");
@@ -131,7 +136,11 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   useEffect(() => {
     if (mode === "move" && moveTab === "optimizer" && hasGps && slots === null) {
       startLoadSlots(async () => {
-        const filterSp = appointment.salesperson_locked ? appointment.salesperson_id : null;
+        // Vendeur connecté → toujours limiter à son propre calendrier.
+        // Admin/secrétaire → respecter le flag salesperson_locked du RDV.
+        const filterSp = currentSalespersonId
+          ? currentSalespersonId
+          : appointment.salesperson_locked ? appointment.salesperson_id : null;
         const res = await findBestSlotsForProspect(
           appointment.client_lat!,
           appointment.client_lng!,
@@ -143,7 +152,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
         if (res.ok) setSlots(res.slots);
       });
     }
-  }, [mode, moveTab, hasGps, slots, appointment.client_lat, appointment.client_lng, appointment.salesperson_id, appointment.salesperson_locked, appointment.id]);
+  }, [mode, moveTab, hasGps, slots, appointment.client_lat, appointment.client_lng, appointment.salesperson_id, appointment.salesperson_locked, appointment.id, currentSalespersonId]);
 
   const [moveForm, setMoveForm] = useState({
     salesperson_id: appointment.salesperson_id,
@@ -225,7 +234,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
     >
       <div
         className={cn(
-          "bg-background rounded-xl shadow-xl w-full max-w-md mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto"
+          "bg-background rounded-xl shadow-xl w-full max-w-xl mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto"
         )}
       >
         <div className="flex items-start justify-between gap-3">
@@ -296,51 +305,55 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
+            <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
 
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => {
-                        onClose();
-                        router.push(`/ventes/rdv/${appointment.id}?from=ventes`);
-                      }}
-                    />
-                  }
-                >
-                  <FileText className="size-4" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {appointment.quote_id ? "Voir la soumission" : "Créer la soumission"}
-                </TooltipContent>
-              </Tooltip>
+              {/* ── Groupe actions principales (gauche) ── */}
+              <div className="flex items-center gap-3">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-16 w-16"
+                        onClick={() => {
+                          onClose();
+                          router.push(`/ventes/rdv/${appointment.id}?from=ventes`);
+                        }}
+                      />
+                    }
+                  >
+                    <FileText className="size-8" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {appointment.quote_id ? "Voir la soumission" : "Créer la soumission"}
+                  </TooltipContent>
+                </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button type="button" variant="outline" size="icon" onClick={openOptimize} disabled={!hasGps} />
-                  }
-                >
-                  <Sparkles className="size-4" />
-                </TooltipTrigger>
-                <TooltipContent>
-                  {hasGps ? "Optimiser le trajet" : "GPS manquant — utilisez Déplacer"}
-                </TooltipContent>
-              </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button type="button" variant="outline" className="h-16 w-16" onClick={openOptimize} disabled={!hasGps} />
+                    }
+                  >
+                    <Sparkles className="size-8" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {hasGps ? "Optimiser le trajet" : "GPS manquant — utilisez Déplacer"}
+                  </TooltipContent>
+                </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger
-                  render={<Button type="button" variant="outline" size="icon" onClick={openMove} />}
-                >
-                  <ArrowRightLeft className="size-4" />
-                </TooltipTrigger>
-                <TooltipContent>Déplacer vers un autre créneau</TooltipContent>
-              </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<Button type="button" variant="outline" className="h-16 w-16" onClick={openMove} />}
+                  >
+                    <ArrowRightLeft className="size-8" />
+                  </TooltipTrigger>
+                  <TooltipContent>Déplacer vers un autre créneau</TooltipContent>
+                </Tooltip>
+              </div>
 
+              {/* ── Poubelle à droite ── */}
               {appointment.status === "scheduled" && (
                 <Tooltip>
                   <TooltipTrigger
@@ -348,12 +361,12 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                       <Button
                         type="button"
                         variant="outline"
-                        size="icon"
+                        className="h-16 w-16 ml-auto"
                         onClick={() => setMode("cancel")}
                       />
                     }
                   >
-                    <Trash2 className="size-4" />
+                    <Trash2 className="size-8" />
                   </TooltipTrigger>
                   <TooltipContent>Retirer / annuler le RDV</TooltipContent>
                 </Tooltip>

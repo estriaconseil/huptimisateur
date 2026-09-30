@@ -251,6 +251,12 @@ type Props = {
   installAddress?: string | null;
   /** true si le job lié est déjà en statut installation (a_planifier+) */
   alreadyConverted?: boolean;
+  /**
+   * ID du vendeur connecté (null = admin/secrétaire).
+   * Quand fourni : pré-remplit automatiquement le champ Représentant et empêche
+   * le vendeur de le modifier.
+   */
+  currentSalespersonId?: string | null;
 };
 
 // ── Composant ─────────────────────────────────────────────────────────────────
@@ -266,6 +272,7 @@ export function QuoteForm({
   defaultClient,
   installAddress = null,
   alreadyConverted = false,
+  currentSalespersonId = null,
 }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -403,7 +410,8 @@ export function QuoteForm({
     estimated_duration_hours: initialDuration,
     difficulty: initialUnits?.[0]?.difficulty ?? "",
     tech_count: initialUnits?.[0]?.tech_count?.toString() ?? "",
-    salesperson_id: initialQuote?.salesperson_id ?? defaultClient?.salesperson_id ?? salespeople[0]?.id ?? "",
+    // Pour un vendeur connecté : forcer son propre ID si aucune soumission existante ne précise déjà un représentant.
+    salesperson_id: initialQuote?.salesperson_id ?? currentSalespersonId ?? defaultClient?.salesperson_id ?? salespeople[0]?.id ?? "",
     approved_by: initialQuote?.approved_by ?? "",
     status: (initialQuote?.status as QuoteStatus) ?? "draft",
   });
@@ -875,6 +883,8 @@ export function QuoteForm({
         if (!sent) return;
       }
       setShowCallBackModal(false);
+      allowNextNav.current = true;
+      router.push("/ventes/pipeline");
     });
   };
 
@@ -1531,8 +1541,14 @@ export function QuoteForm({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Représentant</label>
-                <select className={inp} value={form.salesperson_id} onChange={setF("salesperson_id")} {...noAc}>
-                  <option value="">— choisir —</option>
+                <select
+                  className={`${inp} ${currentSalespersonId ? "opacity-70 cursor-not-allowed" : ""}`}
+                  value={form.salesperson_id}
+                  onChange={currentSalespersonId ? undefined : setF("salesperson_id")}
+                  disabled={!!currentSalespersonId}
+                  {...noAc}
+                >
+                  {!currentSalespersonId && <option value="">— choisir —</option>}
                   {salespeople.map((sp) => (
                     <option key={sp.id} value={sp.id}>
                       {sp.name}

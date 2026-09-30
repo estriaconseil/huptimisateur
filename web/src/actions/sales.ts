@@ -651,16 +651,21 @@ export async function updateQuoteStatus(
 ): Promise<Ok | Err> {
   const supabase = await createServerSupabaseClient();
 
+  let jobIdToPromote: string | null = null;
+  let quoteSubtotal = 0;
+
   if (status === "pending") {
     const { data: quote, error: qErr } = await supabase
       .from("quotes")
-      .select("subtotal")
+      .select("subtotal, job_id")
       .eq("id", quoteId)
       .maybeSingle();
     if (qErr) return { ok: false, message: qErr.message };
-    if (!(Number(quote?.subtotal) > 0)) {
+    quoteSubtotal = Number((quote as { subtotal?: number } | null)?.subtotal ?? 0);
+    if (!(quoteSubtotal > 0)) {
       return { ok: false, message: "Impossible de passer à « Va nous rappeler » sans montant." };
     }
+    jobIdToPromote = (quote as { job_id?: string | null } | null)?.job_id ?? null;
   }
 
   const { error } = await supabase
@@ -669,7 +674,12 @@ export async function updateQuoteStatus(
     .eq("id", quoteId);
 
   if (error) return { ok: false, message: error.message };
+
+  // Garantir que le job passe en « Va nous rappeler » si le sous-total le permet
+  await promoteJobToEnAttenteIfPriced(supabase, jobIdToPromote, quoteSubtotal);
+
   revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
   return { ok: true };
 }
 
