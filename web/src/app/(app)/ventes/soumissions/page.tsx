@@ -12,6 +12,7 @@ import type { QuoteStatus } from "@/types/domain";
 import { SoumissionsSearch } from "@/features/sales/soumissions-client";
 import {
   SOUMISSIONS_PAGE_SIZE,
+  displaySubtotalForAcceptedOption,
   type SoumissionRow,
 } from "@/features/sales/soumissions-shared";
 
@@ -73,7 +74,9 @@ export default async function SoumissionsPage({
   let dataQuery = supabase
     .from("quotes")
     .select(
-      "id, quote_number, client_name, client_email, quote_date, status, subtotal, job_id, appointment_id, salesperson_id, created_at"
+      `id, quote_number, client_name, client_email, quote_date, status, subtotal, accepted_option,
+       job_id, appointment_id, salesperson_id, created_at,
+       quote_units ( unit_subtotal, discount_amount, is_alternative )`
     )
     .order("created_at", { ascending: false })
     .range(from, from + pageSize - 1);
@@ -161,6 +164,10 @@ export default async function SoumissionsPage({
   const rows: SoumissionRow[] = rowsRaw.map((raw) => {
     const spId = (raw.salesperson_id as string | null) ?? null;
     const apptId = (raw.appointment_id as string | null) ?? null;
+    const acceptedOption =
+      (raw.accepted_option as "a" | "b" | null | undefined) ?? null;
+    const unitsRaw = raw.quote_units;
+    const units = Array.isArray(unitsRaw) ? unitsRaw : unitsRaw ? [unitsRaw] : [];
     return {
       id: String(raw.id),
       quote_number: Number(raw.quote_number),
@@ -168,7 +175,16 @@ export default async function SoumissionsPage({
       client_email: (raw.client_email as string | null) ?? null,
       quote_date: (raw.quote_date as string) ?? "",
       status: (raw.status as string) ?? "draft",
-      subtotal: Number(raw.subtotal) || 0,
+      accepted_option: acceptedOption,
+      subtotal: displaySubtotalForAcceptedOption(
+        acceptedOption,
+        Number(raw.subtotal) || 0,
+        units as {
+          unit_subtotal: number | null;
+          discount_amount: number | null;
+          is_alternative: boolean | null;
+        }[]
+      ),
       job_id: (raw.job_id as string | null) ?? null,
       appointment_id: apptId,
       salesperson_name: spId ? (spNameById.get(spId) ?? null) : null,
@@ -243,6 +259,9 @@ export default async function SoumissionsPage({
                       </span>
                       {row.job_id ? (
                         <span className="text-[11px] font-medium text-green-700">Job lié</span>
+                      ) : null}
+                      {row.accepted_option === "b" ? (
+                        <span className="text-[11px] font-medium text-slate-600">Option B</span>
                       ) : null}
                     </div>
                     <p className="mt-1 truncate text-sm font-semibold text-foreground">

@@ -85,7 +85,8 @@ export const editJobSchema = z.object({
   salesperson_id: z.string().optional(),
   /** Ownership volontaire : suggestions filtrées sur ce vendeur. */
   salesperson_locked: z.boolean().optional(),
-  installation_info: z.string().optional(),
+  installation_info: z.string().optional(), // côté installation / techniciens
+  sales_note: z.string().optional(),        // côté ventes (note de visite)
   internal_notes: z.string().optional(),
   cancellation_reason: z.string().optional(),
   cancellation_notes: z.string().optional(),

@@ -390,7 +390,7 @@ function NewClientTab({
           install_postal: form.install_postal || null,
           install_lat: form.install_lat,
           install_lng: form.install_lng,
-          installation_info: form.installation_info || null,
+          sales_note: form.installation_info || null,
           salesperson_id: s.salesperson_id || slot.salesperson_id || null,
           salesperson_locked: false,
         });

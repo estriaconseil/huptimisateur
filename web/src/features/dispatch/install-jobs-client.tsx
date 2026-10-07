@@ -1144,7 +1144,11 @@ export function InstallJobsClient({
                             </button>
                           ) : (
                             <Link
-                              href={`/dispatch?week=${weekIso}`}
+                              href={`/dispatch?week=${
+                                job.schedule
+                                  ? format(startOfWeek(parseISO(job.schedule.scheduled_date), { weekStartsOn: 1 }), "yyyy-MM-dd")
+                                  : weekIso
+                              }${job.schedule ? `&highlight=${job.schedule.id}` : ""}`}
                               className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-8 gap-1.5")}
                             >
                               <CalendarDays className="size-3.5" />

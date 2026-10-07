@@ -114,8 +114,10 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
     startLoadJob(async () => {
       const res = await getJobForEdit(appointment.job_id!);
       if (res.ok) {
-        setJobData(res.data);
-        setEditForm(res.data);
+        // Pré-remplir la note calendrier depuis le RDV déjà chargé
+        const dataWithNote = { ...res.data, appt_notes: appointment.notes ?? null };
+        setJobData(dataWithNote);
+        setEditForm(dataWithNote);
       } else {
         setError(res.message);
       }
@@ -126,7 +128,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
     if (!editForm || !appointment.job_id) return;
     setError(null);
     startSave(async () => {
-      const res = await updateJobQuick(appointment.job_id!, editForm);
+      const res = await updateJobQuick(appointment.job_id!, editForm, appointment.id);
       if (!res.ok) { setError(res.message); return; }
       setMode("view");
       router.refresh();
@@ -263,46 +265,55 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
         {mode === "view" && (
           <>
             <div className="space-y-3 text-sm">
-              {(appointment.client_phone || city || appointment.client_address) && (
-                <div className="rounded-md bg-muted/40 px-3 py-2 space-y-1">
-                  {appointment.client_phone && (
-                    <p className="flex items-center gap-2">
-                      <Phone className="size-3.5 text-muted-foreground shrink-0" />
-                      <a href={`tel:${appointment.client_phone}`} className="text-primary hover:underline flex-1">
-                        {appointment.client_phone}
-                      </a>
-                      {appointment.job_id && (
-                        <button
-                          onClick={openEdit}
-                          className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-                          title="Modifier la fiche prospect"
-                        >
-                          <Pencil className="size-3.5" />
-                        </button>
-                      )}
-                    </p>
-                  )}
-                  {city && (
-                    <p className="flex items-center gap-2">
-                      <MapPin className="size-3.5 text-muted-foreground shrink-0" />
-                      <span className="font-medium">{city}</span>
-                    </p>
-                  )}
-                  {appointment.client_address && (
-                    <p className="text-muted-foreground text-xs leading-snug pl-5">
-                      {appointment.client_address}
-                    </p>
+              <div className="rounded-md bg-muted/40 px-3 py-2 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1 flex-1 min-w-0">
+                    {appointment.client_phone && (
+                      <p className="flex items-center gap-2">
+                        <Phone className="size-3.5 text-muted-foreground shrink-0" />
+                        <a href={`tel:${appointment.client_phone}`} className="text-primary hover:underline flex-1">
+                          {appointment.client_phone}
+                        </a>
+                      </p>
+                    )}
+                    {city && (
+                      <p className="flex items-center gap-2">
+                        <MapPin className="size-3.5 text-muted-foreground shrink-0" />
+                        <span className="font-medium">{city}</span>
+                      </p>
+                    )}
+                    {appointment.client_address && (
+                      <p className="text-muted-foreground text-xs leading-snug pl-5">
+                        {appointment.client_address}
+                      </p>
+                    )}
+                  </div>
+                  {appointment.job_id && (
+                    <button
+                      onClick={openEdit}
+                      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                      title="Modifier la note de visite"
+                    >
+                      <Pencil className="size-5" />
+                    </button>
                   )}
                 </div>
-              )}
-              {appointment.notes && (
-                <div className="rounded-md bg-yellow-50 border border-yellow-200 px-3 py-2 dark:bg-yellow-950/30">
-                  <p className="text-xs font-medium text-yellow-700 uppercase tracking-wide mb-1">Notes</p>
-                  <p className="whitespace-pre-wrap text-yellow-900 dark:text-yellow-200 text-sm">
-                    {appointment.notes}
-                  </p>
-                </div>
-              )}
+                {/* Note de visite — inline sous les infos client */}
+                {appointment.job_id && (
+                  <div className="pt-1 border-t border-border/50 mt-1">
+                    <button
+                      onClick={openEdit}
+                      className="w-full text-left text-sm hover:text-primary transition-colors"
+                      title="Cliquer pour modifier la note de visite"
+                    >
+                      {appointment.notes?.trim()
+                        ? <span className="font-semibold">{appointment.notes.trim()}</span>
+                        : <span className="text-muted-foreground italic text-xs">Ajouter une note de visite…</span>
+                      }
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-2 border-t">
@@ -411,27 +422,18 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                   </div>
                 </div>
 
-                {/* Notes internes */}
+                {/* Note de visite — visible sur la tuile du calendrier */}
                 <div>
-                  <label className={lbl}>Notes internes</label>
+                  <label className={lbl}>
+                    Note de visite{" "}
+                    <span className="text-muted-foreground font-normal">(visible sur le calendrier)</span>
+                  </label>
                   <textarea
                     rows={3}
                     className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
-                    value={editForm.internal_notes ?? ""}
-                    onChange={(e) => setEditForm((f) => f ? { ...f, internal_notes: e.target.value || null } : f)}
-                    placeholder="Notes visibles par l'équipe…"
-                  />
-                </div>
-
-                {/* Info installation */}
-                <div>
-                  <label className={lbl}>Info installation</label>
-                  <textarea
-                    rows={2}
-                    className="border-input bg-background w-full rounded-lg border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
-                    value={editForm.installation_info ?? ""}
-                    onChange={(e) => setEditForm((f) => f ? { ...f, installation_info: e.target.value || null } : f)}
-                    placeholder="Accès, type d'équipement…"
+                    value={editForm.appt_notes ?? ""}
+                    onChange={(e) => setEditForm((f) => f ? { ...f, appt_notes: e.target.value || null } : f)}
+                    placeholder="Ex. : 9h30, entrée par la gauche, chalet au lac…"
                   />
                 </div>
 

@@ -983,11 +983,11 @@ export async function bookProspectToSlot(input: {
   const supabase = await createServerSupabaseClient();
   const user = { id: auth.profile.id };
 
-  // Récupérer les infos du client + adresse d'installation via la job
+  // Récupérer les infos du client + adresse d'installation + note de visite via la job
   const { data: job, error: jobErr } = await supabase
     .from("jobs")
     .select(`
-      id, client_id, status, appointment_id, installation_address_id,
+      id, client_id, status, appointment_id, installation_address_id, sales_note,
       clients ( name, phone, email ),
       installation_addresses!installation_address_id ( lat, lng, address_formatted )
     `)
@@ -1049,6 +1049,8 @@ export async function bookProspectToSlot(input: {
   }
 
   // Créer le rendez-vous — GPS uniquement depuis l'adresse d'installation
+  // La note de visite (sales_note) est copiée comme note du RDV (affichée sur le calendrier).
+  const jobInternalNotes = (job as { sales_note: string | null }).sales_note ?? null;
   const { data: appt, error: apptErr } = await supabase
     .from("sales_appointments")
     .insert({
@@ -1061,6 +1063,7 @@ export async function bookProspectToSlot(input: {
       start_time: input.startTime,
       status: "scheduled",
       created_by: user.id,
+      notes: jobInternalNotes,
     })
     .select("id")
     .single();
@@ -1531,7 +1534,7 @@ export async function findBestSlotsForProspect(
 // ── Données semaine pour le calendrier prospect ───────────────────────────────
 
 export type WeekSlotCell = {
-  slot: string;           // "08:00"
+  slot: string;           // "09:00"
   occupied: boolean;
   occupiedBy: string | null;
   travelSeconds: number | null;  // null si pas de GPS ou créneau occupé
@@ -2266,11 +2269,13 @@ export async function switchAcceptedOption(
 export type JobQuickData = {
   id: string;
   internal_notes: string | null;
-  installation_info: string | null;
+  sales_note: string | null;
   follow_up_date: string | null;
   follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
   client_name: string;
   client_phone: string | null;
+  /** Note visible sur la tuile du calendrier des ventes (sales_appointments.notes). */
+  appt_notes: string | null;
 };
 
 /** Charge les champs modifiables d'un job depuis la modale calendrier. */
@@ -2281,7 +2286,7 @@ export async function getJobForEdit(
 
   const { data, error } = await supabase
     .from("jobs")
-    .select("id, internal_notes, installation_info, follow_up_date, follow_up_flag, clients ( name, phone )")
+    .select("id, internal_notes, sales_note, follow_up_date, follow_up_flag, clients ( name, phone )")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -2290,7 +2295,7 @@ export async function getJobForEdit(
   const raw = data as {
     id: string;
     internal_notes: string | null;
-    installation_info: string | null;
+    sales_note: string | null;
     follow_up_date: string | null;
     follow_up_flag: string | null;
     clients: { name: string; phone: string | null } | { name: string; phone: string | null }[] | null;
@@ -2302,11 +2307,12 @@ export async function getJobForEdit(
     data: {
       id: raw.id,
       internal_notes: raw.internal_notes,
-      installation_info: raw.installation_info,
+      sales_note: raw.sales_note,
       follow_up_date: raw.follow_up_date,
       follow_up_flag: raw.follow_up_flag as JobQuickData["follow_up_flag"],
       client_name: client?.name ?? "—",
       client_phone: client?.phone ?? null,
+      appt_notes: null, // sera rempli depuis le RDV dans la modale
     },
   };
 }
@@ -2316,12 +2322,14 @@ export async function updateJobQuick(
   jobId: string,
   data: {
     internal_notes: string | null;
-    installation_info: string | null;
+    sales_note: string | null;
     follow_up_date: string | null;
     follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
     client_name: string;
     client_phone: string | null;
-  }
+    appt_notes: string | null;
+  },
+  appointmentId?: string
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const supabase = await createServerSupabaseClient();
 
@@ -2336,7 +2344,7 @@ export async function updateJobQuick(
     .from("jobs")
     .update({
       internal_notes: data.internal_notes || null,
-      installation_info: data.installation_info || null,
+      sales_note: data.sales_note || null,
       follow_up_date: data.follow_up_date || null,
       follow_up_flag: data.follow_up_flag,
     })
@@ -2353,6 +2361,14 @@ export async function updateJobQuick(
         phone: data.client_phone || null,
       })
       .eq("id", jobRow.client_id as string);
+  }
+
+  // Mettre à jour la note affichée sur le calendrier des ventes
+  if (appointmentId) {
+    await supabase
+      .from("sales_appointments")
+      .update({ notes: data.appt_notes || null })
+      .eq("id", appointmentId);
   }
 
   revalidatePath("/ventes");

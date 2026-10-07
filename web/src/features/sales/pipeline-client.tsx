@@ -48,6 +48,7 @@ import {
 } from "@/actions/prospects";
 import { updateClient, updateJob, addInstallationAddress, updateInstallationAddress } from "@/actions/clients";
 import { fetchMoreEnAttente } from "@/actions/pipeline";
+import { FIXED_TIME_SLOTS } from "@/features/sales/sales-utils";
 import { PIPELINE_PAGE_SIZE } from "@/lib/pipeline-config";
 import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
@@ -79,7 +80,7 @@ export type PipelineJob = {
   salesperson_id: string | null;
   /** Ownership volontaire → filtrer les suggestions sur ce vendeur. */
   salesperson_locked: boolean;
-  installation_info: string | null;
+  sales_note: string | null;
   internal_notes: string | null;
   follow_up_date: string | null;
   created_at: string;
@@ -585,12 +586,12 @@ export function QuickProspectModal({
               </div>
             )}
             <div>
-              <label className={lbl}>Notes / Info projet</label>
+              <label className={lbl}>Note de visite <span className="text-muted-foreground font-normal">(apparaît sur le calendrier)</span></label>
               <textarea
                 className={`${inp} h-20 py-2 resize-none`}
                 value={form.installation_info}
                 onChange={(e) => setForm((f) => ({ ...f, installation_info: e.target.value }))}
-                placeholder="Détails sur l'installation, besoins spéciaux…"
+                placeholder="Ex. : veut 9h30, entrée par la gauche, chalet au lac…"
               />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
@@ -873,7 +874,7 @@ export function ProspectEditModal({
     salesperson_id:    job.salesperson_id ?? "",
     salesperson_locked: job.salesperson_locked,
     follow_up_date:    job.follow_up_date ?? "",
-    installation_info: job.installation_info ?? "",
+    installation_info: job.sales_note ?? "",
     internal_notes:    job.internal_notes ?? "",
   });
 
@@ -900,7 +901,7 @@ export function ProspectEditModal({
     form.salesperson_id    !== (job.salesperson_id ?? "") ||
     form.salesperson_locked !== job.salesperson_locked ||
     form.follow_up_date    !== (job.follow_up_date ?? "") ||
-    form.installation_info !== (job.installation_info ?? "") ||
+    form.installation_info !== (job.sales_note ?? "") ||
     form.internal_notes    !== (job.internal_notes ?? "");
 
   const tryClose = () => {
@@ -955,7 +956,7 @@ export function ProspectEditModal({
       follow_up_date: form.follow_up_date,
       salesperson_id: form.salesperson_id,
       salesperson_locked: form.salesperson_locked && !!form.salesperson_id,
-      installation_info: form.installation_info,
+      sales_note: form.installation_info,
       internal_notes: form.internal_notes,
     });
     if (!r.ok) { setError(r.message); return false; }
@@ -1145,12 +1146,8 @@ export function ProspectEditModal({
                 <input type="date" className={inp} value={form.follow_up_date} onChange={(e) => setForm((f) => ({ ...f, follow_up_date: e.target.value }))} />
               </div>
               <div>
-                <label className={lbl}>Notes / Info projet</label>
-                <textarea className={`${inp} h-20 py-2 resize-none`} value={form.installation_info} onChange={(e) => setForm((f) => ({ ...f, installation_info: e.target.value }))} placeholder="Détails sur l'installation, besoins spéciaux…" />
-              </div>
-              <div>
-                <label className={lbl}>Notes internes</label>
-                <textarea className={`${inp} h-16 py-2 resize-none`} value={form.internal_notes} onChange={(e) => setForm((f) => ({ ...f, internal_notes: e.target.value }))} placeholder="Notes privées…" />
+                <label className={lbl}>Note de visite <span className="text-muted-foreground font-normal">(apparaît sur le calendrier)</span></label>
+                <textarea className={`${inp} h-20 py-2 resize-none`} value={form.installation_info} onChange={(e) => setForm((f) => ({ ...f, installation_info: e.target.value }))} placeholder="Ex. : veut 9h30, entrée par la gauche, chalet au lac…" />
               </div>
             </div>
 
@@ -1504,7 +1501,7 @@ export function WeekCalendar({
               </thead>
               <tbody>
                 {/* Collecte tous les créneaux de la semaine */}
-                {["08:00","09:30","11:00","12:30","14:00","15:30"].map((slot) => (
+                {FIXED_TIME_SLOTS.map((slot) => (
                   <tr key={slot} className="border-t hover:bg-muted/5">
                     <td className="px-2 py-1 text-muted-foreground border-r font-mono">{slot}</td>
                     {sp.days.map((day) => {

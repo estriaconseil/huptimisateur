@@ -2,8 +2,19 @@
 
 import { addMinutes, format, parse } from "date-fns";
 
-/** Créneaux fixes par défaut : 08:00, 09:30, 11:00, 12:30, 14:00, 15:30 */
-export const FIXED_TIME_SLOTS = ["08:00", "09:30", "11:00", "12:30", "14:00", "15:30"];
+/**
+ * Créneaux fixes (1h30) — journée typique des ventes :
+ * 09:00 → 10:30 → 12:00 → 13:30 → 15:00 → 16:30 → 18:00 (soir jusqu’à ~19:30).
+ */
+export const FIXED_TIME_SLOTS = [
+  "09:00",
+  "10:30",
+  "12:00",
+  "13:30",
+  "15:00",
+  "16:30",
+  "18:00",
+];
 
 /** Durée fixe d'un rendez-vous vente : 1h30 (déplacement inclus) */
 export const APPOINTMENT_DURATION_MINUTES = 90;

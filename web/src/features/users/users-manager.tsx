@@ -214,32 +214,54 @@ function ResetPasswordDialog({ user, onClose }: { user: AdminUserRow; onClose: (
           </p>
         </div>
       ) : (
-        <div className="space-y-4 py-2">
+        <form
+          className="space-y-4 py-2"
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSubmit();
+          }}
+        >
           <p className="text-sm text-muted-foreground">
             Utilisateur : <strong>{user.full_name ?? user.email}</strong>
           </p>
+          {/* Champ leurre : empêche Chrome/Edge d’injecter le courriel du compte sauvegardé dans le MDP */}
+          <input
+            type="text"
+            name="username"
+            value={user.email ?? ""}
+            readOnly
+            tabIndex={-1}
+            autoComplete="username"
+            aria-hidden
+            className="sr-only"
+          />
           <div>
             <Label htmlFor="new-pwd">Nouveau mot de passe</Label>
             <Input
               id="new-pwd"
+              name="new-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Min. 8 caractères"
+              autoComplete="new-password"
             />
           </div>
           <div>
             <Label htmlFor="confirm-pwd">Confirmer</Label>
             <Input
               id="confirm-pwd"
+              name="confirm-password"
               type="password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               placeholder="Répéter le mot de passe"
+              autoComplete="new-password"
             />
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
-        </div>
+        </form>
       )}
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>{done ? "Fermer" : "Annuler"}</Button>

@@ -374,7 +374,8 @@ export async function updateJob(
       ...(salespersonLockedUpdate !== undefined
         ? { salesperson_locked: salespersonLockedUpdate }
         : {}),
-      installation_info: data.installation_info || null,
+      ...(data.installation_info !== undefined ? { installation_info: data.installation_info || null } : {}),
+      ...(data.sales_note !== undefined ? { sales_note: data.sales_note || null } : {}),
       internal_notes: data.internal_notes || null,
     })
     .eq("id", jobId);

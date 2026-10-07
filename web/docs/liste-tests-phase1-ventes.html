@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Huptimisateur — Liste de tests Phase 1</title>
+  <style>
+    :root {
+      --brand: #003B7C;
+      --ink: #142033;
+      --muted: #5c6b7a;
+      --border: #c8d0d8;
+      --bg: #f4f7fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+      color: var(--ink);
+      background: #d9e2ec;
+      padding: 24px 16px 48px;
+      font-size: 10.5pt;
+      line-height: 1.35;
+    }
+    .page {
+      max-width: 8.5in;
+      margin: 0 auto;
+      background: #fff;
+      padding: 36px 40px 40px;
+      box-shadow: 0 8px 28px rgba(0, 40, 80, 0.12);
+      border: 1px solid #cfd8e3;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 18pt;
+      color: var(--brand);
+      letter-spacing: 0.02em;
+    }
+    .subtitle {
+      margin: 0 0 16px;
+      font-size: 11pt;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px 20px;
+      margin-bottom: 16px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 9.5pt;
+    }
+    .meta strong { color: var(--muted); font-weight: 600; }
+    .note {
+      margin: 0 0 18px;
+      padding: 10px 12px;
+      border-left: 4px solid var(--brand);
+      background: #eef4fa;
+      font-size: 9.5pt;
+    }
+    h2 {
+      margin: 18px 0 8px;
+      font-size: 11pt;
+      color: var(--brand);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 2px solid var(--brand);
+      padding-bottom: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 4px;
+      font-size: 9.5pt;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      vertical-align: top;
+    }
+    th {
+      background: var(--bg);
+      text-align: left;
+      font-size: 8pt;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+    td.num { width: 28px; text-align: center; font-weight: 700; color: var(--brand); }
+    td.ok { width: 44px; text-align: center; }
+    td.comment { width: 32%; }
+    .box {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #444;
+      border-radius: 2px;
+      vertical-align: middle;
+    }
+    .verdict {
+      margin-top: 20px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+    }
+    .verdict h2 { margin-top: 0; border: none; padding: 0; }
+    .verdict-line { margin: 8px 0; }
+    .lines {
+      margin-top: 10px;
+      border-bottom: 1px solid var(--border);
+      height: 22px;
+    }
+    .footer {
+      margin-top: 22px;
+      font-size: 8.5pt;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .page { box-shadow: none; border: none; max-width: none; padding: 0.5in 0.6in; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Huptimisateur</h1>
+    <p class="subtitle">Liste de tests — Phase 1 (Ventes)</p>
+
+    <div class="meta">
+      <div><strong>Date :</strong> _______________________</div>
+      <div><strong>Testeur(s) :</strong> _______________________</div>
+      <div><strong>Appareil :</strong> ☐ Tablette &nbsp;&nbsp; ☐ Ordinateur</div>
+      <div><strong>Objectif :</strong> Validation avant lancement officiel</div>
+    </div>
+
+    <div class="note">
+      <strong>Parcours à valider :</strong> prospect → créneau ventes → soumission (PDF) → répartition.<br />
+      <strong>Important :</strong> la base a été remise à zéro — plus de faux clients. Utiliser de vrais dossiers.
+    </div>
+
+    <h2>A. Préparation</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">1</td><td>Connexion avec mon compte</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">2</td><td>Adresses domicile des vendeurs à jour</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">3</td><td>Bloquer une plage horaire (congé / réunion)</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>B. Prospect + calendrier ventes</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">4</td><td>Créer un nouveau prospect (nom, téléphone, adresse)</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">5</td><td>Pipeline → <strong>Trouver un créneau</strong> → booker</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">6</td><td>Le RDV apparaît au calendrier des ventes</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">7</td><td>Ouvrir le RDV : infos client + notes correctes</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>C. Soumission (idéalement sur tablette)</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">8</td><td>Ouvrir / créer la soumission liée au RDV</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">9</td><td>Remplir au moins 1 unité (marque, modèle, montants)</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">10</td><td>Remplir détails d’installation + électricité</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">11</td><td>Sauvegarder sans erreur</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">12</td><td>Générer le PDF : logo, client, unités, totaux, mise en page</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>D. Envoi PDF client (test)</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">13</td><td>Envoyer le PDF en test (courriel interne)</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">14</td><td>Ouvrir le PDF reçu : lisible et complet</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>E. Répartition</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">15</td><td>Répartir le dossier (durée 4 h ou 8 h)</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">16</td><td>Le job apparaît dans Jobs à placer</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">17</td><td>(Optionnel) Placer au calendrier installations</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <h2>F. Cas utiles</h2>
+    <table>
+      <thead>
+        <tr><th class="num">#</th><th>Test</th><th class="ok">OK</th><th class="comment">Problème / commentaire</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="num">18</td><td>Annuler un RDV ventes → créneau libéré</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">19</td><td>Refaire « Trouver un créneau » sur un dossier déjà planifié</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+        <tr><td class="num">20</td><td>Option B dans la soumission / PDF</td><td class="ok"><span class="box"></span></td><td class="comment"></td></tr>
+      </tbody>
+    </table>
+
+    <div class="verdict">
+      <h2>Verdict final</h2>
+      <div class="verdict-line"><span class="box"></span> &nbsp;<strong>GO</strong> — prêt pour le lancement officiel</div>
+      <div class="verdict-line"><span class="box"></span> &nbsp;<strong>NO-GO</strong> — corrections nécessaires</div>
+      <p style="margin:12px 0 4px;font-size:9pt;color:var(--muted);"><strong>Points à corriger :</strong></p>
+      <div class="lines"></div>
+      <div class="lines"></div>
+      <div class="lines"></div>
+      <div class="lines"></div>
+      <p style="margin:16px 0 0;font-size:9.5pt;"><strong>Signature / date :</strong> ________________________________</p>
+    </div>
+
+    <div class="footer">
+      <span>Huppé Réfrigération — Huptimisateur</span>
+      <span>Phase 1 — Ventes / Soumissions</span>
+    </div>
+  </div>
+</body>
+</html>

@@ -30,7 +30,7 @@ export async function createProspect(input: {
   install_postal?: string | null;
   install_lat?: number | null;
   install_lng?: number | null;
-  installation_info?: string | null;
+  sales_note?: string | null;
   salesperson_id?: string | null;
   /**
    * true = ownership volontaire → suggestions filtrées sur ce vendeur.
@@ -136,7 +136,6 @@ export async function createProspect(input: {
         postal_code: n(input.install_postal),
         lat: input.install_lat ?? null,
         lng: input.install_lng ?? null,
-        installation_info: n(input.installation_info),
       })
       .select("id")
       .single();
@@ -154,7 +153,7 @@ export async function createProspect(input: {
       status: "soumission_en_attente",
       estimated_duration_hours: 4,
       created_by: user.id,
-      installation_info: n(input.installation_info),
+      sales_note: n(input.sales_note),
       salesperson_id: spId,
       salesperson_locked: locked && !!spId,
     })
@@ -179,7 +178,7 @@ export async function createProspectForExistingClient(input: {
   install_postal?: string | null;
   install_lat?: number | null;
   install_lng?: number | null;
-  installation_info?: string | null;
+  sales_note?: string | null;
   salesperson_id?: string | null;
   /** Défaut : true si salesperson_id fourni. Passer false pour un placement flexible. */
   salesperson_locked?: boolean;
@@ -204,7 +203,6 @@ export async function createProspectForExistingClient(input: {
       postal_code: n(input.install_postal),
       lat: input.install_lat ?? null,
       lng: input.install_lng ?? null,
-      installation_info: n(input.installation_info),
     })
     .select("id")
     .single();
@@ -220,7 +218,7 @@ export async function createProspectForExistingClient(input: {
       status: "soumission_en_attente",
       estimated_duration_hours: 4,
       created_by: user.id,
-      installation_info: n(input.installation_info),
+      sales_note: n(input.sales_note),
       salesperson_id: spId,
       salesperson_locked: locked && !!spId,
     })
@@ -483,7 +481,7 @@ export async function getProspectJob(
     .from("jobs")
     .select(
       `id, status, follow_up_flag, appointment_id, salesperson_id, salesperson_locked,
-       installation_info, internal_notes, follow_up_date, created_at, installation_address_id,
+       sales_note, internal_notes, follow_up_date, created_at, installation_address_id,
        clients ( id, name, phone, email, city, billing_address, billing_city, billing_postal ),
        salespeople ( name ),
        installation_addresses!installation_address_id ( lat, lng, address_formatted, city )`
@@ -523,7 +521,7 @@ export async function getProspectJob(
     quote_number: latestQuote?.quote_number ?? null,
     salesperson_id: data.salesperson_id,
     salesperson_locked: data.salesperson_locked ?? false,
-    installation_info: data.installation_info,
+    sales_note: (data as { sales_note?: string | null }).sales_note ?? null,
     internal_notes: data.internal_notes,
     follow_up_date: data.follow_up_date,
     created_at: data.created_at,

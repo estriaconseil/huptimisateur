@@ -1635,9 +1635,6 @@ export function QuoteForm({
             <span className="font-semibold text-foreground">Modes de paiements acceptés :</span>
             {" "}Chèque, comptant, Visa, Mastercard. Financement disponible
           </p>
-          <p className="text-red-700 dark:text-red-400">
-            Un frais administratif de 40,00$ est applicable sur tout appel de service couvert par la garantie du fabricant. Aucun frais de déplacement ou de diagnostic. Les appels de service qui ne sont pas couverts par la garantie du fabricant seront facturables au taux horaire régulier. Les détails de garantie seront fournis avec la facturation. * Aucun frais applicable la première année.
-          </p>
         </div>
       </div>
 

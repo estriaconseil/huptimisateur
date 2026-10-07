@@ -118,8 +118,8 @@ function buildDefaultDayConfigs(): DayConfigInput[] {
   return DAYS.map((d) => ({
     day_of_week: d.dow,
     active: d.dow <= 5,
-    work_start_time: "08:00",
-    work_end_time: "17:00",
+    work_start_time: "09:00",
+    work_end_time: "19:30",
   }));
 }
 
@@ -129,8 +129,8 @@ function dayConfigsToInput(configs: SalespersonDayConfig[]): DayConfigInput[] {
     return {
       day_of_week: d.dow,
       active: existing?.active ?? d.dow <= 5,
-      work_start_time: existing?.work_start_time?.slice(0, 5) ?? "08:00",
-      work_end_time: existing?.work_end_time?.slice(0, 5) ?? "17:00",
+      work_start_time: existing?.work_start_time?.slice(0, 5) ?? "09:00",
+      work_end_time: existing?.work_end_time?.slice(0, 5) ?? "19:30",
     };
   });
 }

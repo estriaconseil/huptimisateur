@@ -398,10 +398,10 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
                           const slotTime = parse(slot, "HH:mm", base);
                           const startTime = dayConfig
                             ? parse(dayConfig.work_start_time.slice(0, 5), "HH:mm", base)
-                            : parse("08:00", "HH:mm", base);
+                            : parse("09:00", "HH:mm", base);
                           const endTime = dayConfig
                             ? parse(dayConfig.work_end_time.slice(0, 5), "HH:mm", base)
-                            : parse("17:00", "HH:mm", base);
+                            : parse("19:30", "HH:mm", base);
                           const outsideHours = slotTime < startTime || slotTime >= endTime;
 
                           const appt = apptBySlot.get(slotKey(date, slot, sp.id));
@@ -462,16 +462,25 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
                                         : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
                                     )}
                                   >
-                                    <div className="font-semibold truncate flex items-center gap-1">
-                                      <span className="truncate">{appt.client_name}</span>
-                                      {appt.quote_id && (
-                                        <span title="Soumission commencée">
-                                          <FileText className="shrink-0 size-3 opacity-70" />
-                                        </span>
+                                    <div className="flex items-start justify-between gap-1">
+                                      <div className="min-w-0">
+                                        <div className="font-semibold truncate flex items-center gap-1">
+                                          <span className="truncate">{appt.client_name}</span>
+                                          {appt.quote_id && (
+                                            <span title="Soumission commencée">
+                                              <FileText className="shrink-0 size-3 opacity-70" />
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="opacity-70 truncate">
+                                          {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
+                                        </div>
+                                      </div>
+                                      {appt.notes?.trim() && (
+                                        <div className="shrink-0 text-[11px] font-bold text-foreground text-right leading-tight">
+                                          {appt.notes.trim()}
+                                        </div>
                                       )}
-                                    </div>
-                                    <div className="opacity-70 truncate">
-                                      {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
                                     </div>
                                   </button>
                                 );

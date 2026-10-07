@@ -109,7 +109,7 @@ export async function enrichPipelineRows(rawRows: RawPipelineRow[]): Promise<Pip
     quote_number: quoteNumberByJobId.get(row.id) ?? null,
     salesperson_id: row.salesperson_id,
     salesperson_locked: row.salesperson_locked ?? false,
-    installation_info: row.installation_info,
+    sales_note: row.sales_note,
     internal_notes: row.internal_notes,
     follow_up_date: row.follow_up_date,
     created_at: row.created_at,

@@ -44,14 +44,14 @@ export async function createSalesperson(data: SalespersonInput): Promise<{ ok: t
 
   if (error) return { ok: false, message: error.message };
 
-  // Créer la config par défaut lun-ven 08:00–17:00
+  // Créer la config par défaut lun-ven 09:00–19:30 (créneaux soir inclus)
   const { error: configError } = await supabase.from("salesperson_day_config").insert(
     [1, 2, 3, 4, 5].map((dow) => ({
       salesperson_id: sp.id,
       day_of_week: dow,
       active: true,
-      work_start_time: "08:00",
-      work_end_time: "17:00",
+      work_start_time: "09:00",
+      work_end_time: "19:30",
     }))
   );
 
