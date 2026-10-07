@@ -399,7 +399,7 @@ export function QuickProspectModal({
       install_postal: form.install_postal || null,
       install_lat: form.install_lat,
       install_lng: form.install_lng,
-      installation_info: form.installation_info || null,
+      sales_note: form.installation_info || null,
       salesperson_id: form.salesperson_id || null,
       salesperson_locked: form.salesperson_locked && !!form.salesperson_id,
     });
