@@ -3,7 +3,7 @@ import { cityFromAddress } from "@/lib/address";
 
 export type SlotHalf = "am" | "pm";
 
-/** État d’une journée pour une équipe (créneaux affichés). */
+/** État d'une journée pour une équipe (créneaux affichés). */
 export type DaySlotBusy = {
   kind: "busy";
   scheduleId: string;
@@ -13,6 +13,8 @@ export type DaySlotBusy = {
   phone: string | null;
   email: string | null;
   missingSerial: boolean;
+  /** Couleur de fond personnalisée (voir SLOT_COLORS dans slot-colors.ts). Null = couleur par défaut. */
+  color: string | null;
 };
 
 export type DayDispatchState = {
@@ -28,6 +30,8 @@ export type EnrichedScheduleRow = {
   scheduled_date: string;
   slot_type: ScheduleSlot;
   status: string;
+  /** Couleur de fond personnalisée (voir SLOT_COLORS dans slot-colors.ts). */
+  color: string | null;
   job: {
     id: string;
     estimated_duration_hours: number;
@@ -87,6 +91,7 @@ export function buildDispatchStateMap(
     const phone = row.job?.clients?.phone ?? null;
     const email = row.job?.clients?.email ?? null;
     const missingSerial = row.job?.missingSerial ?? false;
+    const color = row.color ?? null;
 
     if (row.slot_type === "full_day") {
       day.fullDay = true;
@@ -99,13 +104,14 @@ export function buildDispatchStateMap(
         phone,
         email,
         missingSerial,
+        color,
       };
       day.am = busy;
       day.pm = busy;
     } else if (row.slot_type === "am") {
-      day.am = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial };
+      day.am = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial, color };
     } else if (row.slot_type === "pm") {
-      day.pm = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial };
+      day.pm = { kind: "busy", scheduleId: row.id, jobId: row.job_id, label, city, phone, email, missingSerial, color };
     }
   }
 
@@ -126,7 +132,7 @@ export function getDayState(
   );
 }
 
-/** Peut-on affecter ce demi-créneau ? (équipe active + libre + pas journée bloquée par l’autre sens déjà géré) */
+/** Peut-on affecter ce demi-créneau ? (équipe active + libre + pas journée bloquée par l'autre sens déjà géré) */
 export function canAssignToHalf(
   state: DayDispatchState,
   half: SlotHalf,

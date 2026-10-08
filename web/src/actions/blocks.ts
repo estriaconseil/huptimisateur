@@ -92,6 +92,8 @@ export type CreateTeamBlockInput = {
   blocked_date: string;
   slot_type: "am" | "pm" | "full_day";
   notes?: string | null;
+  /** Couleur de fond personnalisée (voir SLOT_COLORS dans slot-colors.ts). */
+  color?: string | null;
 };
 
 export type UpdateTeamBlockInput = CreateTeamBlockInput & { id: string };
@@ -109,6 +111,7 @@ export async function createTeamBlock(input: CreateTeamBlockInput): Promise<{ ok
       blocked_date: input.blocked_date,
       slot_type: input.slot_type,
       notes: input.notes ?? null,
+      color: input.color ?? null,
     })
     .select("id")
     .single();
@@ -164,6 +167,8 @@ export type CreateTeamBlockRangeInput = {
   notes?: string | null;
   /** Défaut true : saute samedi/dimanche */
   weekdays_only?: boolean;
+  /** Couleur de fond personnalisée (voir SLOT_COLORS dans slot-colors.ts). */
+  color?: string | null;
 };
 
 function enumDates(start: string, end: string, weekdaysOnly: boolean): string[] {
@@ -276,6 +281,7 @@ export async function createTeamBlockRange(
     slot_type: string;
     notes: string | null;
     group_id: string;
+    color: string | null;
   }[] = [];
   let skippedBlocked = 0;
   let skippedBusy = 0;
@@ -295,6 +301,7 @@ export async function createTeamBlockRange(
       slot_type: input.slot_type,
       notes: input.notes ?? null,
       group_id: groupId,
+      color: input.color ?? null,
     });
   }
 
@@ -387,4 +394,24 @@ export async function deleteTeamBlockRange(input: {
   if (error) return { ok: false, message: error.message };
   revalidatePath("/dispatch");
   return { ok: true, deleted: (data ?? []).length };
+}
+
+/** Met à jour la couleur d'un blocage existant. */
+export async function updateTeamBlockColor(
+  blockId: string,
+  color: string | null
+): Promise<{ ok: true } | Err> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
+  const supabase = await createServerSupabaseClient();
+
+  const { error } = await supabase
+    .from("team_blocks")
+    .update({ color })
+    .eq("id", blockId);
+
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/dispatch");
+  return { ok: true };
 }

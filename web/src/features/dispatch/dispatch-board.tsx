@@ -14,7 +14,9 @@ import { AlertTriangle, ArrowRightLeft, CalendarDays, CalendarOff, ChevronLeft, 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-import { assignJobToSlot, removeSchedule, searchInstallSchedules, type InstallSearchHit } from "@/actions/schedules";
+import { assignJobToSlot, removeSchedule, searchInstallSchedules, updateScheduleColor, type InstallSearchHit } from "@/actions/schedules";
+import { updateTeamBlockColor } from "@/actions/blocks";
+import { SLOT_COLORS, resolveSlotColor } from "@/lib/slot-colors";
 import { getDistanceSuggestionsForJob } from "@/actions/suggestions";
 import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { getJobDetails, type JobFullDetail } from "@/actions/jobs";
@@ -60,8 +62,8 @@ type PickTarget = {
 };
 
 type DetailTarget =
-  | { kind: "am"; scheduleId: string; jobId: string; label: string }
-  | { kind: "pm"; scheduleId: string; jobId: string; label: string };
+  | { kind: "am"; scheduleId: string; jobId: string; label: string; color: string | null }
+  | { kind: "pm"; scheduleId: string; jobId: string; label: string; color: string | null };
 
 type Props = {
   weekDates: string[];
@@ -109,6 +111,10 @@ export function DispatchBoard(props: Props) {
   const [pickerRankLoading, setPickerRankLoading] = useState(false);
   const [blockNotes, setBlockNotes] = useState("");
   const [blockFullDay, setBlockFullDay] = useState(false);
+  /** Couleur choisie pour un nouveau blocage */
+  const [blockColor, setBlockColor] = useState<string | null>(null);
+  /** Couleur du créneau affiché dans le dialog de détail */
+  const [scheduleColor, setScheduleColor] = useState<string | null>(null);
   /** Onglet de la modale créneau : jobs à placer vs blocage (comme ventes) */
   const [pickTab, setPickTab] = useState<"jobs" | "block">("jobs");
   const [blockStartDate, setBlockStartDate] = useState("");
@@ -307,6 +313,7 @@ export function DispatchBoard(props: Props) {
           blocked_date: start,
           slot_type: slotType,
           notes: blockNotes.trim() || null,
+          color: blockColor,
         });
         if (!res.ok) {
           setPickError(res.message);
@@ -320,6 +327,7 @@ export function DispatchBoard(props: Props) {
           slot_type: slotType,
           notes: blockNotes.trim() || null,
           weekdays_only: true,
+          color: blockColor,
         });
         if (!res.ok) {
           setPickError(res.message);
@@ -340,6 +348,7 @@ export function DispatchBoard(props: Props) {
       setPickTarget(null);
       setBlockNotes("");
       setBlockFullDay(false);
+      setBlockColor(null);
       setBlockStartDate("");
       setBlockEndDate("");
       router.refresh();
@@ -446,6 +455,7 @@ export function DispatchBoard(props: Props) {
   function openDetail(_teamId: string, _dateStr: string, detailTarget: DetailTarget) {
     setDeleteConfirm(false);
     setDetail(detailTarget);
+    setScheduleColor(detailTarget.color);
     setDetailJobFull(null);
     setDetailOpen(true);
     setDetailLoading(true);
@@ -833,6 +843,7 @@ export function DispatchBoard(props: Props) {
                             phone={fullDayBusy.phone}
                             email={fullDayBusy.email}
                             missingSerial={fullDayBusy.missingSerial}
+                            color={fullDayBusy.color}
                             highlighted={highlightId === fullDayBusy.scheduleId}
                             onOpenDetail={() =>
                               openDetail(team.id, dateStr, {
@@ -840,22 +851,29 @@ export function DispatchBoard(props: Props) {
                                 scheduleId: fullDayBusy.scheduleId,
                                 jobId: fullDayBusy.jobId,
                                 label: fullDayBusy.label,
+                                color: fullDayBusy.color,
                               })
                             }
                           />
                         ) : fullDayBlock ? (
                           /* ── Blocage journée complète ── */
-                          <button
-                            type="button"
-                            className="flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left bg-orange-100 text-orange-900 hover:bg-orange-200"
-                            title="Cliquer pour retirer le blocage"
-                            onClick={() => openDeleteBlock(fullDayBlock)}
-                          >
-                            <span className="text-[10px] font-semibold uppercase opacity-80">Journée bloquée</span>
-                            <span className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight">
-                              {fullDayBlock.notes?.trim() || "Bloqué"}
-                            </span>
-                          </button>
+                          (() => {
+                            const { bg, text } = resolveSlotColor(fullDayBlock.color, "#52525b", "#ffffff");
+                            return (
+                              <button
+                                type="button"
+                                className="flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left transition-colors hover:brightness-90"
+                                style={{ backgroundColor: bg, color: text }}
+                                title="Cliquer pour retirer / modifier le blocage"
+                                onClick={() => openDeleteBlock(fullDayBlock)}
+                              >
+                                <span className="text-[10px] font-semibold uppercase opacity-80">Journée bloquée</span>
+                                <span className="mt-0.5 line-clamp-2 text-sm font-semibold leading-tight">
+                                  {fullDayBlock.notes?.trim() || "Bloqué"}
+                                </span>
+                              </button>
+                            );
+                          })()
                         ) : (
                           /* ── Deux demi-créneaux ── */
                           <div className="flex flex-col divide-y h-[104px]">
@@ -874,6 +892,7 @@ export function DispatchBoard(props: Props) {
                               phone={amBusy?.phone}
                               email={amBusy?.email}
                               missingSerial={amBusy?.missingSerial}
+                              scheduleColor={amBusy?.color ?? null}
                               highlighted={!!amBusy && highlightId === amBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "am")}
                               onRequestDeleteBlock={openDeleteBlock}
@@ -885,6 +904,7 @@ export function DispatchBoard(props: Props) {
                                         scheduleId: amBusy.scheduleId,
                                         jobId: amBusy.jobId,
                                         label: amBusy.label,
+                                        color: amBusy.color,
                                       })
                                   : undefined
                               }
@@ -904,6 +924,7 @@ export function DispatchBoard(props: Props) {
                               phone={pmBusy?.phone}
                               email={pmBusy?.email}
                               missingSerial={pmBusy?.missingSerial}
+                              scheduleColor={pmBusy?.color ?? null}
                               highlighted={!!pmBusy && highlightId === pmBusy.scheduleId}
                               onPick={() => openPick(team.id, dateStr, "pm")}
                               onRequestDeleteBlock={openDeleteBlock}
@@ -915,6 +936,7 @@ export function DispatchBoard(props: Props) {
                                         scheduleId: pmBusy.scheduleId,
                                         jobId: pmBusy.jobId,
                                         label: pmBusy.label,
+                                        color: pmBusy.color,
                                       })
                                   : undefined
                               }
@@ -944,6 +966,7 @@ export function DispatchBoard(props: Props) {
             setPickTab("jobs");
             setBlockNotes("");
             setBlockFullDay(false);
+            setBlockColor(null);
             setBlockSuccessMsg(null);
             setPickHelpOpen(false);
           }
@@ -1236,6 +1259,8 @@ export function DispatchBoard(props: Props) {
                     autoFocus
                   />
                 </div>
+                {/* Couleur de la case */}
+                <SlotColorPicker value={blockColor} onChange={setBlockColor} />
                 {(() => {
                   if (!pickTarget) return null;
                   const isRange = blockStartDate && blockEndDate && blockStartDate !== blockEndDate;
@@ -1379,6 +1404,25 @@ export function DispatchBoard(props: Props) {
             </div>
           )}
 
+          {/* Modifier la couleur sans supprimer */}
+          {blockToDelete && (
+            <div className="space-y-1.5 pt-1">
+              <p className="text-xs font-medium text-muted-foreground">Modifier la couleur</p>
+              <SlotColorPicker
+                value={blockToDelete.color}
+                onChange={(c) => {
+                  void updateTeamBlockColor(blockToDelete.id, c).then((res) => {
+                    if (res.ok) {
+                      setBlockToDelete(null);
+                      setBlockDeleteMode("day");
+                      router.refresh();
+                    }
+                  });
+                }}
+              />
+            </div>
+          )}
+
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={() => { setBlockToDelete(null); setBlockDeleteMode("day"); }} disabled={pending}>
               Annuler
@@ -1475,6 +1519,21 @@ export function DispatchBoard(props: Props) {
                   <p className="whitespace-pre-wrap text-yellow-900 dark:text-yellow-200">{detailJobFull.internalNotes}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Couleur de la case */}
+          {detail && !deleteConfirm && (
+            <div className="pt-1">
+              <SlotColorPicker
+                value={scheduleColor}
+                onChange={(c) => {
+                  setScheduleColor(c);
+                  void updateScheduleColor(detail.scheduleId, c).then((res) => {
+                    if (res.ok) router.refresh();
+                  });
+                }}
+              />
             </div>
           )}
 
@@ -1711,15 +1770,17 @@ function FullDayCell(props: {
   phone?: string | null;
   email?: string | null;
   missingSerial?: boolean;
+  color?: string | null;
   highlighted?: boolean;
   onOpenDetail?: () => void;
 }) {
-  const { labelText, city, phone, email, missingSerial, highlighted, onOpenDetail } = props;
+  const { labelText, city, phone, email, missingSerial, color, highlighted, onOpenDetail } = props;
   const hasContact = phone || email;
+
+  const { bg, text } = resolveSlotColor(color, "#dbeafe", "#1e3a8a");
 
   const cellClassName = cn(
     "flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left transition-colors cursor-pointer hover:brightness-90",
-    missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#00854d] text-white",
     highlighted && "ring-2 ring-inset ring-white animate-pulse",
   );
 
@@ -1728,7 +1789,7 @@ function FullDayCell(props: {
       <div className="flex w-full items-start justify-between gap-1 shrink-0">
         <span className="text-[10px] font-semibold uppercase opacity-80">Journée complète</span>
         {missingSerial && (
-          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold">
+          <span className="inline-flex items-center gap-0.5 rounded border border-orange-400 bg-orange-50 px-1 text-[10px] font-semibold text-orange-700">
             <AlertTriangle className="size-3" />
             #série
           </span>
@@ -1741,7 +1802,7 @@ function FullDayCell(props: {
 
   if (!hasContact) {
     return (
-      <button type="button" className={cellClassName} onClick={onOpenDetail}>
+      <button type="button" className={cellClassName} style={{ backgroundColor: bg, color: text }} onClick={onOpenDetail}>
         {cellChildren}
       </button>
     );
@@ -1751,7 +1812,7 @@ function FullDayCell(props: {
     <Tooltip>
       <TooltipTrigger
         render={
-          <button type="button" className={cellClassName} onClick={onOpenDetail} />
+          <button type="button" className={cellClassName} style={{ backgroundColor: bg, color: text }} onClick={onOpenDetail} />
         }
       >
         {cellChildren}
@@ -1779,6 +1840,8 @@ function HalfCell(props: {
   phone?: string | null;
   email?: string | null;
   missingSerial?: boolean;
+  /** Couleur personnalisée du créneau planifié. */
+  scheduleColor?: string | null;
   highlighted?: boolean;
   onPick: () => void;
   onRequestDeleteBlock?: (block: TeamBlock) => void;
@@ -1799,6 +1862,7 @@ function HalfCell(props: {
     phone,
     email,
     missingSerial,
+    scheduleColor,
     highlighted,
     onPick,
     onRequestDeleteBlock,
@@ -1809,11 +1873,13 @@ function HalfCell(props: {
     const block = teamBlocks.find(
       (b) => b.team_id === teamId && b.blocked_date === dateStr && (b.slot_type === half || b.slot_type === "full_day")
     );
+    const { bg, text } = resolveSlotColor(block?.color ?? null, "#52525b", "#ffffff");
     return (
       <button
         type="button"
-        className="flex h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left bg-orange-100 text-orange-900 hover:bg-orange-200"
-        title="Cliquer pour retirer le blocage"
+        className="flex h-[52px] w-full flex-1 flex-col items-start px-2 py-1.5 text-left transition-colors hover:brightness-90"
+        style={{ backgroundColor: bg, color: text }}
+        title="Cliquer pour retirer / modifier le blocage"
         onClick={() => {
           if (block) onRequestDeleteBlock?.(block);
         }}
@@ -1828,9 +1894,9 @@ function HalfCell(props: {
 
   if (occupied || fullDay) {
     const hasContact = phone || email;
+    const { bg, text } = resolveSlotColor(scheduleColor ?? null, "#dbeafe", "#1e3a8a");
     const cellClassName = cn(
       "flex h-[52px] w-full flex-1 flex-col items-start overflow-hidden px-2 py-1 text-left transition-colors cursor-pointer hover:brightness-90",
-      missingSerial ? "bg-amber-400 text-amber-950" : "bg-[#0073ea] text-white",
       highlighted && "ring-2 ring-inset ring-white animate-pulse",
     );
     const cellChildren = (
@@ -1838,7 +1904,7 @@ function HalfCell(props: {
         <div className="flex w-full items-start justify-between gap-1 shrink-0">
           <span className="text-[10px] font-semibold uppercase opacity-70 leading-none">{label}</span>
           {missingSerial && (
-            <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold leading-none">
+            <span className="inline-flex items-center gap-0.5 rounded border border-orange-400 bg-orange-50 px-1 text-[10px] font-semibold leading-none text-orange-700">
               <AlertTriangle className="size-3" />
               #série
             </span>
@@ -1851,7 +1917,7 @@ function HalfCell(props: {
 
     if (!hasContact) {
       return (
-        <button type="button" className={cellClassName} onClick={onOpenDetail}>
+        <button type="button" className={cellClassName} style={{ backgroundColor: bg, color: text }} onClick={onOpenDetail}>
           {cellChildren}
         </button>
       );
@@ -1860,7 +1926,7 @@ function HalfCell(props: {
     return (
       <Tooltip>
         <TooltipTrigger
-          render={<button type="button" className={cellClassName} onClick={onOpenDetail} />}
+          render={<button type="button" className={cellClassName} style={{ backgroundColor: bg, color: text }} onClick={onOpenDetail} />}
         >
           {cellChildren}
         </TooltipTrigger>
@@ -1890,25 +1956,94 @@ function HalfCell(props: {
   );
 }
 
-function Legend() {
+/** Sélecteur de couleur de case (blocages et créneaux planifiés). */
+function SlotColorPicker({
+  value,
+  onChange,
+}: {
+  value: string | null | undefined;
+  onChange: (color: string | null) => void;
+}) {
   return (
-    <div className="text-muted-foreground flex flex-wrap gap-4 text-xs">
-      <span>
-        <span className="mr-1 inline-block size-3 rounded bg-[#0073ea] align-middle" /> Occupé (AM/PM)
-      </span>
-      <span>
-        <span className="mr-1 inline-block size-3 rounded bg-[#00854d] align-middle" />{" "}
-              Journée complète (8 h)
-      </span>
-      <span>
-        <span className="mr-1 inline-block size-3 rounded border border-dashed align-middle" /> Libre
-      </span>
-      <span>
-        <span className="bg-muted mr-1 inline-block size-3 rounded opacity-50 align-middle" /> Équipe inactive
-      </span>
-      <span>
-        <span className="mr-1 inline-block size-3 rounded bg-amber-400 align-middle" /> # série manquant
-      </span>
+    <div className="space-y-1.5">
+      <p className="text-xs font-medium text-muted-foreground">Couleur de la case</p>
+      <div className="flex flex-wrap gap-1.5">
+        {/* Aucune couleur = défaut */}
+        <button
+          type="button"
+          title="Couleur par défaut"
+          onClick={() => onChange(null)}
+          className={cn(
+            "size-6 rounded-full border-2 bg-white flex items-center justify-center transition-all",
+            !value ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-muted-foreground"
+          )}
+        >
+          <span className="text-[10px] text-muted-foreground font-bold">✕</span>
+        </button>
+        {SLOT_COLORS.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            title={c.label}
+            onClick={() => onChange(c.value)}
+            className={cn(
+              "size-6 rounded-full border-2 transition-all hover:scale-110",
+              value === c.value ? "border-foreground ring-2 ring-foreground/30 scale-110" : "border-transparent"
+            )}
+            style={{ backgroundColor: c.hex }}
+          />
+        ))}
+      </div>
+      {value && (
+        <p className="text-[11px] text-muted-foreground">
+          {SLOT_COLORS.find((c) => c.value === value)?.label}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Legend() {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      >
+        Légende {expanded ? "▴" : "▾"}
+      </button>
+
+      {expanded && (
+        <div className="w-full flex flex-wrap gap-x-4 gap-y-2 pt-1 border-t border-border/40">
+          {/* Couleurs de base */}
+          <span>
+            <span className="mr-1 inline-block size-3 rounded align-middle" style={{ backgroundColor: "#dbeafe" }} /> Occupé
+          </span>
+          <span>
+            <span className="mr-1 inline-block size-3 rounded border border-dashed align-middle" /> Libre
+          </span>
+          <span>
+            <span className="bg-muted mr-1 inline-block size-3 rounded opacity-50 align-middle" /> Inactive
+          </span>
+          <span>
+            <span className="mr-1 inline-block size-3 rounded align-middle" style={{ backgroundColor: "#52525b" }} /> Bloqué
+          </span>
+          <span className="inline-flex items-center gap-0.5 rounded border border-orange-400 bg-orange-50 px-1 text-orange-700">
+            <AlertTriangle className="size-3" /> # série
+          </span>
+          {/* Séparateur */}
+          <span className="w-full border-t border-border/30" />
+          {/* Codes couleur custom */}
+          {SLOT_COLORS.map((c) => (
+            <span key={c.value} className="flex items-center gap-1">
+              <span className="inline-block size-3 rounded shrink-0" style={{ backgroundColor: c.hex }} />
+              {c.label.split(" — ")[1]}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

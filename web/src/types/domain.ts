@@ -218,6 +218,8 @@ export interface TeamBlock {
   notes: string | null;
   /** UUID partagé par toutes les lignes d'une même plage créée d'un coup. Null = ligne isolée (ancienne). */
   group_id: string | null;
+  /** Couleur de fond personnalisée (voir SLOT_COLORS dans slot-colors.ts). Null = couleur par défaut. */
+  color: string | null;
   created_at: string;
 }
 

@@ -124,6 +124,7 @@ export async function getDistanceSuggestionsForJob(
       scheduled_date: string;
       slot_type: EnrichedScheduleRow["slot_type"];
       status: string;
+      color: string | null;
       jobs: unknown;
     };
     const jo = unwrapRelation<{
@@ -160,6 +161,7 @@ export async function getDistanceSuggestionsForJob(
       scheduled_date: row.scheduled_date,
       slot_type: row.slot_type,
       status: row.status,
+      color: row.color ?? null,
       job,
     };
   });

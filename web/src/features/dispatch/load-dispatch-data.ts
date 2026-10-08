@@ -97,6 +97,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
         scheduled_date,
         slot_type,
         status,
+        color,
         jobs (
           id,
           estimated_duration_hours,
@@ -136,7 +137,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
     supabase.from("app_settings").select("*").limit(1).maybeSingle(),
     supabase
       .from("team_blocks")
-      .select("id, team_id, blocked_date, slot_type, notes, group_id, created_at")
+      .select("id, team_id, blocked_date, slot_type, notes, group_id, color, created_at")
       .gte("blocked_date", rangeStart)
       .lte("blocked_date", rangeEnd),
   ]);
@@ -180,6 +181,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       scheduled_date: string;
       slot_type: EnrichedScheduleRow["slot_type"];
       status: string;
+      color: string | null;
       jobs: unknown;
     };
     const jo = unwrapRelation<{
@@ -218,6 +220,7 @@ export async function loadDispatchPageData(weekParam: string | undefined) {
       scheduled_date: row.scheduled_date,
       slot_type: row.slot_type,
       status: row.status,
+      color: row.color ?? null,
       job,
     };
   });

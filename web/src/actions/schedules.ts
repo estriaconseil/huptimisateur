@@ -69,7 +69,7 @@ export async function assignJobToSlot(input: {
 
   const { data: teamBlockRows } = await supabase
     .from("team_blocks")
-    .select("id, team_id, blocked_date, slot_type, notes, group_id, created_at")
+    .select("id, team_id, blocked_date, slot_type, notes, group_id, color, created_at")
     .eq("team_id", input.teamId)
     .eq("blocked_date", input.scheduledDate);
 
@@ -306,4 +306,24 @@ export async function searchInstallSchedules(
   }
 
   return { ok: true, results: hits };
+}
+
+/** Met à jour la couleur de fond d'un créneau d'installation existant. */
+export async function updateScheduleColor(
+  scheduleId: string,
+  color: string | null
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const auth = await requireStaff();
+  if (!auth.ok) return auth;
+
+  const supabase = await createServerSupabaseClient();
+
+  const { error } = await supabase
+    .from("schedules")
+    .update({ color })
+    .eq("id", scheduleId);
+
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/dispatch");
+  return { ok: true };
 }
