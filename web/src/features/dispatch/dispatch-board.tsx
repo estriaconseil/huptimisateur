@@ -1777,7 +1777,7 @@ function FullDayCell(props: {
   const { labelText, city, phone, email, missingSerial, color, highlighted, onOpenDetail } = props;
   const hasContact = phone || email;
 
-  const { bg, text } = resolveSlotColor(color, "#dbeafe", "#1e3a8a");
+  const { bg, text } = resolveSlotColor(color, "#f1f5f9", "#334155");
 
   const cellClassName = cn(
     "flex h-[104px] w-full flex-col items-start overflow-hidden px-2 py-1.5 text-left transition-colors cursor-pointer hover:brightness-90",
@@ -1894,7 +1894,7 @@ function HalfCell(props: {
 
   if (occupied || fullDay) {
     const hasContact = phone || email;
-    const { bg, text } = resolveSlotColor(scheduleColor ?? null, "#dbeafe", "#1e3a8a");
+    const { bg, text } = resolveSlotColor(scheduleColor ?? null, "#f1f5f9", "#334155");
     const cellClassName = cn(
       "flex h-[52px] w-full flex-1 flex-col items-start overflow-hidden px-2 py-1 text-left transition-colors cursor-pointer hover:brightness-90",
       highlighted && "ring-2 ring-inset ring-white animate-pulse",
@@ -2018,17 +2018,17 @@ function Legend() {
       {expanded && (
         <div className="w-full flex flex-wrap gap-x-4 gap-y-2 pt-1 border-t border-border/40">
           {/* Couleurs de base */}
-          <span>
-            <span className="mr-1 inline-block size-3 rounded align-middle" style={{ backgroundColor: "#dbeafe" }} /> Occupé
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block size-3.5 rounded border border-slate-300 shrink-0" style={{ backgroundColor: "#f1f5f9" }} /> Occupé
           </span>
-          <span>
-            <span className="mr-1 inline-block size-3 rounded border border-dashed align-middle" /> Libre
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block size-3.5 rounded border-2 border-slate-300 shrink-0" /> Libre
           </span>
-          <span>
-            <span className="bg-muted mr-1 inline-block size-3 rounded opacity-50 align-middle" /> Inactive
+          <span className="inline-flex items-center gap-1 opacity-45">
+            <span className="inline-block size-3.5 rounded border border-slate-300 shrink-0" style={{ backgroundColor: "#f1f5f9" }} /> Équipe inactive
           </span>
-          <span>
-            <span className="mr-1 inline-block size-3 rounded align-middle" style={{ backgroundColor: "#52525b" }} /> Bloqué
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block size-3.5 rounded shrink-0" style={{ backgroundColor: "#52525b" }} /> Bloqué
           </span>
           <span className="inline-flex items-center gap-0.5 rounded border border-orange-400 bg-orange-50 px-1 text-orange-700">
             <AlertTriangle className="size-3" /> # série
