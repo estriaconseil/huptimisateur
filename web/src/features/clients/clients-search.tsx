@@ -159,6 +159,15 @@ export function ClientsSearchResults({
                       {client.phone}
                     </a>
                   )}
+                  {client.cell && (
+                    <a
+                      href={`tel:${client.cell}`}
+                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sky-700 hover:underline"
+                    >
+                      <Phone className="size-3" />
+                      {client.cell} (cell)
+                    </a>
+                  )}
                   {client.billing_city && (
                     <span className="text-xs text-muted-foreground">{client.billing_city}</span>
                   )}

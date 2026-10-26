@@ -46,6 +46,7 @@ export type AppointmentRow = {
   /** Infos client via JOIN (chargées dans loadSalesPageData) */
   client_name: string;
   client_phone: string | null;
+  client_cell: string | null;
   client_address: string | null;
   /** Ville chantier (prioritaire) ou ville client. */
   client_city: string | null;

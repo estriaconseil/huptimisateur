@@ -70,6 +70,7 @@ export type ClientRow = {
   id: string;
   name: string;
   phone: string | null;
+  cell: string | null;
   email: string | null;
   billing_address: string | null;
   billing_city: string | null;
@@ -142,6 +143,7 @@ function EditClientDialog({ client }: { client: ClientRow }) {
       name: client.name,
       email: client.email ?? "",
       phone: client.phone ?? "",
+      cell: client.cell ?? "",
       billing_address: client.billing_address ?? "",
       billing_city: client.billing_city ?? "",
       billing_postal: client.billing_postal ?? "",
@@ -198,14 +200,18 @@ function EditClientDialog({ client }: { client: ClientRow }) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor={`email-${client.id}`}>Courriel</Label>
-              <Input id={`email-${client.id}`} type="email" {...register("email")} />
-              {formState.errors.email && <p className="text-destructive text-xs">{formState.errors.email.message}</p>}
-            </div>
-            <div className="space-y-1.5">
               <Label htmlFor={`phone-${client.id}`}>Téléphone</Label>
               <Input id={`phone-${client.id}`} type="tel" {...register("phone")} />
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor={`cell-${client.id}`}>Cellulaire</Label>
+              <Input id={`cell-${client.id}`} type="tel" {...register("cell")} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={`email-${client.id}`}>Courriel</Label>
+            <Input id={`email-${client.id}`} type="email" {...register("email")} />
+            {formState.errors.email && <p className="text-destructive text-xs">{formState.errors.email.message}</p>}
           </div>
 
           <div className="space-y-1.5">

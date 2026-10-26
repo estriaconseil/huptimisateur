@@ -18,6 +18,7 @@ export const newClientJobFormSchema = z.object({
   name: z.string().min(1, "Nom requis"),
   email: z.union([z.literal(""), z.string().email("Courriel invalide")]),
   phone: z.string().optional(),
+  cell: z.string().optional(),
 
   /** Adresse de facturation du client */
   billing_address: z.string().optional(),
@@ -56,6 +57,7 @@ export const editClientSchema = z.object({
   name: z.string().min(1, "Nom requis"),
   email: z.union([z.literal(""), z.string().email("Courriel invalide")]),
   phone: z.string().optional(),
+  cell: z.string().optional(),
   billing_address: z.string().optional(),
   billing_city: z.string().optional(),
   billing_postal: z.string().optional(),

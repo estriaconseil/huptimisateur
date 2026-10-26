@@ -42,6 +42,7 @@ import { getInstallWeekGrid } from "@/actions/dispatch-week";
 import { updateClient, updateJob } from "@/actions/clients";
 import { updateQuoteUnitSerials } from "@/actions/sales";
 import { JobTimeline } from "@/features/jobs/job-timeline";
+import { HistoryDrawer } from "@/components/history-drawer";
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import type { InstallJob } from "@/app/(app)/a-planifier/page";
 import type { ScheduleSuggestion, EstimatedDurationHours } from "@/types/domain";
@@ -847,6 +848,7 @@ export function InstallJobsClient({
   scrollJobId,
   fetchError,
   fullDayThreshold,
+  isAdmin = false,
 }: {
   jobs: InstallJob[];
   weekIso: string;
@@ -854,6 +856,7 @@ export function InstallJobsClient({
   scrollJobId: string | null;
   fetchError: string | null;
   fullDayThreshold: number;
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -1173,10 +1176,18 @@ export function InstallJobsClient({
                               buttonVariants({ variant: timelineJobId === job.id ? "secondary" : "ghost", size: "sm" }),
                               "h-8 px-2"
                             )}
-                            title="Notes et historique"
+                            title="Notes"
                           >
                             <MessageSquare className="size-3.5" />
                           </button>
+                          {isAdmin && (
+                            <HistoryDrawer
+                              tableName="jobs"
+                              recordId={job.id}
+                              label={`${job.clients?.name ?? "—"} — ${job.installation_address?.address_formatted ?? ""}`}
+                              triggerClassName="h-8 px-2 rounded-md hover:bg-accent"
+                            />
+                          )}
                           <button
                             type="button"
                             onClick={() => setEditJob(job)}

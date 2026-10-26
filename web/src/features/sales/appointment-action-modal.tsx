@@ -19,6 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { HistoryDrawer } from "@/components/history-drawer";
 
 import {
   moveAppointment,
@@ -44,7 +45,7 @@ import {
 import { cityFromAddress } from "@/lib/address";
 import { TravelDuration } from "@/lib/format-travel";
 import { cn } from "@/lib/utils";
-import { WeekCalendar } from "@/features/sales/pipeline-client";
+import { AbandonConfirm, WeekCalendar } from "@/features/sales/pipeline-client";
 import { FIXED_TIME_SLOTS } from "./sales-utils";
 import type { AppointmentRow, SalespersonForCalendar } from "./sales-utils";
 
@@ -58,6 +59,8 @@ type Props = {
    * string = vendeur connecté → restreindre « Meilleur créneau » à son propre calendrier.
    */
   currentSalespersonId?: string | null;
+  /** Affiche le bouton Historique (admin seulement). */
+  isAdmin?: boolean;
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -73,7 +76,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 type MoveTab = "optimizer" | "calendar" | "manual";
 
-export function AppointmentActionModal({ open, onClose, appointment, salespeople, currentSalespersonId = null }: Props) {
+export function AppointmentActionModal({ open, onClose, appointment, salespeople, currentSalespersonId = null, isAdmin = false }: Props) {
   const router = useRouter();
   const [mode, setMode] = useState<"view" | "move" | "cancel" | "edit">("view");
   const [moveTab, setMoveTab] = useState<MoveTab>("optimizer");
@@ -90,9 +93,56 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   const [loadingJob, startLoadJob] = useTransition();
   const [saving, startSave] = useTransition();
   const [editForm, setEditForm] = useState<JobQuickData | null>(null);
+  const [showAbandon, setShowAbandon] = useState(false);
+  /** Après confirmation d'abandon : fermer la modale ou seulement quitter l'édition. */
+  const [abandonTarget, setAbandonTarget] = useState<"close" | "view">("close");
 
   const hasGps = !!(appointment.client_lat && appointment.client_lng);
   const city = appointment.client_city ?? cityFromAddress(appointment.client_address);
+
+  const isEditDirty = !!(
+    mode === "edit" &&
+    editForm &&
+    jobData &&
+    (
+      editForm.client_name !== jobData.client_name ||
+      editForm.client_phone !== jobData.client_phone ||
+      editForm.client_cell !== jobData.client_cell ||
+      editForm.appt_notes !== jobData.appt_notes ||
+      editForm.follow_up_date !== jobData.follow_up_date ||
+      editForm.follow_up_flag !== jobData.follow_up_flag ||
+      editForm.internal_notes !== jobData.internal_notes ||
+      editForm.sales_note !== jobData.sales_note
+    )
+  );
+
+  const tryClose = () => {
+    if (isEditDirty) {
+      setAbandonTarget("close");
+      setShowAbandon(true);
+      return;
+    }
+    onClose();
+  };
+
+  const tryCancelEdit = () => {
+    if (isEditDirty) {
+      setAbandonTarget("view");
+      setShowAbandon(true);
+      return;
+    }
+    setMode("view");
+  };
+
+  const confirmAbandon = () => {
+    setShowAbandon(false);
+    if (abandonTarget === "view") {
+      setEditForm(jobData);
+      setMode("view");
+      return;
+    }
+    onClose();
+  };
 
   useEffect(() => {
     if (!open) {
@@ -102,6 +152,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
       setMoveTab("optimizer");
       setJobData(null);
       setEditForm(null);
+      setShowAbandon(false);
     }
   }, [open]);
 
@@ -232,11 +283,18 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onClick={(e) => e.target === e.currentTarget && tryClose()}
     >
+      {showAbandon && (
+        <AbandonConfirm
+          variant="fixed"
+          onConfirm={confirmAbandon}
+          onCancel={() => setShowAbandon(false)}
+        />
+      )}
       <div
         className={cn(
-          "bg-background rounded-xl shadow-xl w-full max-w-xl mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto"
+          "relative bg-background rounded-xl shadow-xl w-full max-w-xl mx-auto p-5 space-y-4 max-h-[90vh] overflow-y-auto"
         )}
       >
         <div className="flex items-start justify-between gap-3">
@@ -257,9 +315,24 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
               <span>{salespersonName}</span>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground shrink-0">
-            <X className="size-5" />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isAdmin && (
+              <HistoryDrawer
+                sources={[
+                  { tableName: "sales_appointments", recordId: appointment.id,        sourceLabel: "RDV" },
+                  { tableName: "clients",            recordId: appointment.client_id,  sourceLabel: "Client" },
+                  ...(appointment.job_id
+                    ? [{ tableName: "jobs", recordId: appointment.job_id, sourceLabel: "Prospect" }]
+                    : []),
+                ]}
+                label={`${appointment.client_name} — ${appointment.scheduled_date} ${appointment.start_time.slice(0, 5)}`}
+                variant="button"
+              />
+            )}
+            <button onClick={tryClose} className="p-1.5 text-muted-foreground hover:text-foreground">
+              <X className="size-5" />
+            </button>
+          </div>
         </div>
 
         {mode === "view" && (
@@ -273,6 +346,14 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                         <Phone className="size-3.5 text-muted-foreground shrink-0" />
                         <a href={`tel:${appointment.client_phone}`} className="text-primary hover:underline flex-1">
                           {appointment.client_phone}
+                        </a>
+                      </p>
+                    )}
+                    {appointment.client_cell && (
+                      <p className="flex items-center gap-2">
+                        <Phone className="size-3.5 text-muted-foreground shrink-0" />
+                        <a href={`tel:${appointment.client_cell}`} className="text-primary hover:underline flex-1">
+                          {appointment.client_cell} <span className="text-xs text-muted-foreground">(cell)</span>
                         </a>
                       </p>
                     )}
@@ -401,16 +482,16 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                   Fiche prospect
                 </p>
 
-                {/* Nom et téléphone */}
+                {/* Nom et coordonnées */}
+                <div>
+                  <label className={lbl}>Nom du client</label>
+                  <input
+                    className={inp}
+                    value={editForm.client_name}
+                    onChange={(e) => setEditForm((f) => f ? { ...f, client_name: e.target.value } : f)}
+                  />
+                </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={lbl}>Nom du client</label>
-                    <input
-                      className={inp}
-                      value={editForm.client_name}
-                      onChange={(e) => setEditForm((f) => f ? { ...f, client_name: e.target.value } : f)}
-                    />
-                  </div>
                   <div>
                     <label className={lbl}>Téléphone</label>
                     <input
@@ -418,6 +499,15 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                       type="tel"
                       value={editForm.client_phone ?? ""}
                       onChange={(e) => setEditForm((f) => f ? { ...f, client_phone: e.target.value || null } : f)}
+                    />
+                  </div>
+                  <div>
+                    <label className={lbl}>Cellulaire</label>
+                    <input
+                      className={inp}
+                      type="tel"
+                      value={editForm.client_cell ?? ""}
+                      onChange={(e) => setEditForm((f) => f ? { ...f, client_cell: e.target.value || null } : f)}
                     />
                   </div>
                 </div>
@@ -480,7 +570,7 @@ export function AppointmentActionModal({ open, onClose, appointment, salespeople
                     {saving ? "Sauvegarde…" : "Sauvegarder"}
                   </button>
                   <button
-                    onClick={() => setMode("view")}
+                    onClick={tryCancelEdit}
                     disabled={saving}
                     className="px-4 h-9 rounded-lg border text-sm font-medium hover:bg-muted"
                   >

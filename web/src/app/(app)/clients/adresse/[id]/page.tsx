@@ -11,6 +11,8 @@ import { CANCELLATION_REASONS } from "@/types/domain";
 import { cn } from "@/lib/utils";
 import { format, parseISO } from "date-fns";
 import { fr } from "date-fns/locale";
+import { HistoryDrawer } from "@/components/history-drawer";
+import { getCurrentProfile } from "@/lib/supabase/profile";
 
 // ── Types locaux ──────────────────────────────────────────────────────────────
 
@@ -86,7 +88,11 @@ export default async function AdresseFichePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const supabase = await createServerSupabaseClient();
+  const [supabase, profile] = await Promise.all([
+    createServerSupabaseClient(),
+    getCurrentProfile(),
+  ]);
+  const isAdmin = profile?.role === "admin";
 
   // 1. Adresse seule — pas d'embed jobs (PostgREST le transformait en 404)
   const { data: addr, error: addrErr } = await supabase
@@ -105,12 +111,12 @@ export default async function AdresseFichePage({
 
   const { data: clientRow } = await supabase
     .from("clients")
-    .select("id, name, phone, email, billing_address, billing_city, billing_postal")
+    .select("id, name, phone, cell, email, billing_address, billing_city, billing_postal")
     .eq("id", addr.client_id)
     .maybeSingle();
 
   const client = clientRow as {
-    id: string; name: string; phone: string | null; email: string | null;
+    id: string; name: string; phone: string | null; cell: string | null; email: string | null;
     billing_address: string | null; billing_city: string | null; billing_postal: string | null;
   } | null;
 
@@ -209,6 +215,15 @@ export default async function AdresseFichePage({
             </p>
           )}
         </div>
+        {/* Bouton historique client — admin seulement */}
+        {isAdmin && client && (
+          <HistoryDrawer
+            tableName="clients"
+            recordId={client.id}
+            label={`${client.name} — fiche client`}
+            triggerClassName="p-1.5 rounded-md border border-border hover:bg-muted"
+          />
+        )}
       </div>
 
       {/* Contact (client actuel) */}
@@ -229,6 +244,15 @@ export default async function AdresseFichePage({
                 >
                   <Phone className="size-3.5" />
                   {client.phone}
+                </a>
+              )}
+              {client.cell && (
+                <a
+                  href={`tel:${client.cell}`}
+                  className="inline-flex items-center gap-1.5 hover:text-foreground hover:underline"
+                >
+                  <Phone className="size-3.5" />
+                  {client.cell} <span className="text-xs">(cell)</span>
                 </a>
               )}
               {client.email && <span>{client.email}</span>}
@@ -273,7 +297,7 @@ export default async function AdresseFichePage({
           ) : (
             <div className="divide-y divide-border">
               {jobs.map((job) => (
-                <JobCard key={job.id} job={job} />
+                <JobCard key={job.id} job={job} isAdmin={isAdmin} />
               ))}
             </div>
           )}
@@ -367,7 +391,7 @@ function cancellationReasonLabel(reason: string | null): string | null {
   return CANCELLATION_REASONS.find((r) => r.value === reason)?.label ?? reason;
 }
 
-function JobCard({ job }: { job: JobRow }) {
+function JobCard({ job, isAdmin = false }: { job: JobRow; isAdmin?: boolean }) {
   const fiche = jobFicheLink(job.status, job.id);
   const isAnnule = job.status === "annule";
   const reasonLabel = cancellationReasonLabel(job.cancellation_reason);
@@ -397,13 +421,23 @@ function JobCard({ job }: { job: JobRow }) {
             {format(parseISO(job.preferred_date), "d MMM yyyy", { locale: fr })}
           </span>
         )}
-        <Link
-          href={fiche.href}
-          className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 ml-auto shrink-0 text-xs gap-1")}
-        >
-          Ouvrir
-          <ExternalLink className="size-3" />
-        </Link>
+        <div className="ml-auto flex items-center gap-1 shrink-0">
+          {isAdmin && (
+            <HistoryDrawer
+              tableName="jobs"
+              recordId={job.id}
+              label={`Job #${job.quote_number ?? "—"} — ${statusLabel(job.status)}`}
+              triggerClassName="p-1 rounded"
+            />
+          )}
+          <Link
+            href={fiche.href}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }), "h-7 text-xs gap-1")}
+          >
+            Ouvrir
+            <ExternalLink className="size-3" />
+          </Link>
+        </div>
       </div>
 
       {/* Infos de clôture — visible seulement si annulé avec une raison */}

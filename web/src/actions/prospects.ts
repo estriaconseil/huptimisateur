@@ -19,6 +19,7 @@ function n(s: string | null | undefined): string | null {
 export async function createProspect(input: {
   name: string;
   phone?: string | null;
+  cell?: string | null;
   email?: string | null;
   /** Adresse de facturation */
   billing_address?: string | null;
@@ -52,7 +53,9 @@ export async function createProspect(input: {
 
   // Champs obligatoires pour tout nouveau prospect
   if (!input.name?.trim()) return { ok: false, message: "Le nom du client est requis." };
-  if (!n(input.phone)) return { ok: false, message: "Le numéro de téléphone est requis." };
+  if (!n(input.phone) && !n(input.cell)) {
+    return { ok: false, message: "Un numéro de téléphone ou de cellulaire est requis." };
+  }
   const emailTrimmed = input.email?.trim() ?? "";
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailTrimmed);
   if (!emailValid) return { ok: false, message: "Le courriel est requis et doit être valide (ex. nom@domaine.com)." };
@@ -83,6 +86,7 @@ export async function createProspect(input: {
     .insert({
       name: input.name.trim(),
       phone: n(input.phone),
+      cell: n(input.cell),
       email: n(input.email),
       billing_address: billingAddr,
       billing_city: n(input.billing_city),
@@ -319,8 +323,8 @@ export async function createJobOnExistingAddress(input: {
    * Si absent en mode duplicate, prend automatiquement la dernière soumission du lieu.
    */
   sourceQuoteId?: string | null;
-  newOwner?: { name: string; phone?: string | null; email?: string | null };
-  enrichWith?: { phone?: string | null; email?: string | null };
+  newOwner?: { name: string; phone?: string | null; cell?: string | null; email?: string | null };
+  enrichWith?: { phone?: string | null; cell?: string | null; email?: string | null };
 }): Promise<JobOk | JobErr> {
   const supabase = await createServerSupabaseClient();
 
@@ -331,6 +335,7 @@ export async function createJobOnExistingAddress(input: {
   type AddrClientRow = {
     id: string;
     phone: string | null;
+    cell: string | null;
     email: string | null;
     billing_address: string | null;
     billing_city: string | null;
@@ -350,7 +355,7 @@ export async function createJobOnExistingAddress(input: {
 
   const { data: addrRowRaw, error: addrErr } = await supabase
     .from("installation_addresses")
-    .select("id, address_formatted, city, postal_code, lat, lng, client_id, clients ( id, phone, email, billing_address, billing_city, billing_postal )")
+    .select("id, address_formatted, city, postal_code, lat, lng, client_id, clients ( id, phone, cell, email, billing_address, billing_city, billing_postal )")
     .eq("id", input.installationAddressId)
     .single();
 
@@ -396,6 +401,7 @@ export async function createJobOnExistingAddress(input: {
       .insert({
         name: input.newOwner.name.trim(),
         phone: n(input.newOwner.phone),
+        cell: n(input.newOwner.cell),
         email: n(input.newOwner.email),
         billing_address: existingClient?.billing_address ?? n(addrRow.address_formatted),
         billing_city: existingClient?.billing_city ?? n(addrRow.city),
@@ -429,6 +435,7 @@ export async function createJobOnExistingAddress(input: {
     // Même personne : compléter les champs vides seulement
     const enrichPatch: Record<string, string> = {};
     if (!existingClient.phone && n(input.enrichWith.phone)) enrichPatch.phone = n(input.enrichWith.phone)!;
+    if (!existingClient.cell && n(input.enrichWith.cell)) enrichPatch.cell = n(input.enrichWith.cell)!;
     if (!existingClient.email && n(input.enrichWith.email)) enrichPatch.email = n(input.enrichWith.email)!;
     if (Object.keys(enrichPatch).length > 0) {
       await supabase.from("clients").update(enrichPatch).eq("id", existingClient.id);

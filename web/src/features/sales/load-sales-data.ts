@@ -27,7 +27,7 @@ export async function loadSalesPageData(
 
   let apptQuery = supabase
     .from("sales_appointments")
-    .select("id, salesperson_id, client_id, installation_address_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, address_formatted, city ), installation_addresses!installation_address_id ( city, address_formatted )")
+    .select("id, salesperson_id, client_id, installation_address_id, client_lat, client_lng, scheduled_date, start_time, status, notes, quote_id, clients ( name, phone, cell, address_formatted, city ), installation_addresses!installation_address_id ( city, address_formatted )")
     .gte("scheduled_date", weekDates[0])
     .lte("scheduled_date", weekDates[weekDates.length - 1])
     .neq("status", "cancelled");
@@ -179,7 +179,7 @@ export async function loadSalesPageData(
         status: string;
         notes: string | null;
         quote_id: string | null;
-        clients: { name: string; phone: string | null; address_formatted: string | null; city: string | null } | { name: string; phone: string | null; address_formatted: string | null; city: string | null }[] | null;
+        clients: { name: string; phone: string | null; cell: string | null; address_formatted: string | null; city: string | null } | { name: string; phone: string | null; cell: string | null; address_formatted: string | null; city: string | null }[] | null;
         installation_addresses: { city: string | null; address_formatted: string | null } | { city: string | null; address_formatted: string | null }[] | null;
       };
       const c = Array.isArray(raw.clients) ? raw.clients[0] : raw.clients;
@@ -199,6 +199,7 @@ export async function loadSalesPageData(
         installation_address_id: raw.installation_address_id ?? null,
         client_name: c?.name ?? "—",
         client_phone: c?.phone ?? null,
+        client_cell: c?.cell ?? null,
         client_address: inst?.address_formatted ?? c?.address_formatted ?? null,
         client_city: clientCity,
         client_lat: raw.client_lat,

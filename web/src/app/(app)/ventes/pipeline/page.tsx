@@ -1,5 +1,5 @@
 import { createServerSupabaseClient } from "@/lib/supabase/server";
-import { getCurrentSalespersonId } from "@/lib/supabase/profile";
+import { getCurrentSalespersonId, getCurrentProfile } from "@/lib/supabase/profile";
 import { PipelineClient } from "@/features/sales/pipeline-client";
 import type { Salesperson } from "@/types/domain";
 import { enrichPipelineRows } from "@/actions/pipeline";
@@ -19,7 +19,11 @@ export default async function VentesPipelinePage({
   const highlightJobId = sp.highlight ?? null;
 
   const supabase = await createServerSupabaseClient();
-  const currentSalespersonId = await getCurrentSalespersonId();
+  const [currentSalespersonId, profile] = await Promise.all([
+    getCurrentSalespersonId(),
+    getCurrentProfile(),
+  ]);
+  const isAdmin = profile?.role === "admin";
 
   let nonEnAttenteQ = supabase
     .from("jobs")
@@ -82,6 +86,7 @@ export default async function VentesPipelinePage({
         openJobId={openJobId}
         highlightJobId={highlightJobId}
         enAttenteTotal={enAttenteTotal ?? 0}
+        isAdmin={isAdmin}
       />
     </div>
   );

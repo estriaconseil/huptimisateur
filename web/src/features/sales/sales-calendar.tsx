@@ -83,9 +83,11 @@ type Props = {
   highlightAppointmentId?: string | null;
   /** null = admin/secrétaire. string = vendeur connecté. */
   currentSalespersonId?: string | null;
+  /** true → afficher l'icône Historique sur les cartes RDV. */
+  isAdmin?: boolean;
 };
 
-export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, currentSalespersonId = null }: Props) {
+export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, currentSalespersonId = null, isAdmin = false }: Props) {
   const router = useRouter();
   const [dialogSlot, setDialogSlot] = useState<PendingSlot>(null);
   const [activeAppt, setActiveAppt] = useState<AppointmentRow | null>(null);
@@ -329,16 +331,22 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
 
       {salespeople.length > 0 && (
         <div className="max-h-[calc(100dvh-11rem)] overflow-auto rounded-xl border bg-background shadow-sm">
-          <table className="w-full min-w-[800px] border-collapse text-sm">
+          <table className="w-full min-w-[800px] table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-32" />
+              {weekDates.map((date) => (
+                <col key={date} />
+              ))}
+            </colgroup>
             <thead>
               <tr className="bg-muted/50">
-                <th className="sticky top-0 left-0 z-30 px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-32 border-b border-r bg-muted shadow-[1px_1px_0_0_hsl(var(--border))]">
+                <th className="sticky top-0 left-0 z-30 px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground border-b border-r bg-muted shadow-[1px_1px_0_0_hsl(var(--border))]">
                   Vendeur / Heure
                 </th>
                 {weekDates.map((date, i) => (
                   <th
                     key={date}
-                    className="sticky top-0 z-20 px-2 py-2.5 text-center text-xs font-semibold text-muted-foreground border-b border-r last:border-r-0 min-w-[140px] bg-muted shadow-[0_1px_0_0_hsl(var(--border))]"
+                    className="sticky top-0 z-20 px-2 py-2.5 text-center text-xs font-semibold text-muted-foreground border-b border-r last:border-r-0 bg-muted shadow-[0_1px_0_0_hsl(var(--border))]"
                   >
                     <div className="text-muted-foreground/70">{DAY_NAMES[i]}</div>
                     <div className="text-foreground font-bold">
@@ -424,17 +432,17 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
                           // Créneau bloqué
                           if (block) {
                             return (
-                              <td key={date} className={cn("px-2 py-1 border-r last:border-r-0 h-14 align-middle text-center cursor-pointer", BLOCK_COLORS[block.block_type])}>
+                              <td key={date} className={cn("px-2 py-1 border-r last:border-r-0 h-14 align-middle text-center cursor-pointer overflow-hidden", BLOCK_COLORS[block.block_type])}>
                                 <button
                                   type="button"
-                                  className="w-full h-full text-center"
+                                  className="w-full h-full min-w-0 text-center overflow-hidden"
                                   title="Cliquer pour retirer le blocage"
                                   onClick={() => {
                                     setBlockDeleteError(null);
                                     setBlockToDelete(block);
                                   }}
                                 >
-                                  <div className="text-[10px] font-medium">{BLOCK_LABELS[block.block_type]}</div>
+                                  <div className="text-[10px] font-medium truncate">{BLOCK_LABELS[block.block_type]}</div>
                                   {block.notes && <div className="text-[9px] opacity-70 truncate">{block.notes}</div>}
                                 </button>
                               </td>
@@ -445,7 +453,7 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
                             <td
                               key={date}
                               className={cn(
-                                "px-2 py-1 border-r last:border-r-0 h-14 align-top",
+                                "px-2 py-1 border-r last:border-r-0 h-14 align-top overflow-hidden",
                                 !sp.active && !appt && "bg-muted/20"
                               )}
                             >
@@ -455,29 +463,27 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
                                     type="button"
                                     onClick={() => setActiveAppt(appt)}
                                     className={cn(
-                                      "w-full h-full text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
+                                      "w-full h-full min-w-0 text-left rounded-md border px-2 py-1 text-xs leading-tight transition-opacity hover:opacity-80 overflow-hidden",
                                       highlightId === appt.id && "ring-2 ring-primary ring-offset-1",
                                       appt.quote_id
                                         ? "bg-emerald-50 border-emerald-300 text-emerald-900"
                                         : (STATUS_COLORS[appt.status] ?? "bg-muted border-border")
                                     )}
                                   >
-                                    <div className="flex items-start justify-between gap-1">
-                                      <div className="min-w-0">
-                                        <div className="font-semibold truncate flex items-center gap-1">
-                                          <span className="truncate">{appt.client_name}</span>
-                                          {appt.quote_id && (
-                                            <span title="Soumission commencée">
-                                              <FileText className="shrink-0 size-3 opacity-70" />
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="opacity-70 truncate">
-                                          {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
-                                        </div>
+                                    <div className="min-w-0 space-y-0.5">
+                                      <div className="font-semibold truncate flex items-center gap-1">
+                                        <span className="truncate">{appt.client_name}</span>
+                                        {appt.quote_id && (
+                                          <span title="Soumission commencée">
+                                            <FileText className="shrink-0 size-3 opacity-70" />
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="opacity-70 truncate">
+                                        {appt.client_city ?? cityFromAddress(appt.client_address) ?? "—"}
                                       </div>
                                       {appt.notes?.trim() && (
-                                        <div className="shrink-0 text-[11px] font-bold text-foreground text-right leading-tight">
+                                        <div className="truncate text-[11px] font-bold text-foreground leading-tight">
                                           {appt.notes.trim()}
                                         </div>
                                       )}
@@ -563,6 +569,7 @@ export function SalesCalendar({ data, weekStartLabel, highlightAppointmentId, cu
           appointment={activeAppt}
           salespeople={salespeople}
           currentSalespersonId={currentSalespersonId}
+          isAdmin={isAdmin}
         />
       )}
 

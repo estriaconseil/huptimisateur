@@ -333,7 +333,20 @@ export async function moveAppointment(
     }
     return { ok: false, message: error.message };
   }
+
+  // RDV replanifié aujourd'hui ou plus tard → retirer le drapeau auto « RDV passé »
+  // (conserve a_suivre / a_relancer s'ils ont été posés manuellement).
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (newDate >= todayStr) {
+    await supabase
+      .from("jobs")
+      .update({ follow_up_flag: null })
+      .eq("appointment_id", appointmentId)
+      .eq("follow_up_flag", "rdv_passe");
+  }
+
   revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
   return { ok: true };
 }
 
@@ -2274,6 +2287,7 @@ export type JobQuickData = {
   follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
   client_name: string;
   client_phone: string | null;
+  client_cell: string | null;
   /** Note visible sur la tuile du calendrier des ventes (sales_appointments.notes). */
   appt_notes: string | null;
 };
@@ -2286,7 +2300,7 @@ export async function getJobForEdit(
 
   const { data, error } = await supabase
     .from("jobs")
-    .select("id, internal_notes, sales_note, follow_up_date, follow_up_flag, clients ( name, phone )")
+    .select("id, internal_notes, sales_note, follow_up_date, follow_up_flag, clients ( name, phone, cell )")
     .eq("id", jobId)
     .maybeSingle();
 
@@ -2298,7 +2312,7 @@ export async function getJobForEdit(
     sales_note: string | null;
     follow_up_date: string | null;
     follow_up_flag: string | null;
-    clients: { name: string; phone: string | null } | { name: string; phone: string | null }[] | null;
+    clients: { name: string; phone: string | null; cell: string | null } | { name: string; phone: string | null; cell: string | null }[] | null;
   };
   const client = Array.isArray(raw.clients) ? raw.clients[0] : raw.clients;
 
@@ -2312,6 +2326,7 @@ export async function getJobForEdit(
       follow_up_flag: raw.follow_up_flag as JobQuickData["follow_up_flag"],
       client_name: client?.name ?? "—",
       client_phone: client?.phone ?? null,
+      client_cell: client?.cell ?? null,
       appt_notes: null, // sera rempli depuis le RDV dans la modale
     },
   };
@@ -2327,6 +2342,7 @@ export async function updateJobQuick(
     follow_up_flag: "a_suivre" | "a_relancer" | "rdv_passe" | null;
     client_name: string;
     client_phone: string | null;
+    client_cell: string | null;
     appt_notes: string | null;
   },
   appointmentId?: string
@@ -2352,13 +2368,14 @@ export async function updateJobQuick(
 
   if (jobErr) return { ok: false, message: jobErr.message };
 
-  // Mettre à jour nom/téléphone du client si fournis
+  // Mettre à jour nom/téléphone/cellulaire du client si fournis
   if (jobRow?.client_id) {
     await supabase
       .from("clients")
       .update({
         name: data.client_name || undefined,
         phone: data.client_phone || null,
+        cell: data.client_cell || null,
       })
       .eq("id", jobRow.client_id as string);
   }

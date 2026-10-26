@@ -230,6 +230,7 @@ const STATUS_INFO: Record<QuoteStatus, { label: string; color: string }> = {
 type DefaultClient = {
   name: string;
   phone: string | null;
+  cell: string | null;
   email: string | null;
   /** Billing address (adresse de facturation) */
   address: string | null;
@@ -384,7 +385,7 @@ export function QuoteForm({
     client_name: initialQuote?.client_name ?? defaultClient?.name ?? "",
     client_address: initialQuote?.client_address ?? defaultClient?.address ?? "",
     client_phone: initialQuote?.client_phone ?? defaultClient?.phone ?? "",
-    client_cell: initialQuote?.client_cell ?? "",
+    client_cell: initialQuote?.client_cell ?? defaultClient?.cell ?? "",
     client_email: initialQuote?.client_email ?? defaultClient?.email ?? "",
     has_subsidy: initialQuote?.has_subsidy ?? false,
     will_call_back: initialQuote?.will_call_back ?? false,
@@ -806,17 +807,38 @@ export function QuoteForm({
     return () => document.removeEventListener("click", onClick, true);
   }, [isDirty]);
 
+  // ── Garde-fou : bouton Retour du navigateur (popstate) ────────────────────
+  useEffect(() => {
+    if (!isDirty) return;
+    // Pousser un état fantôme pour intercepter le premier "retour"
+    window.history.pushState(null, "", window.location.href);
+    const onPopState = () => {
+      if (allowNextNav.current) {
+        allowNextNav.current = false;
+        return;
+      }
+      // Repousser l'état pour bloquer la navigation
+      window.history.pushState(null, "", window.location.href);
+      // Afficher le dialogue avec un marqueur spécial
+      setLeaveHref("__back__");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [isDirty]);
+
   const confirmLeaveWithoutSave = () => {
     if (!leaveHref) return;
+    const isBack = leaveHref === "__back__";
     const href = leaveHref;
     setLeaveHref(null);
     setIsDirty(false);
     allowNextNav.current = true;
-    router.push(href);
+    if (isBack) { router.back(); } else { router.push(href); }
   };
 
   const confirmLeaveWithSave = () => {
     if (!leaveHref) return;
+    const isBack = leaveHref === "__back__";
     const href = leaveHref;
     startTransition(async () => {
       const res = await saveQuote();
@@ -826,8 +848,9 @@ export function QuoteForm({
         return;
       }
       setLeaveHref(null);
+      setIsDirty(false);
       allowNextNav.current = true;
-      router.push(href);
+      if (isBack) { router.back(); } else { router.push(href); }
     });
   };
 
@@ -2180,6 +2203,7 @@ export function QuoteForm({
               ...f,
               client_name: data.client_name || f.client_name,
               client_phone: data.client_phone || f.client_phone,
+              client_cell: data.client_cell || f.client_cell,
               client_email: data.client_email || f.client_email,
               client_address: data.billing_address,
             }));

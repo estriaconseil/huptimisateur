@@ -28,7 +28,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
     .from("jobs")
     .select(
       `id, status, appointment_id, salesperson_id, sales_note, installation_address_id,
-       clients ( id, name, phone, email, billing_address ),
+       clients ( id, name, phone, cell, email, billing_address ),
        installation_addresses!installation_address_id(address_formatted, city)`
     )
     .eq("id", jobId)
@@ -52,6 +52,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
     id: string;
     name: string;
     phone: string | null;
+    cell: string | null;
     email: string | null;
     billing_address: string | null;
   } | null;
@@ -133,6 +134,7 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
               : {
                   name: client?.name ?? "",
                   phone: client?.phone ?? null,
+                  cell: client?.cell ?? null,
                   email: client?.email ?? null,
                   address: client?.billing_address ?? null,
                   install_address: jobInstall?.address_formatted ?? null,

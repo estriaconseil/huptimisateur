@@ -67,6 +67,7 @@ export interface Client {
   name: string;
   email: string | null;
   phone: string | null;
+  cell: string | null;
   /** Adresse de facturation (nouvelle) */
   billing_address: string | null;
   billing_city: string | null;

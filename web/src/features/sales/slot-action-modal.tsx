@@ -256,6 +256,7 @@ function NewClientTab({
   const [form, setForm] = useState({
     client_name: "",
     client_phone: "",
+    client_cell: "",
     client_email: "",
     ...emptyDualAddress(),
     installation_info: "",
@@ -301,7 +302,10 @@ function NewClientTab({
 
   const findSlots = async () => {
     if (!form.client_name.trim()) { setError("Le nom du client est requis."); return; }
-    if (!form.client_phone.trim()) { setError("Le numéro de téléphone est requis."); return; }
+    if (!form.client_phone.trim() && !form.client_cell.trim()) {
+      setError("Un numéro de téléphone ou de cellulaire est requis.");
+      return;
+    }
     if (!form.client_email.trim() || !form.client_email.includes("@")) { setError("Le courriel est requis."); return; }
     if (!form.install_lat || !form.install_lng) { setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google."); return; }
     const billing = form.same_address ? form.install_address : form.billing_address;
@@ -336,11 +340,11 @@ function NewClientTab({
       mode: "blank",
       newOwner:
         ownerChoice === "new" && form.client_name.trim()
-          ? { name: form.client_name.trim(), phone: form.client_phone || null, email: form.client_email || null }
+          ? { name: form.client_name.trim(), phone: form.client_phone || null, cell: form.client_cell || null, email: form.client_email || null }
           : undefined,
       enrichWith:
         ownerChoice === "same"
-          ? { phone: form.client_phone || null, email: form.client_email || null }
+          ? { phone: form.client_phone || null, cell: form.client_cell || null, email: form.client_email || null }
           : undefined,
     });
 
@@ -381,6 +385,7 @@ function NewClientTab({
         const prospectRes = await createProspect({
           name: form.client_name,
           phone: form.client_phone || null,
+          cell: form.client_cell || null,
           email: form.client_email || null,
           billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
           billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
@@ -440,15 +445,26 @@ function NewClientTab({
             />
           </div>
           <div>
-            <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
+            <label className={lbl}>Cellulaire <span className="text-destructive text-base font-bold leading-none">*</span></label>
             <input
-              type="email"
+              type="tel"
               className={inp}
-              value={form.client_email}
-              onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))}
-              placeholder="marie@exemple.com"
+              value={form.client_cell}
+              onChange={(e) => setForm((f) => ({ ...f, client_cell: e.target.value }))}
+              placeholder="819-555-5678"
             />
           </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground -mt-1">Au moins un des deux numéros est requis.</p>
+        <div>
+          <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
+          <input
+            type="email"
+            className={inp}
+            value={form.client_email}
+            onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))}
+            placeholder="marie@exemple.com"
+          />
         </div>
         <DualAddressBlock state={addrState} onChange={setAddr} inp={inp} lbl={lbl} required />
         {addrMatches && addrMatches.length > 0 && (

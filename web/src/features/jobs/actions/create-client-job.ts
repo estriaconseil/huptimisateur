@@ -56,6 +56,7 @@ export async function createClientAndJob(
       clientId = match.id;
       const patch: Record<string, string> = {};
       if (!match.phone && emptyToNull(v.phone)) patch.phone = emptyToNull(v.phone)!;
+      if (!(match as { cell?: string | null }).cell && emptyToNull(v.cell)) patch.cell = emptyToNull(v.cell)!;
       if (!match.email && v.email) patch.email = v.email;
       if (Object.keys(patch).length > 0) {
         await supabase.from("clients").update(patch).eq("id", match.id);
@@ -70,6 +71,7 @@ export async function createClientAndJob(
         name: v.name,
         email: v.email === "" ? null : v.email,
         phone: emptyToNull(v.phone),
+        cell: emptyToNull(v.cell),
         billing_address: billingAddr,
         billing_city: emptyToNull(v.billing_city ?? resolvedInstallCity),
         billing_postal: emptyToNull(v.billing_postal ?? resolvedInstallPostal),

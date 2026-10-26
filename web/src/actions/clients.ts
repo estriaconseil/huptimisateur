@@ -19,6 +19,7 @@ export type ClientSearchResult = {
   id: string;
   name: string;
   phone: string | null;
+  cell: string | null;
   email: string | null;
   billing_address: string | null;
   billing_city: string | null;
@@ -44,7 +45,7 @@ export type ClientSearchResult = {
 function mapClientRows(data: unknown[]): ClientSearchResult[] {
   return data.map((r) => {
     const row = r as {
-      id: string; name: string; phone: string | null; email: string | null;
+      id: string; name: string; phone: string | null; cell: string | null; email: string | null;
       billing_address: string | null; billing_city: string | null; billing_postal: string | null;
       installation_addresses: unknown;
       jobs: unknown;
@@ -71,6 +72,7 @@ function mapClientRows(data: unknown[]): ClientSearchResult[] {
       id: row.id,
       name: row.name,
       phone: row.phone,
+      cell: row.cell,
       email: row.email,
       billing_address: row.billing_address,
       billing_city: row.billing_city,
@@ -81,7 +83,7 @@ function mapClientRows(data: unknown[]): ClientSearchResult[] {
   });
 }
 
-const CLIENT_DETAIL_SELECT = `id, name, phone, email, billing_address, billing_city, billing_postal,
+const CLIENT_DETAIL_SELECT = `id, name, phone, cell, email, billing_address, billing_city, billing_postal,
   installation_addresses ( id, label, address_formatted, city, postal_code, lat, lng ),
   jobs ( id, status, installation_address_id, quotes ( quote_number ) )`;
 
@@ -212,6 +214,7 @@ export async function updateClient(
       name: data.name,
       email: data.email || null,
       phone: data.phone || null,
+      cell: data.cell || null,
       billing_address: data.billing_address || null,
       billing_city: data.billing_city || null,
       billing_postal: data.billing_postal || null,

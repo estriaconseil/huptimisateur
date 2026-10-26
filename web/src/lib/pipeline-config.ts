@@ -5,7 +5,7 @@ export const PIPELINE_PAGE_SIZE = 40;
 export const JOB_SELECT =
   "id, status, follow_up_flag, appointment_id, salesperson_id, salesperson_locked, " +
   "sales_note, internal_notes, follow_up_date, created_at, installation_address_id, " +
-  "clients ( id, name, phone, email, city, billing_address, billing_city, billing_postal ), " +
+  "clients ( id, name, phone, cell, email, city, billing_address, billing_city, billing_postal ), " +
   "salespeople ( name ), " +
   "installation_addresses!installation_address_id ( lat, lng, address_formatted, city )";
 

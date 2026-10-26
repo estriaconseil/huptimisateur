@@ -54,6 +54,7 @@ import { TravelDuration, formatTravelDurationLabel } from "@/lib/format-travel";
 import { isPastYmd, todayYmd } from "@/lib/address";
 import { defaultBusinessWeekMonday } from "@/lib/dispatch/business-week";
 import { updateJobStatus, updateJobFlag } from "@/actions/jobs";
+import { HistoryDrawer } from "@/components/history-drawer";
 import { statusLabel, statusColor, flagColor, flagLabel } from "@/lib/job-status";
 import { cn } from "@/lib/utils";
 import { CANCELLATION_REASONS } from "@/types/domain";
@@ -90,6 +91,7 @@ export type PipelineJob = {
     id: string;
     name: string;
     phone: string | null;
+    cell: string | null;
     email: string | null;
     city: string | null;
     billing_address: string | null;
@@ -105,9 +107,25 @@ const DAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven"];
 
 // ── Confirmation d'abandon réutilisable ───────────────────────────────────────
 
-function AbandonConfirm({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+export function AbandonConfirm({
+  onConfirm,
+  onCancel,
+  /** fixed = plein écran (plus visible au clic hors modale). absolute = dans la carte. */
+  variant = "absolute",
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  variant?: "absolute" | "fixed";
+}) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/90 backdrop-blur-sm">
+    <div
+      className={
+        variant === "fixed"
+          ? "fixed inset-0 z-[70] flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          : "absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/90 backdrop-blur-sm"
+      }
+      onClick={(e) => e.stopPropagation()}
+    >
       <div className="mx-6 rounded-xl border bg-background shadow-lg p-5 space-y-3 max-w-xs w-full">
         <p className="text-sm font-semibold text-center">Abandonner la saisie?</p>
         <p className="text-xs text-muted-foreground text-center">Les informations saisies seront perdues.</p>
@@ -326,7 +344,7 @@ export function QuickProspectModal({
   const [slots, setSlots] = useState<ProspectSlotResult[]>([]);
   const effectiveSalesperson = currentSalespersonId ?? initialSalespersonId ?? "";
   const [form, setForm] = useState({
-    name: "", phone: "", email: "",
+    name: "", phone: "", cell: "", email: "",
     ...emptyDualAddress(),
     installation_info: "",
     salesperson_id: effectiveSalesperson,
@@ -365,17 +383,39 @@ export function QuickProspectModal({
     install_lat: form.install_lat, install_lng: form.install_lng,
   };
 
-  const isDirty = !!(form.name || form.phone || form.email || form.billing_address || form.install_address || form.installation_info);
+  /** Toute saisie utilisateur (hors pré-sélection vendeur seule) = dirty. */
+  const isDirty = !!(
+    form.name.trim() ||
+    form.phone.trim() ||
+    form.cell.trim() ||
+    form.email.trim() ||
+    form.billing_address.trim() ||
+    form.install_address.trim() ||
+    form.installation_info.trim() ||
+    (form.salesperson_id && form.salesperson_id !== effectiveSalesperson) ||
+    (form.salesperson_locked !== !!effectiveSalesperson)
+  );
 
   const tryClose = () => {
-    if (step === "slots" || !isDirty) { onClose(); return; }
+    // Prospect déjà créé → on peut fermer sans confirmation
+    if (step === "slots" || step === "loading-slots") {
+      onClose();
+      return;
+    }
+    if (!isDirty) {
+      onClose();
+      return;
+    }
     setShowAbandon(true);
   };
 
   /** Crée le prospect, retourne le jobId ou null en cas d'erreur */
   const doCreate = async (): Promise<string | null> => {
     if (!form.name.trim()) { setError("Le nom est requis."); return null; }
-    if (!form.phone.trim()) { setError("Le numéro de téléphone est requis."); return null; }
+    if (!form.phone.trim() && !form.cell.trim()) {
+      setError("Un numéro de téléphone ou de cellulaire est requis.");
+      return null;
+    }
     if (!form.email.trim() || !form.email.includes("@")) { setError("Le courriel est requis."); return null; }
     if (!form.install_address.trim() || form.install_lat == null) {
       setError("L'adresse d'installation est requise — sélectionnez-la dans la liste Google.");
@@ -390,6 +430,7 @@ export function QuickProspectModal({
     const res = await createProspect({
       name: form.name,
       phone: form.phone || null,
+      cell: form.cell || null,
       email: form.email || null,
       billing_address: (form.same_address ? form.install_address : form.billing_address) || null,
       billing_city: (form.same_address ? form.install_city : form.billing_city) || null,
@@ -456,11 +497,11 @@ export function QuickProspectModal({
         mode: "blank",
         newOwner:
           ownerChoice === "new" && form.name.trim()
-            ? { name: form.name.trim(), phone: form.phone || null, email: form.email || null }
+            ? { name: form.name.trim(), phone: form.phone || null, cell: form.cell || null, email: form.email || null }
             : undefined,
         enrichWith:
           ownerChoice === "same"
-            ? { phone: form.phone || null, email: form.email || null }
+            ? { phone: form.phone || null, cell: form.cell || null, email: form.email || null }
             : undefined,
       });
       if (!res.ok) { setError(res.message); return; }
@@ -501,13 +542,18 @@ export function QuickProspectModal({
       <div className={`relative bg-background rounded-xl shadow-xl w-full mx-4 max-h-[90vh] overflow-y-auto transition-[max-width] duration-200 ${step === "slots" ? "max-w-3xl" : "max-w-md"}`}>
 
         {showAbandon && (
-          <AbandonConfirm onConfirm={onClose} onCancel={() => setShowAbandon(false)} />
+          <AbandonConfirm
+            variant="fixed"
+            onConfirm={onClose}
+            onCancel={() => setShowAbandon(false)}
+          />
         )}
 
         {/* En-tête */}
         <div className="flex items-center justify-between px-6 pt-6 pb-3">
           <div>
             {step === "form" && <h2 className="text-lg font-semibold">Nouveau prospect</h2>}
+            {step === "intercept" && <h2 className="text-lg font-semibold">Adresse déjà connue</h2>}
             {step === "loading-slots" && <h2 className="text-lg font-semibold">Recherche des créneaux…</h2>}
             {step === "slots" && (
               <>
@@ -545,9 +591,14 @@ export function QuickProspectModal({
                 <input type="tel" className={inp} value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="819-555-1234" />
               </div>
               <div>
-                <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
-                <input type="email" className={inp} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="marie@example.com" />
+                <label className={lbl}>Cellulaire <span className="text-destructive text-base font-bold leading-none">*</span></label>
+                <input type="tel" className={inp} value={form.cell} onChange={(e) => setForm((f) => ({ ...f, cell: e.target.value }))} placeholder="819-555-5678" />
               </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground -mt-1">Au moins un des deux numéros est requis.</p>
+            <div>
+              <label className={lbl}>Courriel <span className="text-destructive text-base font-bold leading-none">*</span></label>
+              <input type="email" className={inp} value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="marie@example.com" />
             </div>
             <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} required />
             {salespeople.length > 0 && (
@@ -826,6 +877,7 @@ type EditModalStep = "edit" | "loading-slots" | "slots";
 export type ProspectEditSaved = {
   client_name: string;
   client_phone: string;
+  client_cell: string;
   client_email: string;
   billing_address: string;
   install_address: string;
@@ -838,6 +890,7 @@ export function ProspectEditModal({
   onBooked,
   onSaved,
   allowSlotBooking = true,
+  isAdmin = false,
 }: {
   job: PipelineJob;
   salespeople: Salesperson[];
@@ -846,6 +899,8 @@ export function ProspectEditModal({
   onSaved?: (data: ProspectEditSaved) => void;
   /** false = ouvert depuis la soumission : pas de prise de RDV (évite de quitter la page). */
   allowSlotBooking?: boolean;
+  /** Affiche le bouton Historique (admin seulement). */
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -860,6 +915,7 @@ export function ProspectEditModal({
   const [form, setForm] = useState({
     client_name:       client?.name ?? "",
     client_phone:      client?.phone ?? "",
+    client_cell:       client?.cell ?? "",
     client_email:      client?.email ?? "",
     billing_address:   client?.billing_address ?? "",
     billing_city:      client?.billing_city ?? "",
@@ -890,6 +946,7 @@ export function ProspectEditModal({
   const isDirty =
     form.client_name       !== (client?.name ?? "") ||
     form.client_phone      !== (client?.phone ?? "") ||
+    form.client_cell       !== (client?.cell ?? "") ||
     form.client_email      !== (client?.email ?? "") ||
     form.billing_address   !== (client?.billing_address ?? "") ||
     form.billing_city      !== (client?.billing_city ?? "") ||
@@ -924,6 +981,7 @@ export function ProspectEditModal({
         name: form.client_name,
         email: form.client_email,
         phone: form.client_phone,
+        cell: form.client_cell,
         billing_address: form.same_address ? form.install_address : form.billing_address,
         billing_city: form.same_address ? form.install_city : form.billing_city,
         billing_postal: form.same_address ? form.install_postal : form.billing_postal,
@@ -968,6 +1026,7 @@ export function ProspectEditModal({
     onSaved?.({
       client_name: form.client_name,
       client_phone: form.client_phone,
+      client_cell: form.client_cell,
       client_email: form.client_email,
       billing_address: form.same_address ? form.install_address : form.billing_address,
       install_address: form.install_address,
@@ -1068,6 +1127,21 @@ export function ProspectEditModal({
                 Retour
               </button>
             )}
+            {isAdmin && step === "edit" && (
+              <HistoryDrawer
+                sources={[
+                  { tableName: "jobs", recordId: job.id, sourceLabel: "Prospect" },
+                  ...(client?.id
+                    ? [{ tableName: "clients", recordId: client.id, sourceLabel: "Client" }]
+                    : []),
+                  ...(job.appointment_id
+                    ? [{ tableName: "sales_appointments", recordId: job.appointment_id, sourceLabel: "RDV" }]
+                    : []),
+                ]}
+                label={form.client_name || client?.name || "Prospect"}
+                variant="button"
+              />
+            )}
             <button onClick={tryClose} className="text-muted-foreground hover:text-foreground">
               <X className="size-5" />
             </button>
@@ -1089,9 +1163,13 @@ export function ProspectEditModal({
                   <input type="tel" className={inp} value={form.client_phone} onChange={(e) => setForm((f) => ({ ...f, client_phone: e.target.value }))} placeholder="819-555-1234" />
                 </div>
                 <div>
-                  <label className={lbl}>Courriel</label>
-                  <input type="email" className={inp} value={form.client_email} onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))} placeholder="marie@exemple.com" />
+                  <label className={lbl}>Cellulaire</label>
+                  <input type="tel" className={inp} value={form.client_cell} onChange={(e) => setForm((f) => ({ ...f, client_cell: e.target.value }))} placeholder="819-555-5678" />
                 </div>
+              </div>
+              <div>
+                <label className={lbl}>Courriel</label>
+                <input type="email" className={inp} value={form.client_email} onChange={(e) => setForm((f) => ({ ...f, client_email: e.target.value }))} placeholder="marie@exemple.com" />
               </div>
               <DualAddressBlock state={addrState} onChange={setAddr} disabled={pending} inp={inp} lbl={lbl} required />
             </div>
@@ -1780,6 +1858,7 @@ function ProspectCard({
   onBooked,
   highlighted = false,
   onActivate,
+  isAdmin = false,
 }: {
   job: PipelineJob;
   salespeople: Salesperson[];
@@ -1787,6 +1866,7 @@ function ProspectCard({
   highlighted?: boolean;
   /** Appelé quand l'utilisateur interagit avec une autre carte (retire le highlight). */
   onActivate?: () => void;
+  isAdmin?: boolean;
 }) {
   const router = useRouter();
   const [showOptimizer, setShowOptimizer] = useState(false);
@@ -2105,6 +2185,7 @@ function ProspectCard({
         <ProspectEditModal
           job={job}
           salespeople={salespeople}
+          isAdmin={isAdmin}
           onClose={() => setShowEdit(false)}
           onBooked={(msg, bookedJobId) => { setShowEdit(false); onBooked(msg, bookedJobId ?? job.id); }}
         />
@@ -2183,6 +2264,7 @@ export function PipelineClient({
   openJobId = null,
   highlightJobId = null,
   enAttenteTotal = 0,
+  isAdmin = false,
 }: {
   jobs: PipelineJob[];
   salespeople: Salesperson[];
@@ -2194,6 +2276,8 @@ export function PipelineClient({
   highlightJobId?: string | null;
   /** Total BD des dossiers « Va nous rappeler » (pour la plaquette et « Voir plus »). */
   enAttenteTotal?: number;
+  /** Affiche le bouton Historique dans les modales d'édition (admin seulement). */
+  isAdmin?: boolean;
 }) {
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -2559,6 +2643,7 @@ export function PipelineClient({
               salespeople={salespeople}
               onBooked={handleBooked}
               highlighted={job.id === highlightId}
+              isAdmin={isAdmin}
               onActivate={() => {
                 if (highlightId && highlightId !== job.id) clearHighlight();
               }}
@@ -2598,6 +2683,7 @@ export function PipelineClient({
         <ProspectEditModal
           job={deepLinkJob}
           salespeople={salespeople}
+          isAdmin={isAdmin}
           onClose={clearDeepLink}
           onBooked={(msg, bookedJobId) => {
             handleBooked(msg, bookedJobId ?? deepLinkJob.id);

@@ -272,6 +272,10 @@ export function NewClientJobForm({ onSuccess }: Props = {}) {
             <Label htmlFor="phone">Téléphone</Label>
             <Input id="phone" type="tel" autoComplete="tel" {...register("phone")} />
           </div>
+          <div className="space-y-2">
+            <Label htmlFor="cell">Cellulaire</Label>
+            <Input id="cell" type="tel" autoComplete="tel" {...register("cell")} />
+          </div>
         </CardContent>
       </Card>
 

@@ -29,7 +29,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
     .select(`
       *,
       salespeople!salesperson_id(id, name),
-      clients!client_id(name, phone, email, billing_address),
+      clients!client_id(name, phone, cell, email, billing_address),
       installation_addresses!installation_address_id(address_formatted, city)
     `)
     .eq("id", id)
@@ -42,6 +42,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const apptClient = (Array.isArray(clientRaw) ? clientRaw[0] : clientRaw) as {
     name: string | null;
     phone: string | null;
+    cell: string | null;
     email: string | null;
     billing_address: string | null;
   } | null;
@@ -105,6 +106,7 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   const defaultClient = {
     name: apptClient?.name ?? "",
     phone: apptClient?.phone ?? null,
+    cell: apptClient?.cell ?? null,
     email: apptClient?.email ?? null,
     address: apptClient?.billing_address ?? null,
     install_address: apptInstall?.address_formatted ?? null,

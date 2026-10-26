@@ -5,6 +5,7 @@ import { unwrapRelation } from "@/lib/supabase/unwrap-relation";
 import { DEFAULT_FULL_DAY_THRESHOLD } from "@/lib/constants";
 import type { EstimatedDurationHours, Job } from "@/types/domain";
 import { InstallJobsClient } from "@/features/dispatch/install-jobs-client";
+import { getCurrentProfile } from "@/lib/supabase/profile";
 
 export type InstallJob = {
   id: string;
@@ -239,6 +240,9 @@ export default async function APlanifierPage({
     };
   });
 
+  const profile = await getCurrentProfile();
+  const isAdmin = profile?.role === "admin";
+
   return (
     <InstallJobsClient
       jobs={jobs}
@@ -247,6 +251,7 @@ export default async function APlanifierPage({
       scrollJobId={openJobId ?? highlight}
       fetchError={error?.message ?? null}
       fullDayThreshold={fullDayThreshold}
+      isAdmin={isAdmin}
     />
   );
 }
