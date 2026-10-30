@@ -63,9 +63,9 @@ export default async function VentesPipelinePage({
     supabase
       .from("salespeople")
       .select(
-        "id, name, active, profile_id, home_address, home_lat, home_lng, notes, created_at"
+        "id, name, active, can_quote, available_for_appointments, profile_id, home_address, home_lat, home_lng, notes, created_at"
       )
-      .eq("active", true)
+      .eq("can_quote", true)
       .order("name"),
   ]);
 

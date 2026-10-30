@@ -242,7 +242,7 @@ export default async function SoumissionsPage({
             const status = (row.status as QuoteStatus) ?? "draft";
             const si = STATUS_INFO[status] ?? STATUS_INFO.draft;
             const href = quoteHref(row);
-            const printHref = href ? `${href}?print=1` : null;
+            const pdfHref = row.job_id ? `/api/pdf/soumission/${row.job_id}` : null;
             return (
               <div
                 key={row.id}
@@ -309,17 +309,19 @@ export default async function SoumissionsPage({
                   ) : (
                     <span className="mr-auto text-xs text-muted-foreground">Lien indisponible</span>
                   )}
-                  {printHref ? (
-                    <Link
-                      href={printHref}
+                  {pdfHref ? (
+                    <a
+                      href={pdfHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className={cn(
                         buttonVariants({ variant: "secondary", size: "sm" }),
                         "h-8 gap-1.5"
                       )}
                     >
                       <Printer className="size-3.5" />
-                      Imprimer
-                    </Link>
+                      PDF
+                    </a>
                   ) : null}
                 </div>
               </div>

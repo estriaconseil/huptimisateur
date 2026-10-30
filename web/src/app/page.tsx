@@ -3,13 +3,17 @@ import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function HomePage() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (user) {
-    redirect("/dispatch");
+    if (user) {
+      redirect("/dispatch");
+    }
+  } catch {
+    // Session expirée → page login
   }
   redirect("/login");
 }

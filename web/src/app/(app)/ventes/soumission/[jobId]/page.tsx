@@ -5,7 +5,6 @@ import { ArrowLeft } from "lucide-react";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-form";
-import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
 import { quoteBackLink } from "@/lib/quote-back";
 import { getCurrentSalespersonId } from "@/lib/supabase/profile";
@@ -13,15 +12,14 @@ import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ jobId: string }>;
-  searchParams: Promise<{ print?: string; from?: string; week?: string; accept?: string }>;
+  searchParams: Promise<{ from?: string; week?: string; accept?: string }>;
 };
 
 const INSTALL_STATUSES = ["a_planifier", "reparti", "retour_a_faire", "complete", "termine"];
 
 export default async function JobQuotePage({ params, searchParams }: Props) {
   const { jobId } = await params;
-  const { print, from, week, accept } = await searchParams;
-  const autoPrint = print === "1";
+  const { from, week, accept } = await searchParams;
   const supabase = await createServerSupabaseClient();
 
   const { data: job } = await supabase
@@ -39,7 +37,6 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
   // Si un RDV est lié, rediriger vers la page RDV (source de vérité calendrier)
   if (job.appointment_id) {
     const qs = new URLSearchParams();
-    if (autoPrint) qs.set("print", "1");
     if (from) qs.set("from", from);
     if (week) qs.set("week", week);
     if (accept === "1") qs.set("accept", "1");
@@ -85,8 +82,8 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
 
   const { data: spData } = await supabase
     .from("salespeople")
-    .select("id, name, active, profile_id, home_address, home_lat, home_lng, notes, created_at")
-    .eq("active", true)
+    .select("id, name, active, can_quote, available_for_appointments, profile_id, home_address, home_lat, home_lng, notes, created_at")
+    .eq("can_quote", true)
     .order("name");
 
   const salespeople: Salesperson[] = (spData ?? []) as Salesperson[];
@@ -97,7 +94,6 @@ export default async function JobQuotePage({ params, searchParams }: Props) {
 
   return (
     <div className="max-w-4xl mx-auto">
-      <AutoPrint enabled={autoPrint} />
       <Link
         href={back.href}
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-5 print:hidden"

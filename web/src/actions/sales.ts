@@ -1115,14 +1115,14 @@ export type SlotSuggestion = {
   dateFormatted: string;
 };
 
-/** Trouve le prochain créneau disponible pour TOUS les vendeurs actifs */
+/** Trouve le prochain créneau disponible pour TOUS les vendeurs disponibles pour RDV */
 export async function findNextSlotAllSalespeople(): Promise<SlotSuggestion[]> {
   const supabase = await createServerSupabaseClient();
 
   const { data: salespeople } = await supabase
     .from("salespeople")
     .select(`id, name, salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )`)
-    .eq("active", true)
+    .eq("available_for_appointments", true)
     .order("name");
 
   if (!salespeople?.length) return [];
@@ -1252,12 +1252,12 @@ export async function findBestSlotsForProspect(
   const todayStr = format(today, "yyyy-MM-dd");
   const in30Days = format(addDays(today, 60), "yyyy-MM-dd");
 
-  // 1. Vendeurs actifs + horaires + domicile (filtrés si vendeur assigné)
+  // 1. Vendeurs disponibles pour RDV + horaires + domicile (filtrés si vendeur assigné)
   let spQuery = supabase
     .from("salespeople")
     .select(`id, name, home_lat, home_lng, home_address,
              salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )`)
-    .eq("active", true)
+    .eq("available_for_appointments", true)
     .order("name");
 
   if (salespersonId) {
@@ -1594,7 +1594,7 @@ export async function getSlotsForWeekWithScores(
     .from("salespeople")
     .select(`id, name, home_lat, home_lng, home_address,
                salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )`)
-    .eq("active", true)
+    .eq("available_for_appointments", true)
     .order("name");
 
   if (salespersonId) {

@@ -179,7 +179,12 @@ export const DISPATCH_STATUSES: JobStatus[] = ["a_planifier"];
 export interface Salesperson {
   id: string;
   name: string;
+  /** @deprecated Remplacé par can_quote + available_for_appointments */
   active: boolean;
+  /** Peut être représentant sur une soumission / apparaît dans le sélecteur. */
+  can_quote: boolean;
+  /** Apparaît dans l'optimisateur de créneaux et le calendrier ventes. */
+  available_for_appointments: boolean;
   profile_id: string | null;
   home_address: string | null;
   home_lat: number | null;

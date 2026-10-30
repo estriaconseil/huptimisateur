@@ -1932,6 +1932,11 @@ export function QuoteForm({
                   <button
                     type="button"
                     disabled
+                    title={
+                      isDirty
+                        ? "Sauvegardez avant d'ouvrir le PDF installation"
+                        : "Ajoutez un montant à la soumission"
+                    }
                     className="h-[38px] px-4 rounded-lg border border-emerald-300 text-sm font-medium inline-flex items-center gap-2 opacity-40 cursor-not-allowed"
                   >
                     <Printer className="size-3.5" />

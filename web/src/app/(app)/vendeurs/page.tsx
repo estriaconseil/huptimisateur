@@ -19,7 +19,7 @@ export default async function VendeursPage() {
     supabase
       .from("salespeople")
       .select(`
-        id, name, active, profile_id,
+        id, name, active, can_quote, available_for_appointments, profile_id,
         home_address, home_lat, home_lng,
         notes, created_at,
         salesperson_day_config ( id, day_of_week, active, work_start_time, work_end_time )

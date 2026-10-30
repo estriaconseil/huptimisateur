@@ -12,7 +12,8 @@ import {
   updateDayConfig,
   deleteSalesperson,
   forceDeleteSalesperson,
-  toggleSalespersonActive,
+  toggleSalespersonCanQuote,
+  toggleSalespersonAvailableForAppointments,
   linkSalespersonToProfile,
   type DayConfigInput,
 } from "@/actions/vendeurs";
@@ -40,11 +41,12 @@ type BaseForm = {
   home_lat: number | null;
   home_lng: number | null;
   notes: string;
-  active: boolean;
+  can_quote: boolean;
+  available_for_appointments: boolean;
 };
 
 function defaultBase(): BaseForm {
-  return { name: "", home_address: "", home_lat: null, home_lng: null, notes: "", active: true };
+  return { name: "", home_address: "", home_lat: null, home_lng: null, notes: "", can_quote: true, available_for_appointments: true };
 }
 
 function VendeurBaseForm({
@@ -94,6 +96,29 @@ function VendeurBaseForm({
       <div className="sm:col-span-2">
         <label className={lbl}>Notes internes</label>
         <input className={inp} value={form.notes} onChange={setField("notes")} placeholder="Optionnel" />
+      </div>
+      <div className="sm:col-span-2 space-y-2">
+        <p className="text-xs font-medium text-muted-foreground">Permissions</p>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
+            <input
+              type="checkbox"
+              checked={form.can_quote}
+              onChange={(e) => setForm((f) => ({ ...f, can_quote: e.target.checked }))}
+              className="rounded"
+            />
+            Peut faire des soumissions
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer select-none text-sm">
+            <input
+              type="checkbox"
+              checked={form.available_for_appointments}
+              onChange={(e) => setForm((f) => ({ ...f, available_for_appointments: e.target.checked }))}
+              className="rounded"
+            />
+            Disponible RDV / calendrier optimisé
+          </label>
+        </div>
       </div>
       <div className="sm:col-span-2 flex gap-2">
         <Button
@@ -327,7 +352,8 @@ function VendeurRow({ vendeur, profiles }: { vendeur: SalespersonWithDays; profi
     start(async () => {
       const res = await updateSalesperson(vendeur.id, {
         name: values.name,
-        active: vendeur.active,
+        can_quote: values.can_quote,
+        available_for_appointments: values.available_for_appointments,
         home_address: values.home_address,
         home_lat: values.home_lat,
         home_lng: values.home_lng,
@@ -360,9 +386,15 @@ function VendeurRow({ vendeur, profiles }: { vendeur: SalespersonWithDays; profi
     });
   };
 
-  const handleToggle = () => {
+  const handleToggleQuote = () => {
     start(async () => {
-      await toggleSalespersonActive(vendeur.id, !vendeur.active);
+      await toggleSalespersonCanQuote(vendeur.id, !vendeur.can_quote);
+    });
+  };
+
+  const handleToggleAvailable = () => {
+    start(async () => {
+      await toggleSalespersonAvailableForAppointments(vendeur.id, !vendeur.available_for_appointments);
     });
   };
 
@@ -379,7 +411,8 @@ function VendeurRow({ vendeur, profiles }: { vendeur: SalespersonWithDays; profi
               home_lat: vendeur.home_lat ?? null,
               home_lng: vendeur.home_lng ?? null,
               notes: vendeur.notes ?? "",
-              active: vendeur.active,
+              can_quote: vendeur.can_quote,
+              available_for_appointments: vendeur.available_for_appointments,
             }}
             onSave={handleSave}
             onCancel={() => setEditing(false)}
@@ -394,12 +427,24 @@ function VendeurRow({ vendeur, profiles }: { vendeur: SalespersonWithDays; profi
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium">{vendeur.name}</span>
               <Badge
-                variant={vendeur.active ? "default" : "secondary"}
+                variant={vendeur.can_quote ? "default" : "secondary"}
                 className="text-[11px] cursor-pointer select-none hover:opacity-80 transition-opacity"
-                onClick={handleToggle}
-                title={vendeur.active ? "Cliquer pour désactiver" : "Cliquer pour activer"}
+                onClick={handleToggleQuote}
+                title={vendeur.can_quote
+                  ? "Peut faire des soumissions — cliquer pour retirer"
+                  : "Ne peut pas faire de soumissions — cliquer pour activer"}
               >
-                {pending ? "…" : vendeur.active ? "Actif" : "Inactif"}
+                {pending ? "…" : vendeur.can_quote ? "✎ Soumissions" : "✎ Sans soumissions"}
+              </Badge>
+              <Badge
+                variant={vendeur.available_for_appointments ? "default" : "secondary"}
+                className="text-[11px] cursor-pointer select-none hover:opacity-80 transition-opacity"
+                onClick={handleToggleAvailable}
+                title={vendeur.available_for_appointments
+                  ? "Disponible pour les RDV / optimisateur — cliquer pour retirer"
+                  : "Pas dans le calendrier / optimisateur — cliquer pour activer"}
+              >
+                {pending ? "…" : vendeur.available_for_appointments ? "📅 RDV actif" : "📅 RDV inactif"}
               </Badge>
             </div>
             <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
@@ -487,7 +532,8 @@ export function VendeursManager({ vendeurs, profiles }: { vendeurs: SalespersonW
     start(async () => {
       const res = await createSalesperson({
         name: values.name,
-        active: values.active,
+        can_quote: values.can_quote,
+        available_for_appointments: values.available_for_appointments,
         home_address: values.home_address,
         home_lat: values.home_lat,
         home_lng: values.home_lng,
@@ -498,7 +544,7 @@ export function VendeursManager({ vendeurs, profiles }: { vendeurs: SalespersonW
     });
   };
 
-  const activeCount = vendeurs.filter((v) => v.active).length;
+  const activeCount = vendeurs.filter((v) => v.can_quote || v.available_for_appointments).length;
 
   return (
     <div className="space-y-3">

@@ -45,7 +45,7 @@ import { JobTimeline } from "@/features/jobs/job-timeline";
 import { HistoryDrawer } from "@/components/history-drawer";
 import { AddressAutocomplete, type ResolvedPlace } from "@/components/maps/address-autocomplete";
 import type { InstallJob } from "@/app/(app)/a-planifier/page";
-import type { ScheduleSuggestion, EstimatedDurationHours } from "@/types/domain";
+import type { ScheduleSuggestion, EstimatedDurationHours, TeamBlock } from "@/types/domain";
 import {
   buildDispatchStateMap,
   canAssignFullDay,
@@ -53,6 +53,7 @@ import {
   getDayState,
   type EnrichedScheduleRow,
 } from "@/services/planning/dispatch-state";
+import { isTeamSlotBlocked } from "@/services/suggestions/build-candidates";
 import type { TeamWithTechs } from "@/features/dispatch/load-dispatch-data";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,6 +336,7 @@ function InstallWeekPicker({
   const [weekDates, setWeekDates] = useState<string[]>([]);
   const [teams, setTeams] = useState<TeamWithTechs[]>([]);
   const [schedules, setSchedules] = useState<EnrichedScheduleRow[]>([]);
+  const [teamBlocks, setTeamBlocks] = useState<TeamBlock[]>([]);
   const [travelByKey, setTravelByKey] = useState<Map<string, number | null>>(new Map());
 
   function loadWeek(weekIso: string) {
@@ -347,6 +349,7 @@ function InstallWeekPicker({
       setWeekDates(res.weekDates);
       setTeams(res.teams);
       setSchedules(res.schedules);
+      setTeamBlocks(res.teamBlocks);
       setLoading(false);
     }).catch((e: unknown) => {
       setError(e instanceof Error ? e.message : "Impossible de charger le calendrier.");
@@ -452,15 +455,22 @@ function InstallWeekPicker({
                   <td className="px-2 py-1 font-medium border-r align-top whitespace-nowrap">{team.name}</td>
                   {weekDates.map((dateStr) => {
                     const state = getDayState(stateMap, team.id, dateStr);
-                    const amFree = canAssignToHalf(state, "am", true);
-                    const pmFree = canAssignToHalf(state, "pm", true);
-                    const fullFree = canAssignFullDay(state, true);
+                    const amBlocked = isTeamSlotBlocked(teamBlocks, team.id, dateStr, "am");
+                    const pmBlocked = isTeamSlotBlocked(teamBlocks, team.id, dateStr, "pm");
+                    const fullBlocked = isTeamSlotBlocked(teamBlocks, team.id, dateStr, "full_day");
+                    const amFree = canAssignToHalf(state, "am", true) && !amBlocked;
+                    const pmFree = canAssignToHalf(state, "pm", true) && !pmBlocked;
+                    const fullFree = canAssignFullDay(state, true) && !fullBlocked;
                     const canAm = needsFullDay ? fullFree : amFree;
                     const canPm = needsFullDay ? false : pmFree;
                     const amTravel = needsFullDay
                       ? travelFor(team.id, dateStr, "full_day")
                       : travelFor(team.id, dateStr, "am");
                     const pmTravel = travelFor(team.id, dateStr, "pm");
+                    const amUnavailableLabel = needsFullDay
+                      ? (fullBlocked ? "Non disponible" : "Occupé")
+                      : (amBlocked ? "AM non disponible" : "AM occupé");
+                    const pmUnavailableLabel = pmBlocked ? "PM non disponible" : "PM occupé";
                     return (
                       <td key={dateStr} className="p-0.5 border-r last:border-r-0 align-top">
                         <div className="flex flex-col gap-0.5">
@@ -469,14 +479,18 @@ function InstallWeekPicker({
                             disabled={assigning || !canAm}
                             onClick={() => canAm && onPick(team.id, dateStr, "am")}
                             className={cn(
-                              "rounded px-1.5 py-1 text-left disabled:opacity-40",
-                              canAm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                              "rounded px-1.5 py-1 text-left disabled:cursor-not-allowed",
+                              canAm
+                                ? "hover:bg-accent"
+                                : (needsFullDay ? fullBlocked : amBlocked)
+                                  ? "bg-zinc-500 text-white cursor-not-allowed"
+                                  : "bg-muted/40 opacity-40 cursor-not-allowed"
                             )}
                           >
                             <span className="block">
                               {needsFullDay
-                                ? (fullFree ? "Journée libre" : "Occupé")
-                                : (amFree ? "AM libre" : "AM occupé")}
+                                ? (fullFree ? "Journée libre" : amUnavailableLabel)
+                                : (amFree ? "AM libre" : amUnavailableLabel)}
                             </span>
                             {canAm && (
                               <TravelDuration
@@ -493,11 +507,15 @@ function InstallWeekPicker({
                               disabled={assigning || !canPm}
                               onClick={() => canPm && onPick(team.id, dateStr, "pm")}
                               className={cn(
-                                "rounded px-1.5 py-1 text-left disabled:opacity-40",
-                                canPm ? "hover:bg-accent" : "bg-muted/40 cursor-not-allowed"
+                                "rounded px-1.5 py-1 text-left disabled:cursor-not-allowed",
+                                canPm
+                                  ? "hover:bg-accent"
+                                  : pmBlocked
+                                    ? "bg-zinc-500 text-white cursor-not-allowed"
+                                    : "bg-muted/40 opacity-40 cursor-not-allowed"
                               )}
                             >
-                              <span className="block">{pmFree ? "PM libre" : "PM occupé"}</span>
+                              <span className="block">{pmFree ? "PM libre" : pmUnavailableLabel}</span>
                               {canPm && (
                                 <TravelDuration
                                   seconds={pmTravel}

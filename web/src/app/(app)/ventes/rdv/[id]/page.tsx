@@ -6,7 +6,6 @@ import { ArrowLeft } from "lucide-react";
 
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { QuoteForm, ScrollToQuoteActionsButton } from "@/features/sales/quote-form";
-import { AutoPrint } from "@/features/sales/auto-print";
 import { getNextQuoteNumber } from "@/actions/sales";
 import { quoteBackLink } from "@/lib/quote-back";
 import { getCurrentSalespersonId } from "@/lib/supabase/profile";
@@ -14,13 +13,12 @@ import type { Quote, QuoteUnit, Salesperson } from "@/types/domain";
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ print?: string; from?: string; week?: string; accept?: string }>;
+  searchParams: Promise<{ from?: string; week?: string; accept?: string }>;
 };
 
 export default async function AppointmentDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { print, from, week } = await searchParams;
-  const autoPrint = print === "1";
+  const { from, week } = await searchParams;
   const supabase = await createServerSupabaseClient();
 
   // Charger le rendez-vous avec les données client et adresse d'installation via JOIN
@@ -90,8 +88,8 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
   // Vendeurs pour le formulaire
   const { data: spData } = await supabase
     .from("salespeople")
-    .select("id, name, active, profile_id, home_address, home_lat, home_lng, notes, created_at")
-    .eq("active", true)
+    .select("id, name, active, can_quote, available_for_appointments, profile_id, home_address, home_lat, home_lng, notes, created_at")
+    .eq("can_quote", true)
     .order("name");
 
   const salespeople: Salesperson[] = (spData ?? []) as Salesperson[];
@@ -118,7 +116,6 @@ export default async function AppointmentDetailPage({ params, searchParams }: Pr
 
   return (
     <div className="max-w-4xl mx-auto">
-      <AutoPrint enabled={autoPrint} />
       {/* Retour */}
       <Link
         href={back.href}

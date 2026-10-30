@@ -10,7 +10,10 @@ type Err = { ok: false; message: string };
 
 export type SalespersonInput = {
   name: string;
-  active: boolean;
+  /** @deprecated Utiliser can_quote + available_for_appointments */
+  active?: boolean;
+  can_quote: boolean;
+  available_for_appointments: boolean;
   home_address: string;
   home_lat: number | null;
   home_lng: number | null;
@@ -33,7 +36,10 @@ export async function createSalesperson(data: SalespersonInput): Promise<{ ok: t
     .from("salespeople")
     .insert({
       name: data.name,
-      active: data.active,
+      can_quote: data.can_quote,
+      available_for_appointments: data.available_for_appointments,
+      // Maintenir active en sync pour rétrocompat
+      active: data.can_quote || data.available_for_appointments,
       home_address: data.home_address || null,
       home_lat: data.home_lat,
       home_lng: data.home_lng,
@@ -71,7 +77,9 @@ export async function updateSalesperson(id: string, data: SalespersonInput): Pro
     .from("salespeople")
     .update({
       name: data.name,
-      active: data.active,
+      can_quote: data.can_quote,
+      available_for_appointments: data.available_for_appointments,
+      active: data.can_quote || data.available_for_appointments,
       home_address: data.home_address || null,
       home_lat: data.home_lat,
       home_lng: data.home_lng,
@@ -205,15 +213,55 @@ export async function forceDeleteSalesperson(id: string): Promise<Ok | Err> {
   return { ok: true };
 }
 
+/** @deprecated Utiliser toggleSalespersonCanQuote / toggleSalespersonAvailableForAppointments */
 export async function toggleSalespersonActive(id: string, active: boolean): Promise<Ok | Err> {
+  return toggleSalespersonCanQuote(id, active);
+}
+
+export async function toggleSalespersonCanQuote(id: string, canQuote: boolean): Promise<Ok | Err> {
   const auth = await requireAdmin();
   if (!auth.ok) return auth;
 
   const supabase = await createServerSupabaseClient();
-  const { error } = await supabase.from("salespeople").update({ active }).eq("id", id);
+
+  // Lire l'état actuel pour maintenir active en sync
+  const { data: current } = await supabase
+    .from("salespeople")
+    .select("available_for_appointments")
+    .eq("id", id)
+    .maybeSingle();
+
+  const { error } = await supabase.from("salespeople").update({
+    can_quote: canQuote,
+    active: canQuote || (current?.available_for_appointments ?? false),
+  }).eq("id", id);
   if (error) return { ok: false, message: error.message };
   revalidatePath("/vendeurs");
   revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
+  return { ok: true };
+}
+
+export async function toggleSalespersonAvailableForAppointments(id: string, available: boolean): Promise<Ok | Err> {
+  const auth = await requireAdmin();
+  if (!auth.ok) return auth;
+
+  const supabase = await createServerSupabaseClient();
+
+  const { data: current } = await supabase
+    .from("salespeople")
+    .select("can_quote")
+    .eq("id", id)
+    .maybeSingle();
+
+  const { error } = await supabase.from("salespeople").update({
+    available_for_appointments: available,
+    active: available || (current?.can_quote ?? false),
+  }).eq("id", id);
+  if (error) return { ok: false, message: error.message };
+  revalidatePath("/vendeurs");
+  revalidatePath("/ventes");
+  revalidatePath("/ventes/pipeline");
   return { ok: true };
 }
 

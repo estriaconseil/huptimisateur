@@ -5,13 +5,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export default async function LoginPage() {
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (user) {
-    redirect("/dispatch");
+    if (user) {
+      redirect("/dispatch");
+    }
+  } catch {
+    // Refresh token invalide / cookies périmés → afficher le formulaire quand même
   }
 
   return (

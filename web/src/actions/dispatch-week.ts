@@ -11,5 +11,6 @@ export async function getInstallWeekGrid(weekStartIso?: string) {
     weekStartLabel: data.weekStartLabel,
     teams: data.teams.filter((t) => t.active),
     schedules: data.schedules,
+    teamBlocks: data.teamBlocks,
   };
 }

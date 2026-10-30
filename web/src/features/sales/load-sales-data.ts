@@ -18,7 +18,7 @@ export async function loadSalesPageData(
   let spQuery = supabase
     .from("salespeople")
     .select(`
-      id, name, active, profile_id,
+      id, name, active, can_quote, available_for_appointments, profile_id,
       home_address, home_lat, home_lng,
       notes, created_at,
       salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
@@ -44,8 +44,8 @@ export async function loadSalesPageData(
     apptQuery = apptQuery.eq("salesperson_id", currentSalespersonId);
     blocksQuery = blocksQuery.eq("salesperson_id", currentSalespersonId);
   } else {
-    // Mode admin/secrétaire : uniquement les vendeurs actifs (+ inactifs avec RDV, détectés après)
-    spQuery = spQuery.eq("active", true);
+    // Mode admin/secrétaire : uniquement les vendeurs disponibles pour RDV
+    spQuery = spQuery.eq("available_for_appointments", true);
   }
 
   const [{ data: salespeopleData }, { data: appointments }, { data: rawBlocks }] = await Promise.all([
@@ -60,34 +60,34 @@ export async function loadSalesPageData(
     // Le vendeur voit uniquement sa propre rangée
     salespeople = (salespeopleData ?? []) as SalespersonForCalendar[];
   } else {
-    // Admin/secrétaire : actifs + vendeurs inactifs qui ont quand même des RDV cette semaine
-    const activeIds = new Set((salespeopleData ?? []).map((sp) => sp.id as string));
-    const inactiveSpIds = [
+    // Admin/secrétaire : vendeurs disponibles pour RDV + ceux hors RDV qui ont quand même des RDV cette semaine
+    const availableIds = new Set((salespeopleData ?? []).map((sp) => sp.id as string));
+    const extraSpIds = [
       ...new Set(
         (appointments ?? [])
           .map((a) => a.salesperson_id as string)
-          .filter((id) => !activeIds.has(id))
+          .filter((id) => !availableIds.has(id))
       ),
     ];
 
-    let inactiveSalespeople: SalespersonForCalendar[] = [];
-    if (inactiveSpIds.length > 0) {
+    let extraSalespeople: SalespersonForCalendar[] = [];
+    if (extraSpIds.length > 0) {
       const { data } = await supabase
         .from("salespeople")
         .select(`
-          id, name, active, profile_id,
+          id, name, active, can_quote, available_for_appointments, profile_id,
           home_address, home_lat, home_lng,
           notes, created_at,
           salesperson_day_config ( day_of_week, active, work_start_time, work_end_time )
         `)
-        .in("id", inactiveSpIds)
+        .in("id", extraSpIds)
         .order("name");
-      inactiveSalespeople = (data ?? []) as SalespersonForCalendar[];
+      extraSalespeople = (data ?? []) as SalespersonForCalendar[];
     }
 
     salespeople = [
       ...(salespeopleData ?? []) as SalespersonForCalendar[],
-      ...inactiveSalespeople,
+      ...extraSalespeople,
     ];
   }
 
